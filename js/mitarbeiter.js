@@ -1,9 +1,38 @@
 import { firebaseConfig, db } from "./firebase.js";
 import { initializeApp, deleteApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
 import { initializeAuth, inMemoryPersistence, createUserWithEmailAndPassword, signOut as secondarySignOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-import { collection, getDocs, doc, setDoc, updateDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+import { collection, getDocs, doc, serverTimestamp, writeBatch } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 import { setHead } from "./app.js";
 import { AREA_NAMES, esc, fmtDate, syntheticEmail, ROLE_LABELS, toast } from "./utils.js";
+
+
+const HISTORY_FIELDS = [
+  "name","companyId","email","username","hasRealEmail","role","supervisorId",
+  "active","startDate","endDate","weeklyHours","vacationDays","bereiche","extraTrainings"
+];
+function comparable(value){
+  if(Array.isArray(value)) return [...value].map(String).sort();
+  return value ?? null;
+}
+function sameValue(a,b){return JSON.stringify(comparable(a))===JSON.stringify(comparable(b))}
+function getChanges(before,after){
+  return HISTORY_FIELDS.filter(field=>!sameValue(before?.[field],after?.[field])).map(field=>({
+    field, oldValue: comparable(before?.[field]), newValue: comparable(after?.[field])
+  }));
+}
+function historyRecord(ctx,employeeId,employee,action,changes=[]){
+  return {
+    employeeId,
+    employeeName: employee.name || "",
+    employeeEmail: employee.hasRealEmail===false ? (employee.username || "") : (employee.email || ""),
+    action,
+    changes,
+    actorId: ctx.user?.uid || "",
+    actorName: ctx.profile?.name || "",
+    actorEmail: ctx.profile?.email || ctx.user?.email || "",
+    createdAt: serverTimestamp()
+  };
+}
 
 async function createAuthAccount(email,password){
   // Für die Benutzeranlage wird bewusst eine getrennte, nur temporäre Auth-Instanz
@@ -39,5 +68,35 @@ export async function renderMitarbeiter(el,ctx){
   function tab(t){show.classList.toggle('hidden',t!=='show');create.classList.toggle('hidden',t!=='create');el.querySelectorAll('.choice-card').forEach(x=>x.classList.toggle('active',x.dataset.tab===t))}el.querySelectorAll('.choice-card').forEach(b=>b.onclick=()=>{if(b.dataset.tab==='create')form.reset();tab(b.dataset.tab)});
   el.querySelector('#cancel-user').onclick=()=>tab('show');
   el.querySelectorAll('.edit-user').forEach(b=>b.onclick=()=>{const u=users.find(x=>x.id===b.dataset.id);form.reset();form.elements.id.value=u.id;form.elements.name.value=u.name||'';form.elements.companyId.value=u.companyId||'';const usernameMode=u.hasRealEmail===false||String(u.email||'').endsWith('@portal.local');form.elements.loginType.value=usernameMode?'username':'email';form.elements.login.value=usernameMode?(u.username||String(u.email||'').replace(/@portal\.local$/,'')):(u.email||'');form.elements.role.value=u.role||'employee';form.elements.supervisorId.value=u.supervisorId||'';form.elements.active.value=String(u.active!==false);form.elements.startDate.value=u.startDate||'';form.elements.endDate.value=u.endDate||'';form.elements.weeklyHours.value=u.weeklyHours||40;form.elements.vacationDays.value=u.vacationDays||30;form.querySelectorAll('[name=bereich]').forEach(x=>x.checked=(u.bereiche||[]).includes(x.value));form.querySelectorAll('[name=extraTraining]').forEach(x=>x.checked=(u.extraTrainings||[]).includes(x.value));tab('create')});
-  form.onsubmit=async e=>{e.preventDefault();const f=e.currentTarget,id=f.elements.id.value,loginType=f.elements.loginType.value,login=f.elements.login.value.trim(),password=f.elements.password.value;const email=loginType==='username'?syntheticEmail(login):login.toLowerCase();const data={name:f.elements.name.value.trim(),companyId:f.elements.companyId.value,email,username:loginType==='username'?login.toLowerCase():'',hasRealEmail:loginType==='email',role:f.elements.role.value,supervisorId:f.elements.supervisorId.value||null,active:f.elements.active.value==='true',startDate:f.elements.startDate.value||null,endDate:f.elements.endDate.value||null,weeklyHours:Number(f.elements.weeklyHours.value||40),vacationDays:Number(f.elements.vacationDays.value||30),bereiche:[...f.querySelectorAll('[name=bereich]:checked')].map(x=>x.value),extraTrainings:[...f.querySelectorAll('[name=extraTraining]:checked')].map(x=>x.value),updatedAt:serverTimestamp()};try{if(id){await updateDoc(doc(db,'users',id),data)}else{if(!password||password.length<6)throw new Error('Für neue Benutzer wird ein Startpasswort mit mindestens 6 Zeichen benötigt.');const uid=await createAuthAccount(email,password);await setDoc(doc(db,'users',uid),{...data,createdAt:serverTimestamp()})}toast('Benutzer gespeichert.');renderMitarbeiter(el,ctx)}catch(err){console.error(err);el.querySelector('#user-message').textContent=err.message||'Benutzer konnte nicht gespeichert werden.'}};
+  form.onsubmit=async e=>{
+    e.preventDefault();
+    const f=e.currentTarget,id=f.elements.id.value,loginType=f.elements.loginType.value,login=f.elements.login.value.trim(),password=f.elements.password.value;
+    const email=loginType==='username'?syntheticEmail(login):login.toLowerCase();
+    const data={name:f.elements.name.value.trim(),companyId:f.elements.companyId.value,email,username:loginType==='username'?login.toLowerCase():'',hasRealEmail:loginType==='email',role:f.elements.role.value,supervisorId:f.elements.supervisorId.value||null,active:f.elements.active.value==='true',startDate:f.elements.startDate.value||null,endDate:f.elements.endDate.value||null,weeklyHours:Number(f.elements.weeklyHours.value||40),vacationDays:Number(f.elements.vacationDays.value||30),bereiche:[...f.querySelectorAll('[name=bereich]:checked')].map(x=>x.value),extraTrainings:[...f.querySelectorAll('[name=extraTraining]:checked')].map(x=>x.value),updatedAt:serverTimestamp()};
+    try{
+      const batch=writeBatch(db);
+      if(id){
+        const previous=users.find(x=>x.id===id)||{};
+        const changes=getChanges(previous,data);
+        batch.update(doc(db,'users',id),data);
+        if(changes.length){
+          const historyRef=doc(collection(db,'employeeHistory'));
+          batch.set(historyRef,historyRecord(ctx,id,data,'update',changes));
+        }
+        await batch.commit();
+      }else{
+        if(!password||password.length<6) throw new Error('Für neue Benutzer wird ein Startpasswort mit mindestens 6 Zeichen benötigt.');
+        const uid=await createAuthAccount(email,password);
+        batch.set(doc(db,'users',uid),{...data,createdAt:serverTimestamp()});
+        const historyRef=doc(collection(db,'employeeHistory'));
+        batch.set(historyRef,historyRecord(ctx,uid,data,'create',[]));
+        await batch.commit();
+      }
+      toast('Benutzer gespeichert.');
+      await renderMitarbeiter(el,ctx);
+    }catch(err){
+      console.error(err);
+      el.querySelector('#user-message').textContent=err.message||'Benutzer konnte nicht gespeichert werden.';
+    }
+  };
 }
