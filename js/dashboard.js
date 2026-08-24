@@ -115,9 +115,10 @@ function currentMonthBalance(profile,timeRecords,vacations){
 export async function renderDashboard(el,ctx){
   setHead("Dashboard","Personalinformationen, Termine und offene Aufgaben auf einen Blick.");
   const p=ctx.profile;
-  let news=[],trainings=[],vacations=[],timeRequests=[],timeRecords=[],teamVacations=[];
+  let news=[],trainingProgress=[],allTrainingDefinitions=[],vacations=[],timeRequests=[],timeRecords=[],teamVacations=[];
   try{const s=await getDocs(query(collection(db,"news"),orderBy("createdAt","desc"),limit(6)));news=s.docs.map(d=>({id:d.id,...d.data()})).filter(n=>n.active!==false&&(n.companyId==="all"||!n.companyId||n.companyId===p.companyId)&&(n.audience==="all"||!n.audience||n.audience===p.role))}catch{}
-  try{const s=await getDocs(query(collection(db,"trainingProgress"),where("userId","==",p.id)));trainings=s.docs.map(d=>d.data())}catch{}
+  try{const s=await getDocs(query(collection(db,"trainingProgress"),where("userId","==",p.id)));trainingProgress=s.docs.map(d=>d.data())}catch{}
+  try{const s=await getDocs(collection(db,"trainings"));allTrainingDefinitions=s.docs.map(d=>({id:d.id,...d.data()}))}catch{}
   try{const s=await getDocs(query(collection(db,"vacationRequests"),where("userId","==",p.id)));vacations=s.docs.map(d=>({id:d.id,...d.data()}))}catch{}
   try{const s=await getDocs(query(collection(db,"timeRecords"),where("userId","==",p.id)));timeRecords=s.docs.map(d=>({id:d.id,...d.data()}))}catch{}
   try{const s=await getDocs(collection(db,"timeCorrectionRequests"));timeRequests=s.docs.map(d=>({id:d.id,...d.data()}))}catch{}
@@ -125,7 +126,20 @@ export async function renderDashboard(el,ctx){
     try{const s=await getDocs(collection(db,"vacationRequests"));teamVacations=s.docs.map(d=>({id:d.id,...d.data()})).filter(v=>v.status==="pending"&&(p.role==="admin"||v.supervisorId===p.id))}catch{}
   }
 
-  const openTrainings=trainings.filter(x=>x.status!=="abgeschlossen"&&x.status!=="completed").length;
+  const assignedTrainings=allTrainingDefinitions.filter(t=>{
+    if(t.active===false) return false;
+    const trainingAreas=Array.isArray(t.bereiche)?t.bereiche:[];
+    const userAreas=Array.isArray(p.bereiche)?p.bereiche:[];
+    const extraTrainings=Array.isArray(p.extraTrainings)?p.extraTrainings:[];
+    return trainingAreas.length===0 || trainingAreas.some(area=>userAreas.includes(area)) || extraTrainings.includes(t.id);
+  });
+  const completedTrainingIds=new Set(
+    trainingProgress
+      .filter(x=>x.status==="abgeschlossen"||x.status==="completed")
+      .map(x=>x.trainingId)
+      .filter(Boolean)
+  );
+  const openTrainings=assignedTrainings.filter(t=>!completedTrainingIds.has(t.id)).length;
   const pendingOwnVac=vacations.filter(x=>x.status==="pending"||x.status==="beantragt").length;
   const pendingTeamVac=teamVacations.length;
   const vacationCount=p.role==="employee"?pendingOwnVac:pendingTeamVac;
