@@ -38,3 +38,7 @@
 .booking-note{display:block;margin-top:4px;color:var(--muted);font-size:9.5px;font-weight:400}
 .adjustment-value{white-space:nowrap}
 .admin-adjustment-card select,.admin-adjustment-card input,.admin-adjustment-card textarea{background:#fff}
+
+
+/* V1.2.3 – projektbezogene Zeiterfassung / PDS-Vorbereitung */
+.project-stamp-field{margin:8px 0 2px}.project-stamp-input{font-size:18px!important;font-weight:800;letter-spacing:.14em;text-align:center}.project-number-input:invalid:not(:placeholder-shown){border-color:#d66b62;background:#fff8f7}.project-number-input:valid{border-color:#8fb7a3}.project-stamp-help{margin-top:10px!important;font-size:10px!important;line-height:1.45}.project-stamp-help strong{color:var(--primary)}
