@@ -26,7 +26,7 @@ function dateTime(value){
   if(!ms) return "–";
   return new Intl.DateTimeFormat("de-DE",{dateStyle:"short",timeStyle:"short"}).format(new Date(ms));
 }
-function displayValue(key,value,companies,userMap,trainingMap){
+function displayValue(key,value,companies,userMap,trainingMap,religionMap){
   if(value===null||value===undefined||value==="") return "–";
   if(key==="companyId") return companies.get(value)?.name || value;
   if(key==="supervisorId") return userMap.get(value)?.name || userMap.get(value)?.email || value;
@@ -34,6 +34,7 @@ function displayValue(key,value,companies,userMap,trainingMap){
   if(key==="active") return value===false ? "inaktiv" : "aktiv";
   if(key==="hasRealEmail") return value===false ? "Benutzername" : "E-Mail-Adresse";
   if(key==="projectTimeTracking" || ["firstAider","fireWarden","forkliftPermit","aerialLiftPermit"].includes(key)) return value===true ? "Ja" : "Nein";
+  if(key==="private.religion"){const r=religionMap?.get(String(value));return r?`${r.code} · ${r.name}`:String(value);}
   if(key==="workDays") return Array.isArray(value) ? value.join(", ") : String(value);
   if(["startDate","endDate","probationEndDate","fixedTermEndDate","firstAiderValidUntil","fireWardenValidUntil","forkliftPermitValidUntil","aerialLiftPermitValidUntil","nextDrivingLicenseCheck","private.birthDate","private.salaryValidFrom"].includes(key)) return fmtDate(value);
   if(key.startsWith("private.")) return key.includes("grossSalary")||key.includes("hourlyRate") ? (Number(value).toLocaleString("de-DE",{minimumFractionDigits:2,maximumFractionDigits:2})+" €") : String(value);
@@ -49,16 +50,18 @@ export async function renderHistorie(el,ctx){
     return;
   }
 
-  const [hSnap,uSnap,cSnap,tSnap]=await Promise.all([
+  const [hSnap,uSnap,cSnap,tSnap,rSnap]=await Promise.all([
     getDocs(collection(db,"employeeHistory")),
     getDocs(collection(db,"users")),
     getDocs(collection(db,"companies")),
-    getDocs(collection(db,"trainings"))
+    getDocs(collection(db,"trainings")),
+    getDocs(collection(db,"religionTaxCodes"))
   ]);
   const users=uSnap.docs.map(d=>({id:d.id,...d.data()}));
   const userMap=new Map(users.map(u=>[u.id,u]));
   const companies=new Map(cSnap.docs.map(d=>[d.id,{id:d.id,...d.data()}]));
   const trainingMap=new Map(tSnap.docs.map(d=>[d.id,{id:d.id,...d.data()}]));
+  const religionMap=new Map(rSnap.docs.map(d=>{const x={id:d.id,...d.data()};return [String(x.code||''),x]}));
   const entries=hSnap.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>toMillis(b.createdAt)-toMillis(a.createdAt));
 
   const rows=entries.map(entry=>{
@@ -68,7 +71,7 @@ export async function renderHistorie(el,ctx){
     const details=entry.action==="create"
       ? '<span class="muted">Mitarbeiter wurde neu angelegt.</span>'
       : changes.length
-        ? `<div class="history-changes">${changes.map(ch=>`<div><strong>${esc(FIELD_LABELS[ch.field]||ch.field)}</strong><span>${esc(displayValue(ch.field,ch.oldValue,companies,userMap,trainingMap))} → ${esc(displayValue(ch.field,ch.newValue,companies,userMap,trainingMap))}</span></div>`).join("")}</div>`
+        ? `<div class="history-changes">${changes.map(ch=>`<div><strong>${esc(FIELD_LABELS[ch.field]||ch.field)}</strong><span>${esc(displayValue(ch.field,ch.oldValue,companies,userMap,trainingMap,religionMap))} → ${esc(displayValue(ch.field,ch.newValue,companies,userMap,trainingMap,religionMap))}</span></div>`).join("")}</div>`
         : '<span class="muted">Änderung ohne Detailangabe.</span>';
     return `<tr><td>${esc(dateTime(entry.createdAt))}</td><td><strong>${esc(employeeName)}</strong><div class="small muted">${esc(entry.employeeEmail||"")}</div></td><td><span class="pill ${entry.action==='create'?'green':'blue'}">${entry.action==='create'?'angelegt':'geändert'}</span></td><td>${details}</td><td>${esc(actor)}</td></tr>`;
   }).join("");
