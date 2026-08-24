@@ -12,6 +12,7 @@ import { renderAbrechnungen } from "./abrechnungen.js";
 import { renderFirmen } from "./firmen.js";
 import { renderAuswertungen } from "./auswertungen.js";
 import { renderHistorie } from "./historie.js";
+import { renderStammdaten } from "./stammdaten.js";
 
 export const ctx = { user:null, profile:null, company:null, view:"dashboard" };
 const content=document.getElementById("content"), nav=document.getElementById("main-nav");
@@ -26,6 +27,7 @@ const views = {
   employees:{label:"Mitarbeiter",icon:"♙",roles:["admin"],render:renderMitarbeiter},
   news:{label:"News & Hinweise",icon:"●",roles:["admin"],render:renderNews},
   companies:{label:"Firmen",icon:"▣",roles:["admin"],render:renderFirmen},
+  masterdata:{label:"Stammdaten",icon:"≡",roles:["admin"],render:renderStammdaten},
   reports:{label:"Auswertungen",icon:"▥",roles:["admin","supervisor"],render:renderAuswertungen},
   history:{label:"Historie",icon:"↺",roles:["admin"],render:renderHistorie},
   applicants:{label:"Bewerbungsportal",icon:"↗",roles:["admin"],external:true}

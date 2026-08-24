@@ -4,23 +4,14 @@ import { setHead } from "./app.js";
 import { esc, fmtDate, ROLE_LABELS } from "./utils.js";
 
 const FIELD_LABELS = {
-  name: "Name",
-  companyId: "Firma",
-  email: "E-Mail / Login",
-  username: "Benutzername",
-  hasRealEmail: "Login-Art",
-  role: "Rolle",
-  supervisorId: "Vorgesetzter",
-  active: "Status",
-  startDate: "Eintritt",
-  endDate: "Austritt",
-  weeklyHours: "Wochenstunden",
-  vacationDays: "Urlaubstage/Jahr",
-  employeeNumber: "Mitarbeiternummer",
-  companyAreaNumber: "Firmenbereich-Nr.",
-  projectTimeTracking: "Zeiterfassung auf Projekte",
-  bereiche: "Schulungsbereiche",
-  extraTrainings: "Zusatzschulungen"
+  name:"Name", companyId:"Firma", email:"E-Mail / Login", username:"Benutzername", hasRealEmail:"Login-Art", role:"Rolle", supervisorId:"Vorgesetzter", active:"Status",
+  startDate:"Eintritt", endDate:"Austritt", weeklyHours:"Wochenstunden", vacationDays:"Urlaubstage/Jahr", employeeNumber:"Mitarbeiternummer", companyAreaNumber:"Firmenbereich-Nr.", projectTimeTracking:"Zeiterfassung auf Projekte",
+  department:"Abteilung", position:"Position / Tätigkeit", contractType:"Beschäftigungsart", probationEndDate:"Probezeit bis", fixedTermEndDate:"Befristung bis", costCenter:"Kostenstelle", workDays:"Arbeitstage",
+  firstAider:"Ersthelfer", firstAiderValidUntil:"Ersthelfer gültig bis", fireWarden:"Brandschutzhelfer", fireWardenValidUntil:"Brandschutzhelfer gültig bis", forkliftPermit:"Staplerschein", forkliftPermitValidUntil:"Staplerschein gültig bis", aerialLiftPermit:"Hubarbeitsbühne", aerialLiftPermitValidUntil:"Hubarbeitsbühne gültig bis", drivingLicenseClasses:"Führerscheinklassen", nextDrivingLicenseCheck:"Nächste Führerscheinkontrolle", occupationalMedicalNotes:"Arbeitsmedizinische Vorsorgen / Hinweise",
+  bereiche:"Schulungsbereiche", extraTrainings:"Zusatzschulungen",
+  "private.birthDate":"Geburtsdatum", "private.street":"Straße / Hausnummer", "private.postalCode":"PLZ", "private.city":"Ort", "private.privateEmail":"Private E-Mail", "private.phone":"Telefon", "private.mobile":"Mobil", "private.emergencyContactName":"Notfallkontakt", "private.emergencyContactPhone":"Telefon Notfallkontakt",
+  "private.taxId":"Steuer-ID", "private.taxClass":"Steuerklasse", "private.childAllowance":"Kinderfreibetrag", "private.religion":"Religion / Kirchensteuer", "private.socialSecurityNumber":"Sozialversicherungsnummer", "private.healthInsuranceId":"Krankenkasse", "private.insuranceType":"Versicherungsart", "private.personGroup":"Personengruppe", "private.contributionGroup":"Beitragsgruppe",
+  "private.iban":"IBAN", "private.bic":"BIC", "private.bankId":"Bank", "private.accountHolder":"Kontoinhaber", "private.compensationType":"Entgeltart", "private.grossSalary":"Bruttogehalt", "private.hourlyRate":"Stundenlohn", "private.salaryValidFrom":"Vergütung gültig ab"
 };
 
 function toMillis(value){
@@ -42,8 +33,10 @@ function displayValue(key,value,companies,userMap,trainingMap){
   if(key==="role") return ROLE_LABELS[value] || value;
   if(key==="active") return value===false ? "inaktiv" : "aktiv";
   if(key==="hasRealEmail") return value===false ? "Benutzername" : "E-Mail-Adresse";
-  if(key==="projectTimeTracking") return value===true ? "Ja" : "Nein";
-  if(key==="startDate"||key==="endDate") return fmtDate(value);
+  if(key==="projectTimeTracking" || ["firstAider","fireWarden","forkliftPermit","aerialLiftPermit"].includes(key)) return value===true ? "Ja" : "Nein";
+  if(key==="workDays") return Array.isArray(value) ? value.join(", ") : String(value);
+  if(["startDate","endDate","probationEndDate","fixedTermEndDate","firstAiderValidUntil","fireWardenValidUntil","forkliftPermitValidUntil","aerialLiftPermitValidUntil","nextDrivingLicenseCheck","private.birthDate","private.salaryValidFrom"].includes(key)) return fmtDate(value);
+  if(key.startsWith("private.")) return key.includes("grossSalary")||key.includes("hourlyRate") ? (Number(value).toLocaleString("de-DE",{minimumFractionDigits:2,maximumFractionDigits:2})+" €") : String(value);
   if(key==="bereiche") return Array.isArray(value) && value.length ? value.join(", ") : "–";
   if(key==="extraTrainings") return Array.isArray(value) && value.length ? value.map(id=>trainingMap.get(id)?.title||id).join(", ") : "–";
   return String(value);
