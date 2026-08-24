@@ -5,19 +5,28 @@ import { esc, fmtDate, statusPill } from "./utils.js";
 
 export async function renderDashboard(el,ctx){
   setHead("Dashboard","Personalinformationen, Termine und offene Aufgaben auf einen Blick.");
-  const p=ctx.profile; let news=[], trainings=[], vacations=[];
+  const p=ctx.profile; let news=[], trainings=[], vacations=[], timeRequests=[];
   try{const s=await getDocs(query(collection(db,"news"),orderBy("createdAt","desc"),limit(6)));news=s.docs.map(d=>({id:d.id,...d.data()})).filter(n=>n.active!==false&&(n.companyId==="all"||!n.companyId||n.companyId===p.companyId)&&(n.audience==="all"||!n.audience||n.audience===p.role))}catch{}
   try{const s=await getDocs(query(collection(db,"trainingProgress"),where("userId","==",p.id)));trainings=s.docs.map(d=>d.data())}catch{}
   try{const s=await getDocs(query(collection(db,"vacationRequests"),where("userId","==",p.id)));vacations=s.docs.map(d=>d.data())}catch{}
+  try{const s=await getDocs(collection(db,"timeCorrectionRequests"));timeRequests=s.docs.map(d=>({id:d.id,...d.data()}))}catch{}
   const openTrainings=trainings.filter(x=>x.status!=="abgeschlossen"&&x.status!=="completed").length;
   const pendingVac=vacations.filter(x=>x.status==="pending"||x.status==="beantragt").length;
+  const pendingOwnTime=timeRequests.filter(x=>x.userId===p.id&&x.status==="pending").length;
+  const pendingTeamTime=p.role==="admin"
+    ? timeRequests.filter(x=>x.status==="pending").length
+    : p.role==="supervisor"
+      ? timeRequests.filter(x=>x.status==="pending"&&x.supervisorId===p.id).length
+      : 0;
+  const pendingTime=p.role==="employee"?pendingOwnTime:pendingTeamTime;
   const adminHint=p.role==="admin"?`<div class="info-strip">Die Personalabteilung kann über <strong>News & Hinweise</strong> interne Meldungen und E-Mail-Vorlagen verwalten.</div>`:"";
   el.innerHTML=`
     <div class="kpi-grid">
       <div class="kpi"><span>Offene Schulungen</span><strong>${openTrainings}</strong><small>aus Ihrem Bearbeitungsstand</small></div>
       <div class="kpi"><span>Urlaubsanträge</span><strong>${pendingVac}</strong><small>aktuell in Bearbeitung</small></div>
+      <div class="kpi dashboard-time-alert"><span>Zeiterfassungsanträge</span><strong>${pendingTime}</strong><small>${p.role==="employee"?"eigene offene Anträge":"zur Freigabe"}</small></div>
       <div class="kpi"><span>Wochenarbeitszeit</span><strong>${Number(p.weeklyHours||40).toLocaleString("de-DE")} h</strong><small>hinterlegtes Arbeitszeitmodell</small></div>
-      <div class="kpi"><span>Urlaubsanspruch</span><strong>${Number(p.vacationDays||30)}</strong><small>Tage/Jahr</small></div>
+      
     </div>${adminHint}
     <div class="two-col">
       <article class="card"><div class="card-head"><div><h2>News & Hinweise</h2><p>Aktuelle Informationen der Personalabteilung</p></div></div>
