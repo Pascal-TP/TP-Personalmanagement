@@ -8,10 +8,20 @@ import {
   updateDoc,
   doc,
   serverTimestamp,
-  Timestamp
+  Timestamp,
+  writeBatch
 } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 import { setHead } from "./app.js";
 import { esc, fmtDate, fmtDateTime, statusPill, toast } from "./utils.js";
+
+
+function validProjectNumber(value) {
+  return /^\d{6}$/.test(String(value || "").trim());
+}
+
+function projectText(value) {
+  return validProjectNumber(value) ? String(value) : "–";
+}
 
 function mins(t) {
   if (!t) return 0;
@@ -91,6 +101,32 @@ function calcRecord(record) {
   return { gross, pause, net: Math.max(0, gross - pause) };
 }
 
+
+function allocatedDayValues(records) {
+  const result = new Map();
+  const groups = new Map();
+  records.filter(r => r.recordType !== "adjustment" && !isOpen(r)).forEach(r => {
+    const c = calcRecord(r);
+    const key = recordDateKey(r);
+    if (!key || c.gross <= 0) return;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push({ record: r, gross: c.gross });
+  });
+  for (const items of groups.values()) {
+    const totalGross = items.reduce((sum, x) => sum + x.gross, 0);
+    const dayPause = totalGross > 540 ? 45 : totalGross > 360 ? 30 : 0;
+    let allocated = 0;
+    items.forEach((item, index) => {
+      const pause = index === items.length - 1
+        ? dayPause - allocated
+        : Math.round(dayPause * (item.gross / totalGross));
+      allocated += pause;
+      result.set(item.record.id, { gross: item.gross, pause, net: Math.max(0, item.gross - pause) });
+    });
+  }
+  return result;
+}
+
 function isOpen(record) {
   return !!recordStartDate(record) && !recordEndDate(record) && record.status !== "closed";
 }
@@ -107,12 +143,12 @@ function statusLabel(status) {
 
 function requestedTimesText(req) {
   const date = fmtDate(req.requestedDate);
-  return `${date} · ${esc(req.requestedStart || "–")} – ${esc(req.requestedEnd || "–")}`;
+  return `${date} · Projekt ${esc(projectText(req.projectNumber))} · ${esc(req.requestedStart || "–")} – ${esc(req.requestedEnd || "–")}`;
 }
 
 function currentTimesText(req) {
   if (req.requestType !== "correction") return "";
-  return `${fmtDate(req.originalDate)} · ${esc(req.originalStart || "–")} – ${esc(req.originalEnd || "–")}`;
+  return `${fmtDate(req.originalDate)} · Projekt ${esc(projectText(req.originalProjectNumber))} · ${esc(req.originalStart || "–")} – ${esc(req.originalEnd || "–")}`;
 }
 
 async function loadOwnRecords(userId) {
@@ -164,7 +200,7 @@ function missingRequestForm(ctx) {
       </div>
       <form id="missing-request-form" class="form-grid">
         <label class="field"><span>Datum</span><input name="requestedDate" type="date" required max="${localDateKey()}"></label>
-        <div></div>
+        <label class="field"><span>Projektnummer *</span><input name="projectNumber" class="project-number-input" inputmode="numeric" maxlength="6" pattern="[0-9]{6}" placeholder="6-stellig" required></label>
         <label class="field"><span>Gewünschter Beginn</span><input name="requestedStart" type="time" required></label>
         <label class="field"><span>Gewünschtes Ende</span><input name="requestedEnd" type="time" required></label>
         <label class="field full"><span>Begründung *</span><textarea name="reason" required minlength="3" placeholder="Warum konnte die Arbeitszeit nicht regulär gestempelt werden?"></textarea></label>
@@ -185,6 +221,9 @@ function correctionRequestForm() {
         <input type="hidden" name="requestedDate">
         <input type="hidden" name="originalStart">
         <input type="hidden" name="originalEnd">
+        <input type="hidden" name="originalProjectNumber">
+        <label class="field"><span>Projektnummer *</span><input name="projectNumber" class="project-number-input" inputmode="numeric" maxlength="6" pattern="[0-9]{6}" placeholder="6-stellig" required></label>
+        <div></div>
         <label class="field"><span>Gewünschter Beginn</span><input name="requestedStart" type="time" required></label>
         <label class="field"><span>Gewünschtes Ende</span><input name="requestedEnd" type="time" required></label>
         <label class="field full"><span>Begründung *</span><textarea name="reason" required minlength="3" placeholder="Bitte begründen Sie die gewünschte Korrektur."></textarea></label>
@@ -222,12 +261,13 @@ export async function renderZeiterfassung(el, ctx) {
   }
 
   const openRecord = entries.find(isOpen) || null;
+  const allocatedValues = allocatedDayValues(entries);
   const pendingRecordIds = new Set(
     ownRequests.filter(r => r.status === "pending" && r.requestType === "correction").map(r => r.recordId)
   );
 
   const openText = openRecord
-    ? `Arbeitsbeginn heute um ${esc(recordTime(openRecord, "start"))} Uhr`
+    ? `Projekt ${esc(projectText(openRecord.projectNumber))} läuft seit ${esc(recordTime(openRecord, "start"))} Uhr`
     : "Aktuell ist keine Arbeitszeit gestartet.";
 
   el.innerHTML = `
@@ -257,10 +297,12 @@ export async function renderZeiterfassung(el, ctx) {
       <article class="card stamp-card">
         <div class="card-head"><div><h2>Arbeitszeit stempeln</h2><p>Die tatsächliche Uhrzeit wird beim Klick automatisch übernommen.</p></div></div>
         <div class="stamp-clock"><span id="stamp-date"></span><strong id="stamp-clock"></strong></div>
+        <label class="field project-stamp-field"><span>Projektnummer *</span><input id="stamp-project-number" class="project-number-input project-stamp-input" inputmode="numeric" maxlength="6" pattern="[0-9]{6}" placeholder="6-stellige Projektnummer" autocomplete="off"></label>
         <div class="terminal-preview active-terminal">
-          <button class="terminal-btn" id="clock-in-btn" type="button" ${openRecord ? "disabled" : ""}>KOMMEN</button>
+          <button class="terminal-btn" id="clock-in-btn" type="button" disabled>KOMMEN</button>
           <button class="terminal-btn outline" id="clock-out-btn" type="button" ${openRecord ? "" : "disabled"}>GEHEN</button>
           <p class="stamp-status ${openRecord ? "running" : ""}">${openText}</p>
+          <p class="project-stamp-help">Bei einem Projektwechsel neue Projektnummer eingeben und erneut <strong>KOMMEN</strong> klicken. Das vorherige Projekt wird automatisch beendet.</p>
         </div>
       </article>
     </div>
@@ -287,24 +329,26 @@ export async function renderZeiterfassung(el, ctx) {
     <article class="card">
       <div class="card-head"><div><h2>Meine Buchungen</h2><p>Gespeicherte Arbeitszeiten und Stundenkorrekturen. Arbeitszeiten können ausschließlich über einen Korrekturantrag geändert werden.</p></div></div>
       <div class="table-wrap"><table>
-        <thead><tr><th>Datum</th><th>Beginn</th><th>Ende</th><th>Pause</th><th>Arbeitszeit</th><th>Status</th><th>Aktion</th></tr></thead>
+        <thead><tr><th>Datum</th><th>Projekt</th><th>Beginn</th><th>Ende</th><th>Pause</th><th>Arbeitszeit</th><th>Status</th><th>Aktion</th></tr></thead>
         <tbody>
           ${entries.length ? entries.map(r => {
             if (r.recordType === "adjustment") {
               const reason = [r.adjustmentReason, r.adjustmentDetails].filter(Boolean).join(" · ");
               return `<tr class="adjustment-row">
                 <td>${fmtDate(recordDateKey(r))}</td>
+                <td>–</td>
                 <td colspan="3"><strong>Stundenkorrektur</strong><small class="booking-note">${esc(reason || "Korrekturbuchung")}</small></td>
                 <td><strong class="adjustment-value ${Number(r.adjustmentMinutes) >= 0 ? "positive" : "negative"}">${signedHm(r.adjustmentMinutes)}</strong></td>
                 <td>${statusPill("Admin-Buchung", "blue")}</td>
                 <td><span class="muted-small">${esc(r.createdByName || "Personalabteilung")}</span></td>
               </tr>`;
             }
-            const c = calcRecord(r);
+            const c = allocatedValues.get(r.id) || calcRecord(r);
             const open = isOpen(r);
             const pending = pendingRecordIds.has(r.id);
             return `<tr>
               <td>${fmtDate(recordDateKey(r))}</td>
+              <td><strong>${esc(projectText(r.projectNumber))}</strong></td>
               <td>${esc(recordTime(r, "start") || "–")}</td>
               <td>${esc(recordTime(r, "end") || "–")}</td>
               <td>${open ? "–" : hm(c.pause)}</td>
@@ -312,7 +356,7 @@ export async function renderZeiterfassung(el, ctx) {
               <td>${open ? statusPill("läuft", "blue") : statusPill("erfasst", "green")}</td>
               <td>${open ? `<span class="muted-small">erst nach Gehen</span>` : pending ? statusPill("Korrektur beantragt", "yellow") : `<button class="btn small secondary correction-btn" type="button" data-id="${r.id}">Korrektur beantragen</button>`}</td>
             </tr>`;
-          }).join("") : `<tr><td colspan="7" class="empty">Noch keine Buchungen vorhanden.</td></tr>`}
+          }).join("") : `<tr><td colspan="8" class="empty">Noch keine Buchungen vorhanden.</td></tr>`}
         </tbody>
       </table></div>
     </article>
@@ -392,23 +436,55 @@ export async function renderZeiterfassung(el, ctx) {
     tick();
   }, 1000);
 
-  document.getElementById("clock-in-btn").onclick = async () => {
+  const projectInput = document.getElementById("stamp-project-number");
+  const clockInBtn = document.getElementById("clock-in-btn");
+  const normalizeProjectInput = input => {
+    input.value = String(input.value || "").replace(/\D/g, "").slice(0, 6);
+  };
+  el.querySelectorAll(".project-number-input").forEach(input => {
+    input.addEventListener("input", () => {
+      normalizeProjectInput(input);
+      if (input === projectInput) clockInBtn.disabled = !validProjectNumber(input.value);
+    });
+  });
+  if (projectInput) clockInBtn.disabled = !validProjectNumber(projectInput.value);
+
+  clockInBtn.onclick = async () => {
+    const projectNumber = String(projectInput.value || "").trim();
+    if (!validProjectNumber(projectNumber)) { toast("Bitte eine sechsstellige Projektnummer eingeben."); return; }
+    if (openRecord && String(openRecord.projectNumber || "") === projectNumber) {
+      toast(`Projekt ${projectNumber} ist bereits aktiv.`);
+      return;
+    }
     try {
-      await addDoc(collection(db, "timeRecords"), {
+      const newRecord = {
         userId: ctx.profile.id,
         userName: ctx.profile.name || ctx.profile.email || ctx.profile.id,
+        employeeNumber: ctx.profile.employeeNumber || "",
         companyId: ctx.profile.companyId || null,
+        companyNumber: ctx.company?.companyNumber || "",
+        companyAreaNumber: ctx.profile.companyAreaNumber || "",
         supervisorId: ctx.profile.supervisorId || null,
+        projectNumber,
         source: "desktop_stamp",
         status: "open",
         startAt: serverTimestamp(),
         createdAt: serverTimestamp()
-      });
-      toast("Arbeitsbeginn wurde gestempelt.");
+      };
+      if (openRecord) {
+        const batch = writeBatch(db);
+        batch.update(doc(db, "timeRecords", openRecord.id), { endAt: serverTimestamp(), status: "closed", endedAt: serverTimestamp() });
+        batch.set(doc(collection(db, "timeRecords")), newRecord);
+        await batch.commit();
+        toast(`Projekt ${projectText(openRecord.projectNumber)} beendet · Projekt ${projectNumber} gestartet.`);
+      } else {
+        await addDoc(collection(db, "timeRecords"), newRecord);
+        toast(`Arbeitszeit für Projekt ${projectNumber} wurde gestartet.`);
+      }
       renderZeiterfassung(el, ctx);
     } catch (e) {
       console.error(e);
-      toast("Kommen konnte nicht gespeichert werden.");
+      toast("Kommen / Projektwechsel konnte nicht gespeichert werden.");
     }
   };
 
@@ -420,7 +496,7 @@ export async function renderZeiterfassung(el, ctx) {
         status: "closed",
         endedAt: serverTimestamp()
       });
-      toast("Arbeitsende wurde gestempelt.");
+      toast(`Arbeitsende für Projekt ${projectText(openRecord.projectNumber)} wurde gestempelt.`);
       renderZeiterfassung(el, ctx);
     } catch (e) {
       console.error(e);
@@ -441,6 +517,7 @@ export async function renderZeiterfassung(el, ctx) {
     e.preventDefault();
     const data = Object.fromEntries(new FormData(e.currentTarget).entries());
     if (!String(data.reason || "").trim()) { toast("Eine Begründung ist erforderlich."); return; }
+    if (!validProjectNumber(data.projectNumber)) { toast("Bitte eine sechsstellige Projektnummer eingeben."); return; }
     if (mins(data.requestedEnd) <= mins(data.requestedStart)) { toast("Die Endzeit muss nach der Startzeit liegen."); return; }
     const sameDate = entries.some(r => recordDateKey(r) === data.requestedDate && (recordStartDate(r) || recordEndDate(r)));
     if (sameDate) {
@@ -452,8 +529,12 @@ export async function renderZeiterfassung(el, ctx) {
       userId: ctx.profile.id,
       userName: ctx.profile.name || ctx.profile.email || ctx.profile.id,
       companyId: ctx.profile.companyId || null,
+      companyNumber: ctx.company?.companyNumber || "",
+      employeeNumber: ctx.profile.employeeNumber || "",
+      companyAreaNumber: ctx.profile.companyAreaNumber || "",
       supervisorId: ctx.profile.supervisorId || null,
       requestedDate: data.requestedDate,
+      projectNumber: String(data.projectNumber),
       requestedStart: data.requestedStart,
       requestedEnd: data.requestedEnd,
       reason: String(data.reason).trim(),
@@ -475,10 +556,12 @@ export async function renderZeiterfassung(el, ctx) {
       form.elements.requestedDate.value = recordDateKey(record);
       form.elements.originalStart.value = recordTime(record, "start");
       form.elements.originalEnd.value = recordTime(record, "end");
+      form.elements.originalProjectNumber.value = record.projectNumber || "";
+      form.elements.projectNumber.value = record.projectNumber || "";
       form.elements.requestedStart.value = recordTime(record, "start");
       form.elements.requestedEnd.value = recordTime(record, "end");
       form.elements.reason.value = "";
-      document.getElementById("correction-current-text").textContent = `Aktuell: ${fmtDate(recordDateKey(record))} · ${recordTime(record, "start") || "–"} – ${recordTime(record, "end") || "–"}`;
+      document.getElementById("correction-current-text").textContent = `Aktuell: ${fmtDate(recordDateKey(record))} · Projekt ${projectText(record.projectNumber)} · ${recordTime(record, "start") || "–"} – ${recordTime(record, "end") || "–"}`;
       correctionPanel.scrollIntoView({ behavior: "smooth", block: "center" });
     };
   });
@@ -487,19 +570,25 @@ export async function renderZeiterfassung(el, ctx) {
     e.preventDefault();
     const data = Object.fromEntries(new FormData(e.currentTarget).entries());
     if (!String(data.reason || "").trim()) { toast("Eine Begründung ist erforderlich."); return; }
+    if (!validProjectNumber(data.projectNumber)) { toast("Bitte eine sechsstellige Projektnummer eingeben."); return; }
     if (mins(data.requestedEnd) <= mins(data.requestedStart)) { toast("Die Endzeit muss nach der Startzeit liegen."); return; }
-    if (data.requestedStart === data.originalStart && data.requestedEnd === data.originalEnd) { toast("Bitte ändern Sie mindestens eine Uhrzeit."); return; }
+    if (data.requestedStart === data.originalStart && data.requestedEnd === data.originalEnd && data.projectNumber === data.originalProjectNumber) { toast("Bitte ändern Sie mindestens eine Uhrzeit oder die Projektnummer."); return; }
     await addDoc(collection(db, "timeCorrectionRequests"), {
       requestType: "correction",
       recordId: data.recordId,
       userId: ctx.profile.id,
       userName: ctx.profile.name || ctx.profile.email || ctx.profile.id,
       companyId: ctx.profile.companyId || null,
+      companyNumber: ctx.company?.companyNumber || "",
+      employeeNumber: ctx.profile.employeeNumber || "",
+      companyAreaNumber: ctx.profile.companyAreaNumber || "",
       supervisorId: ctx.profile.supervisorId || null,
       originalDate: data.requestedDate,
       originalStart: data.originalStart,
       originalEnd: data.originalEnd,
+      originalProjectNumber: data.originalProjectNumber || "",
       requestedDate: data.requestedDate,
+      projectNumber: String(data.projectNumber),
       requestedStart: data.requestedStart,
       requestedEnd: data.requestedEnd,
       reason: String(data.reason).trim(),
@@ -525,7 +614,11 @@ export async function renderZeiterfassung(el, ctx) {
             userId: req.userId,
             userName: req.userName || req.userId,
             companyId: req.companyId || null,
+            companyNumber: req.companyNumber || "",
+            employeeNumber: req.employeeNumber || "",
+            companyAreaNumber: req.companyAreaNumber || "",
             supervisorId: req.supervisorId || null,
+            projectNumber: req.projectNumber,
             source: "approved_request",
             status: "closed",
             startAt: Timestamp.fromDate(startDate),
@@ -540,6 +633,7 @@ export async function renderZeiterfassung(el, ctx) {
           await updateDoc(doc(db, "timeRecords", req.recordId), {
             startAt: Timestamp.fromDate(startDate),
             endAt: Timestamp.fromDate(endDate),
+            projectNumber: req.projectNumber,
             status: "closed",
             correctedByRequestId: req.id,
             correctedBy: ctx.profile.id,

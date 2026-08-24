@@ -88,13 +88,26 @@ function currentMonthBalance(profile,timeRecords,vacations){
     .reduce((sum,v)=>sum+overlapWorkdays(v.from,v.to,calcStart,today),0);
   const targetMinutes=Math.max(0,Math.round((weekdays-approvedLeaveDays)*dailyTargetMinutes));
 
-  const actualMinutes=Math.round(timeRecords.reduce((sum,r)=>{
+  let adjustmentMinutes=0;
+  const grossByDay=new Map();
+  timeRecords.forEach(r=>{
     const start=recordStart(r);
-    if(!start) return sum;
+    if(!start) return;
     const day=new Date(start.getFullYear(),start.getMonth(),start.getDate(),12);
-    if(day<calcStart||day>today) return sum;
-    return sum+recordNetMinutes(r,now);
-  },0));
+    if(day<calcStart||day>today) return;
+    if(r.recordType==="adjustment"){ adjustmentMinutes+=Number(r.adjustmentMinutes)||0; return; }
+    let end=recordEnd(r);
+    if(!end&&r.status!=="closed") end=now;
+    if(!end||end<start) return;
+    const gross=Math.max(0,Math.round((end-start)/60000));
+    const key=localDateKey(start);
+    grossByDay.set(key,(grossByDay.get(key)||0)+gross);
+  });
+  const workedMinutes=[...grossByDay.values()].reduce((sum,gross)=>{
+    const pause=gross>540?45:gross>360?30:0;
+    return sum+Math.max(0,gross-pause);
+  },0);
+  const actualMinutes=Math.round(workedMinutes+adjustmentMinutes);
 
   return {targetMinutes,actualMinutes,balanceMinutes:actualMinutes-targetMinutes};
 }

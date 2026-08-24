@@ -16,6 +16,8 @@ const FIELD_LABELS = {
   endDate: "Austritt",
   weeklyHours: "Wochenstunden",
   vacationDays: "Urlaubstage/Jahr",
+  employeeNumber: "Mitarbeiternummer",
+  companyAreaNumber: "Firmenbereich-Nr.",
   bereiche: "Schulungsbereiche",
   extraTrainings: "Zusatzschulungen"
 };
