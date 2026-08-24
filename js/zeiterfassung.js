@@ -24,6 +24,13 @@ function hm(m) {
   return `${Math.floor(safe / 60)}:${String(safe % 60).padStart(2, "0")} h`;
 }
 
+function signedHm(m) {
+  const value = Math.round(Number(m) || 0);
+  const sign = value > 0 ? "+" : value < 0 ? "−" : "";
+  const safe = Math.abs(value);
+  return `${sign}${Math.floor(safe / 60)}:${String(safe % 60).padStart(2, "0")} h`;
+}
+
 function pad(v) {
   return String(v).padStart(2, "0");
 }
@@ -64,6 +71,7 @@ function recordEndDate(record) {
 }
 
 function recordDateKey(record) {
+  if (record.recordType === "adjustment") return record.adjustmentDate || "";
   const start = recordStartDate(record);
   return record.date || (start ? localDateKey(start) : "");
 }
@@ -112,9 +120,14 @@ async function loadOwnRecords(userId) {
   return snap.docs
     .map(d => ({ id: d.id, ...d.data() }))
     .sort((a, b) => {
-      const aa = recordStartDate(a)?.getTime() || 0;
-      const bb = recordStartDate(b)?.getTime() || 0;
-      return bb - aa;
+      const dateValue = r => {
+        if (r.recordType === "adjustment" && r.adjustmentDate) {
+          const d = new Date(`${r.adjustmentDate}T12:00:00`);
+          if (!Number.isNaN(d.getTime())) return d.getTime();
+        }
+        return recordStartDate(r)?.getTime() || toDate(r.createdAt)?.getTime() || 0;
+      };
+      return dateValue(b) - dateValue(a);
     });
 }
 
@@ -186,9 +199,27 @@ export async function renderZeiterfassung(el, ctx) {
   let entries = [];
   let ownRequests = [];
   let teamRequests = [];
+  let adminEmployees = [];
+  let adminAdjustments = [];
   try { entries = await loadOwnRecords(ctx.profile.id); } catch (e) { console.error("Zeitdaten konnten nicht geladen werden", e); }
   try { ownRequests = await loadOwnRequests(ctx.profile.id); } catch (e) { console.error("Zeitanträge konnten nicht geladen werden", e); }
   try { teamRequests = await loadTeamRequests(ctx); } catch (e) { console.error("Team-Zeitanträge konnten nicht geladen werden", e); }
+  if (ctx.profile.role === "admin") {
+    try {
+      const s = await getDocs(collection(db, "users"));
+      adminEmployees = s.docs.map(d => ({ id: d.id, ...d.data() }))
+        .filter(u => u.active !== false)
+        .sort((a,b) => String(a.name || a.email || "").localeCompare(String(b.name || b.email || ""), "de"));
+      const t = await getDocs(collection(db, "timeRecords"));
+      adminAdjustments = t.docs.map(d => ({ id: d.id, ...d.data() }))
+        .filter(r => r.recordType === "adjustment")
+        .sort((a,b) => {
+          const aa = a.adjustmentDate ? new Date(`${a.adjustmentDate}T12:00:00`).getTime() : toDate(a.createdAt)?.getTime() || 0;
+          const bb = b.adjustmentDate ? new Date(`${b.adjustmentDate}T12:00:00`).getTime() : toDate(b.createdAt)?.getTime() || 0;
+          return bb-aa;
+        }).slice(0, 10);
+    } catch (e) { console.error("Mitarbeiterliste/Korrekturbuchungen konnten nicht geladen werden", e); }
+  }
 
   const openRecord = entries.find(isOpen) || null;
   const pendingRecordIds = new Set(
@@ -234,12 +265,41 @@ export async function renderZeiterfassung(el, ctx) {
       </article>
     </div>
 
+    ${ctx.profile.role === "admin" ? `
+    <article class="card admin-adjustment-card">
+      <div class="card-head"><div><h2>Stundenkorrektur buchen</h2><p>Manuelle Zu- oder Abbuchungen auf dem Stundenkonto werden als eigene Buchung protokolliert.</p></div></div>
+      <div class="info-strip">Beispiele: Auszahlung von Überstunden, Übertrag/Korrektur oder Umwandlung eines Urlaubstages. Die Buchung ersetzt keine Kommen-/Gehen-Zeit und bleibt in der Buchungsliste nachvollziehbar.</div>
+      <form id="admin-hours-adjustment-form" class="form-grid">
+        <label class="field"><span>Mitarbeiter</span><select name="userId" required><option value="">Bitte wählen</option>${adminEmployees.map(u => `<option value="${esc(u.id)}">${esc(u.name || u.email || u.username || u.id)}</option>`).join("")}</select></label>
+        <label class="field"><span>Buchungsdatum</span><input name="adjustmentDate" type="date" required max="${localDateKey()}" value="${localDateKey()}"></label>
+        <label class="field"><span>Buchungsart</span><select name="direction" required><option value="plus">Stunden gutschreiben (+)</option><option value="minus">Stunden abziehen (−)</option></select></label>
+        <label class="field"><span>Grund</span><select name="reasonPreset" required><option value="">Bitte wählen</option><option>Auszahlung von Überstunden</option><option>Urlaubstag in Stunden umgewandelt</option><option>Übertrag / Stundenkorrektur</option><option>Sonstiges</option></select></label>
+        <label class="field"><span>Stunden</span><input name="hours" type="number" min="0" max="999" step="1" value="0" required></label>
+        <label class="field"><span>Minuten</span><input name="minutes" type="number" min="0" max="59" step="1" value="0" required></label>
+        <label class="field full"><span>Bemerkung / Erläuterung</span><textarea name="reasonDetails" placeholder="Optional ergänzende Erläuterung; bei 'Sonstiges' erforderlich."></textarea></label>
+        <div class="field full"><button class="btn primary" type="submit">Stundenkorrektur buchen</button></div>
+      </form>
+      <div class="request-list-head"><strong>Letzte Korrekturbuchungen</strong><span>${adminAdjustments.length} angezeigt</span></div>
+      <div class="request-list">${adminAdjustments.length ? adminAdjustments.map(r => `
+        <div class="request-row"><div><strong>${esc(r.userName || r.userId)} · ${signedHm(r.adjustmentMinutes)}</strong><span>${fmtDate(r.adjustmentDate)} · ${esc(r.adjustmentReason || "Stundenkorrektur")}</span>${r.adjustmentDetails ? `<small>${esc(r.adjustmentDetails)}</small>` : ""}</div>${statusPill("gebucht", "blue")}</div>`).join("") : `<div class="empty compact-empty">Noch keine Stundenkorrekturen gebucht.</div>`}</div>
+    </article>` : ""}
+
     <article class="card">
-      <div class="card-head"><div><h2>Meine Buchungen</h2><p>Gespeicherte Arbeitszeiten. Änderungen sind ausschließlich über einen Korrekturantrag möglich.</p></div></div>
+      <div class="card-head"><div><h2>Meine Buchungen</h2><p>Gespeicherte Arbeitszeiten und Stundenkorrekturen. Arbeitszeiten können ausschließlich über einen Korrekturantrag geändert werden.</p></div></div>
       <div class="table-wrap"><table>
         <thead><tr><th>Datum</th><th>Beginn</th><th>Ende</th><th>Pause</th><th>Arbeitszeit</th><th>Status</th><th>Aktion</th></tr></thead>
         <tbody>
           ${entries.length ? entries.map(r => {
+            if (r.recordType === "adjustment") {
+              const reason = [r.adjustmentReason, r.adjustmentDetails].filter(Boolean).join(" · ");
+              return `<tr class="adjustment-row">
+                <td>${fmtDate(recordDateKey(r))}</td>
+                <td colspan="3"><strong>Stundenkorrektur</strong><small class="booking-note">${esc(reason || "Korrekturbuchung")}</small></td>
+                <td><strong class="adjustment-value ${Number(r.adjustmentMinutes) >= 0 ? "positive" : "negative"}">${signedHm(r.adjustmentMinutes)}</strong></td>
+                <td>${statusPill("Admin-Buchung", "blue")}</td>
+                <td><span class="muted-small">${esc(r.createdByName || "Personalabteilung")}</span></td>
+              </tr>`;
+            }
             const c = calcRecord(r);
             const open = isOpen(r);
             const pending = pendingRecordIds.has(r.id);
@@ -277,6 +337,47 @@ export async function renderZeiterfassung(el, ctx) {
         </div>
       </article>` : ""}
   `;
+
+  const adminAdjustmentForm = document.getElementById("admin-hours-adjustment-form");
+  if (adminAdjustmentForm) {
+    adminAdjustmentForm.onsubmit = async e => {
+      e.preventDefault();
+      const data = Object.fromEntries(new FormData(e.currentTarget).entries());
+      const employee = adminEmployees.find(u => u.id === data.userId);
+      if (!employee) { toast("Bitte einen Mitarbeiter auswählen."); return; }
+      const hours = Number(data.hours || 0);
+      const minutes = Number(data.minutes || 0);
+      const total = Math.round(hours * 60 + minutes);
+      if (!Number.isFinite(total) || total <= 0) { toast("Bitte eine Stunden- oder Minutenanzahl größer 0 eingeben."); return; }
+      if (minutes < 0 || minutes > 59) { toast("Minuten müssen zwischen 0 und 59 liegen."); return; }
+      const details = String(data.reasonDetails || "").trim();
+      if (data.reasonPreset === "Sonstiges" && !details) { toast("Bei 'Sonstiges' ist eine Erläuterung erforderlich."); return; }
+      const signedMinutes = data.direction === "minus" ? -total : total;
+      try {
+        await addDoc(collection(db, "timeRecords"), {
+          recordType: "adjustment",
+          source: "admin_adjustment",
+          status: "closed",
+          userId: employee.id,
+          userName: employee.name || employee.email || employee.username || employee.id,
+          companyId: employee.companyId || null,
+          supervisorId: employee.supervisorId || null,
+          adjustmentDate: data.adjustmentDate,
+          adjustmentMinutes: signedMinutes,
+          adjustmentReason: String(data.reasonPreset || "Stundenkorrektur"),
+          adjustmentDetails: details,
+          createdBy: ctx.profile.id,
+          createdByName: ctx.profile.name || ctx.profile.email || ctx.profile.id,
+          createdAt: serverTimestamp()
+        });
+        toast(`Stundenkorrektur ${signedHm(signedMinutes)} wurde für ${employee.name || employee.email || "den Mitarbeiter"} gebucht.`);
+        renderZeiterfassung(el, ctx);
+      } catch (err) {
+        console.error(err);
+        toast("Die Stundenkorrektur konnte nicht gespeichert werden.");
+      }
+    };
+  }
 
   const clockDateEl = document.getElementById("stamp-date");
   const clockTimeEl = document.getElementById("stamp-clock");
