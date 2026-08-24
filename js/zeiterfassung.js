@@ -143,12 +143,14 @@ function statusLabel(status) {
 
 function requestedTimesText(req) {
   const date = fmtDate(req.requestedDate);
-  return `${date} · Projekt ${esc(projectText(req.projectNumber))} · ${esc(req.requestedStart || "–")} – ${esc(req.requestedEnd || "–")}`;
+  const project = validProjectNumber(req.projectNumber) ? ` · Projekt ${esc(req.projectNumber)}` : "";
+  return `${date}${project} · ${esc(req.requestedStart || "–")} – ${esc(req.requestedEnd || "–")}`;
 }
 
 function currentTimesText(req) {
   if (req.requestType !== "correction") return "";
-  return `${fmtDate(req.originalDate)} · Projekt ${esc(projectText(req.originalProjectNumber))} · ${esc(req.originalStart || "–")} – ${esc(req.originalEnd || "–")}`;
+  const project = validProjectNumber(req.originalProjectNumber) ? ` · Projekt ${esc(req.originalProjectNumber)}` : "";
+  return `${fmtDate(req.originalDate)}${project} · ${esc(req.originalStart || "–")} – ${esc(req.originalEnd || "–")}`;
 }
 
 async function loadOwnRecords(userId) {
@@ -191,7 +193,7 @@ async function loadTeamRequests(ctx) {
     });
 }
 
-function missingRequestForm(ctx) {
+function missingRequestForm(ctx, projectTracking) {
   return `
     <div class="request-panel hidden" id="missing-request-panel">
       <div class="request-panel-head">
@@ -200,7 +202,7 @@ function missingRequestForm(ctx) {
       </div>
       <form id="missing-request-form" class="form-grid">
         <label class="field"><span>Datum</span><input name="requestedDate" type="date" required max="${localDateKey()}"></label>
-        <label class="field"><span>Projektnummer *</span><input name="projectNumber" class="project-number-input" inputmode="numeric" maxlength="6" pattern="[0-9]{6}" placeholder="6-stellig" required></label>
+        ${projectTracking ? `<label class="field"><span>Projektnummer *</span><input name="projectNumber" class="project-number-input" inputmode="numeric" maxlength="6" pattern="[0-9]{6}" placeholder="6-stellig" required></label>` : ""}
         <label class="field"><span>Gewünschter Beginn</span><input name="requestedStart" type="time" required></label>
         <label class="field"><span>Gewünschtes Ende</span><input name="requestedEnd" type="time" required></label>
         <label class="field full"><span>Begründung *</span><textarea name="reason" required minlength="3" placeholder="Warum konnte die Arbeitszeit nicht regulär gestempelt werden?"></textarea></label>
@@ -209,7 +211,7 @@ function missingRequestForm(ctx) {
     </div>`;
 }
 
-function correctionRequestForm() {
+function correctionRequestForm(projectTracking) {
   return `
     <div class="request-panel hidden" id="correction-request-panel">
       <div class="request-panel-head">
@@ -222,8 +224,7 @@ function correctionRequestForm() {
         <input type="hidden" name="originalStart">
         <input type="hidden" name="originalEnd">
         <input type="hidden" name="originalProjectNumber">
-        <label class="field"><span>Projektnummer *</span><input name="projectNumber" class="project-number-input" inputmode="numeric" maxlength="6" pattern="[0-9]{6}" placeholder="6-stellig" required></label>
-        <div></div>
+        ${projectTracking ? `<label class="field"><span>Projektnummer *</span><input name="projectNumber" class="project-number-input" inputmode="numeric" maxlength="6" pattern="[0-9]{6}" placeholder="6-stellig" required></label><div></div>` : `<input type="hidden" name="projectNumber" value="">`}
         <label class="field"><span>Gewünschter Beginn</span><input name="requestedStart" type="time" required></label>
         <label class="field"><span>Gewünschtes Ende</span><input name="requestedEnd" type="time" required></label>
         <label class="field full"><span>Begründung *</span><textarea name="reason" required minlength="3" placeholder="Bitte begründen Sie die gewünschte Korrektur."></textarea></label>
@@ -234,6 +235,7 @@ function correctionRequestForm() {
 
 export async function renderZeiterfassung(el, ctx) {
   setHead("Zeiterfassung", "Arbeitszeit stempeln, Buchungen einsehen und notwendige Korrekturen beantragen.");
+  const projectTracking = ctx.profile.projectTimeTracking === true;
 
   let entries = [];
   let ownRequests = [];
@@ -267,7 +269,9 @@ export async function renderZeiterfassung(el, ctx) {
   );
 
   const openText = openRecord
-    ? `Projekt ${esc(projectText(openRecord.projectNumber))} läuft seit ${esc(recordTime(openRecord, "start"))} Uhr`
+    ? (projectTracking && validProjectNumber(openRecord.projectNumber)
+        ? `Projekt ${esc(openRecord.projectNumber)} läuft seit ${esc(recordTime(openRecord, "start"))} Uhr`
+        : `Arbeitszeit läuft seit ${esc(recordTime(openRecord, "start"))} Uhr`)
     : "Aktuell ist keine Arbeitszeit gestartet.";
 
   el.innerHTML = `
@@ -276,8 +280,8 @@ export async function renderZeiterfassung(el, ctx) {
         <div class="card-head"><div><h2>Anträge zur Zeiterfassung</h2><p>Nachträgliche Erfassungen und Korrekturen werden erst nach Freigabe wirksam.</p></div></div>
         <div class="info-strip">Bereits gestempelte Zeiten können nicht direkt geändert werden. Für jede nachträgliche Änderung ist eine Begründung erforderlich.</div>
         <button class="btn secondary" type="button" id="open-missing-request">+ Nachträgliche Zeiterfassung beantragen</button>
-        ${missingRequestForm(ctx)}
-        ${correctionRequestForm()}
+        ${missingRequestForm(ctx, projectTracking)}
+        ${correctionRequestForm(projectTracking)}
         <div class="request-list-head"><strong>Meine Anträge</strong><span>${ownRequests.length} Einträge</span></div>
         <div class="request-list">
           ${ownRequests.length ? ownRequests.map(r => `
@@ -297,12 +301,12 @@ export async function renderZeiterfassung(el, ctx) {
       <article class="card stamp-card">
         <div class="card-head"><div><h2>Arbeitszeit stempeln</h2><p>Die tatsächliche Uhrzeit wird beim Klick automatisch übernommen.</p></div></div>
         <div class="stamp-clock"><span id="stamp-date"></span><strong id="stamp-clock"></strong></div>
-        <label class="field project-stamp-field"><span>Projektnummer *</span><input id="stamp-project-number" class="project-number-input project-stamp-input" inputmode="numeric" maxlength="6" pattern="[0-9]{6}" placeholder="6-stellige Projektnummer" autocomplete="off"></label>
+        ${projectTracking ? `<label class="field project-stamp-field"><span>Projektnummer *</span><input id="stamp-project-number" class="project-number-input project-stamp-input" inputmode="numeric" maxlength="6" pattern="[0-9]{6}" placeholder="6-stellige Projektnummer" autocomplete="off"></label>` : ""}
         <div class="terminal-preview active-terminal">
-          <button class="terminal-btn" id="clock-in-btn" type="button" disabled>KOMMEN</button>
+          <button class="terminal-btn" id="clock-in-btn" type="button" ${projectTracking || openRecord ? "disabled" : ""}>KOMMEN</button>
           <button class="terminal-btn outline" id="clock-out-btn" type="button" ${openRecord ? "" : "disabled"}>GEHEN</button>
           <p class="stamp-status ${openRecord ? "running" : ""}">${openText}</p>
-          <p class="project-stamp-help">Bei einem Projektwechsel neue Projektnummer eingeben und erneut <strong>KOMMEN</strong> klicken. Das vorherige Projekt wird automatisch beendet.</p>
+          ${projectTracking ? `<p class="project-stamp-help">Bei einem Projektwechsel neue Projektnummer eingeben und erneut <strong>KOMMEN</strong> klicken. Das vorherige Projekt wird automatisch beendet.</p>` : ""}
         </div>
       </article>
     </div>
@@ -447,13 +451,18 @@ export async function renderZeiterfassung(el, ctx) {
       if (input === projectInput) clockInBtn.disabled = !validProjectNumber(input.value);
     });
   });
-  if (projectInput) clockInBtn.disabled = !validProjectNumber(projectInput.value);
+  if (projectTracking && projectInput) clockInBtn.disabled = !validProjectNumber(projectInput.value);
+  if (!projectTracking) clockInBtn.disabled = !!openRecord;
 
   clockInBtn.onclick = async () => {
-    const projectNumber = String(projectInput.value || "").trim();
-    if (!validProjectNumber(projectNumber)) { toast("Bitte eine sechsstellige Projektnummer eingeben."); return; }
-    if (openRecord && String(openRecord.projectNumber || "") === projectNumber) {
+    const projectNumber = projectTracking ? String(projectInput?.value || "").trim() : "";
+    if (projectTracking && !validProjectNumber(projectNumber)) { toast("Bitte eine sechsstellige Projektnummer eingeben."); return; }
+    if (projectTracking && openRecord && String(openRecord.projectNumber || "") === projectNumber) {
       toast(`Projekt ${projectNumber} ist bereits aktiv.`);
+      return;
+    }
+    if (!projectTracking && openRecord) {
+      toast("Die Arbeitszeit läuft bereits. Bitte zuerst GEHEN stempeln.");
       return;
     }
     try {
@@ -464,6 +473,7 @@ export async function renderZeiterfassung(el, ctx) {
         companyId: ctx.profile.companyId || null,
         companyNumber: ctx.company?.companyNumber || "",
         companyAreaNumber: ctx.profile.companyAreaNumber || "",
+        projectTimeTracking: projectTracking,
         supervisorId: ctx.profile.supervisorId || null,
         projectNumber,
         source: "desktop_stamp",
@@ -479,7 +489,7 @@ export async function renderZeiterfassung(el, ctx) {
         toast(`Projekt ${projectText(openRecord.projectNumber)} beendet · Projekt ${projectNumber} gestartet.`);
       } else {
         await addDoc(collection(db, "timeRecords"), newRecord);
-        toast(`Arbeitszeit für Projekt ${projectNumber} wurde gestartet.`);
+        toast(projectTracking ? `Arbeitszeit für Projekt ${projectNumber} wurde gestartet.` : "Arbeitszeit wurde gestartet.");
       }
       renderZeiterfassung(el, ctx);
     } catch (e) {
@@ -496,7 +506,7 @@ export async function renderZeiterfassung(el, ctx) {
         status: "closed",
         endedAt: serverTimestamp()
       });
-      toast(`Arbeitsende für Projekt ${projectText(openRecord.projectNumber)} wurde gestempelt.`);
+      toast(projectTracking && validProjectNumber(openRecord.projectNumber) ? `Arbeitsende für Projekt ${openRecord.projectNumber} wurde gestempelt.` : "Arbeitsende wurde gestempelt.");
       renderZeiterfassung(el, ctx);
     } catch (e) {
       console.error(e);
@@ -517,7 +527,7 @@ export async function renderZeiterfassung(el, ctx) {
     e.preventDefault();
     const data = Object.fromEntries(new FormData(e.currentTarget).entries());
     if (!String(data.reason || "").trim()) { toast("Eine Begründung ist erforderlich."); return; }
-    if (!validProjectNumber(data.projectNumber)) { toast("Bitte eine sechsstellige Projektnummer eingeben."); return; }
+    if (projectTracking && !validProjectNumber(data.projectNumber)) { toast("Bitte eine sechsstellige Projektnummer eingeben."); return; }
     if (mins(data.requestedEnd) <= mins(data.requestedStart)) { toast("Die Endzeit muss nach der Startzeit liegen."); return; }
     const sameDate = entries.some(r => recordDateKey(r) === data.requestedDate && (recordStartDate(r) || recordEndDate(r)));
     if (sameDate) {
@@ -532,9 +542,10 @@ export async function renderZeiterfassung(el, ctx) {
       companyNumber: ctx.company?.companyNumber || "",
       employeeNumber: ctx.profile.employeeNumber || "",
       companyAreaNumber: ctx.profile.companyAreaNumber || "",
+      projectTimeTracking: projectTracking,
       supervisorId: ctx.profile.supervisorId || null,
       requestedDate: data.requestedDate,
-      projectNumber: String(data.projectNumber),
+      projectNumber: projectTracking ? String(data.projectNumber) : "",
       requestedStart: data.requestedStart,
       requestedEnd: data.requestedEnd,
       reason: String(data.reason).trim(),
@@ -556,12 +567,14 @@ export async function renderZeiterfassung(el, ctx) {
       form.elements.requestedDate.value = recordDateKey(record);
       form.elements.originalStart.value = recordTime(record, "start");
       form.elements.originalEnd.value = recordTime(record, "end");
-      form.elements.originalProjectNumber.value = record.projectNumber || "";
-      form.elements.projectNumber.value = record.projectNumber || "";
+      form.elements.originalProjectNumber.value = projectTracking ? (record.projectNumber || "") : "";
+      form.elements.projectNumber.value = projectTracking ? (record.projectNumber || "") : "";
       form.elements.requestedStart.value = recordTime(record, "start");
       form.elements.requestedEnd.value = recordTime(record, "end");
       form.elements.reason.value = "";
-      document.getElementById("correction-current-text").textContent = `Aktuell: ${fmtDate(recordDateKey(record))} · Projekt ${projectText(record.projectNumber)} · ${recordTime(record, "start") || "–"} – ${recordTime(record, "end") || "–"}`;
+      document.getElementById("correction-current-text").textContent = projectTracking && validProjectNumber(record.projectNumber)
+        ? `Aktuell: ${fmtDate(recordDateKey(record))} · Projekt ${record.projectNumber} · ${recordTime(record, "start") || "–"} – ${recordTime(record, "end") || "–"}`
+        : `Aktuell: ${fmtDate(recordDateKey(record))} · ${recordTime(record, "start") || "–"} – ${recordTime(record, "end") || "–"}`;
       correctionPanel.scrollIntoView({ behavior: "smooth", block: "center" });
     };
   });
@@ -570,9 +583,10 @@ export async function renderZeiterfassung(el, ctx) {
     e.preventDefault();
     const data = Object.fromEntries(new FormData(e.currentTarget).entries());
     if (!String(data.reason || "").trim()) { toast("Eine Begründung ist erforderlich."); return; }
-    if (!validProjectNumber(data.projectNumber)) { toast("Bitte eine sechsstellige Projektnummer eingeben."); return; }
+    if (projectTracking && !validProjectNumber(data.projectNumber)) { toast("Bitte eine sechsstellige Projektnummer eingeben."); return; }
     if (mins(data.requestedEnd) <= mins(data.requestedStart)) { toast("Die Endzeit muss nach der Startzeit liegen."); return; }
-    if (data.requestedStart === data.originalStart && data.requestedEnd === data.originalEnd && data.projectNumber === data.originalProjectNumber) { toast("Bitte ändern Sie mindestens eine Uhrzeit oder die Projektnummer."); return; }
+    const projectChanged = projectTracking && data.projectNumber !== data.originalProjectNumber;
+    if (data.requestedStart === data.originalStart && data.requestedEnd === data.originalEnd && !projectChanged) { toast(projectTracking ? "Bitte ändern Sie mindestens eine Uhrzeit oder die Projektnummer." : "Bitte ändern Sie mindestens eine Uhrzeit."); return; }
     await addDoc(collection(db, "timeCorrectionRequests"), {
       requestType: "correction",
       recordId: data.recordId,
@@ -582,13 +596,14 @@ export async function renderZeiterfassung(el, ctx) {
       companyNumber: ctx.company?.companyNumber || "",
       employeeNumber: ctx.profile.employeeNumber || "",
       companyAreaNumber: ctx.profile.companyAreaNumber || "",
+      projectTimeTracking: projectTracking,
       supervisorId: ctx.profile.supervisorId || null,
       originalDate: data.requestedDate,
       originalStart: data.originalStart,
       originalEnd: data.originalEnd,
       originalProjectNumber: data.originalProjectNumber || "",
       requestedDate: data.requestedDate,
-      projectNumber: String(data.projectNumber),
+      projectNumber: projectTracking ? String(data.projectNumber) : "",
       requestedStart: data.requestedStart,
       requestedEnd: data.requestedEnd,
       reason: String(data.reason).trim(),
@@ -617,6 +632,7 @@ export async function renderZeiterfassung(el, ctx) {
             companyNumber: req.companyNumber || "",
             employeeNumber: req.employeeNumber || "",
             companyAreaNumber: req.companyAreaNumber || "",
+            projectTimeTracking: req.projectTimeTracking === true,
             supervisorId: req.supervisorId || null,
             projectNumber: req.projectNumber,
             source: "approved_request",

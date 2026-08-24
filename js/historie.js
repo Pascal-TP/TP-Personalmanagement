@@ -18,6 +18,7 @@ const FIELD_LABELS = {
   vacationDays: "Urlaubstage/Jahr",
   employeeNumber: "Mitarbeiternummer",
   companyAreaNumber: "Firmenbereich-Nr.",
+  projectTimeTracking: "Zeiterfassung auf Projekte",
   bereiche: "Schulungsbereiche",
   extraTrainings: "Zusatzschulungen"
 };
@@ -41,6 +42,7 @@ function displayValue(key,value,companies,userMap,trainingMap){
   if(key==="role") return ROLE_LABELS[value] || value;
   if(key==="active") return value===false ? "inaktiv" : "aktiv";
   if(key==="hasRealEmail") return value===false ? "Benutzername" : "E-Mail-Adresse";
+  if(key==="projectTimeTracking") return value===true ? "Ja" : "Nein";
   if(key==="startDate"||key==="endDate") return fmtDate(value);
   if(key==="bereiche") return Array.isArray(value) && value.length ? value.join(", ") : "–";
   if(key==="extraTrainings") return Array.isArray(value) && value.length ? value.map(id=>trainingMap.get(id)?.title||id).join(", ") : "–";
