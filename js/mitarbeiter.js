@@ -1,11 +1,27 @@
 import { firebaseConfig, db } from "./firebase.js";
 import { initializeApp, deleteApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-import { getAuth, createUserWithEmailAndPassword, signOut as secondarySignOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+import { initializeAuth, inMemoryPersistence, createUserWithEmailAndPassword, signOut as secondarySignOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
 import { collection, getDocs, doc, setDoc, updateDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 import { setHead } from "./app.js";
 import { AREA_NAMES, esc, fmtDate, syntheticEmail, ROLE_LABELS, toast } from "./utils.js";
 
-async function createAuthAccount(email,password){const name=`creator-${Date.now()}`,app=initializeApp(firebaseConfig,name),a=getAuth(app);try{const cred=await createUserWithEmailAndPassword(a,email,password);await secondarySignOut(a);return cred.user.uid}finally{await deleteApp(app)}}
+async function createAuthAccount(email,password){
+  // Für die Benutzeranlage wird bewusst eine getrennte, nur temporäre Auth-Instanz
+  // ohne Browser-Persistenz verwendet. createUserWithEmailAndPassword meldet den
+  // neu erzeugten Benutzer automatisch an; mit inMemoryPersistence kann dieser
+  // Login nicht in Local-/Session-Storage des Browsers hängen bleiben.
+  const name=`creator-${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
+  const app=initializeApp(firebaseConfig,name);
+  const a=initializeAuth(app,{persistence:inMemoryPersistence});
+  try{
+    const cred=await createUserWithEmailAndPassword(a,email,password);
+    const uid=cred.user.uid;
+    await secondarySignOut(a);
+    return uid;
+  }finally{
+    await deleteApp(app);
+  }
+}
 export async function renderMitarbeiter(el,ctx){
   setHead("Mitarbeiter","Mitarbeiter anzeigen, anlegen und Personal-/Schulungszuordnungen verwalten.");
   const [uSnap,cSnap,tSnap]=await Promise.all([getDocs(collection(db,'users')),getDocs(collection(db,'companies')),getDocs(collection(db,'trainings'))]);
