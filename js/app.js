@@ -22,7 +22,7 @@ const views = {
   dashboard:{label:"Dashboard",icon:"⌂",roles:["employee","supervisor","admin"],render:renderDashboard},
   time:{label:"Zeiterfassung",icon:"◷",roles:["employee","supervisor","admin"],render:renderZeiterfassung},
   vacation:{label:"Urlaub & Abwesenheit",icon:"☀",roles:["employee","supervisor","admin"],render:renderUrlaub},
-  payroll:{label:"Lohn-/Gehaltsabrechnung",icon:"€",roles:["employee","supervisor","admin"],render:renderAbrechnungen},
+  payroll:{label:"Lohn-/Gehaltsabrechnung",icon:"€",roles:["employee","admin"],render:renderAbrechnungen},
   trainings:{label:"Schulungen",icon:"▤",roles:["employee","supervisor","admin"],render:renderSchulungen},
   employees:{label:"Mitarbeiter",icon:"♙",roles:["admin"],render:renderMitarbeiter},
   news:{label:"News & Hinweise",icon:"●",roles:["admin"],render:renderNews},
