@@ -52,3 +52,5 @@
 
 /* TP-Personalmanagement V1.5 – Datensicherung */
 .backup-top-grid{align-items:stretch}.backup-copy{font-size:11px;line-height:1.55}.backup-info{line-height:1.5}.backup-status{margin-top:14px}.warning-box,.success-box{border-radius:10px;padding:13px 14px;display:grid;gap:4px;font-size:11px}.warning-box{background:#fff7e8;border:1px solid #efd6aa;color:#7a5317}.success-box{background:#eaf7f0;border:1px solid #b9ddc9;color:#176342}.warning-box strong,.success-box strong{font-size:12px}.warning-box span,.success-box span{line-height:1.45}
+/* TP-Personalmanagement V1.6 – PDS-Export */
+.readonly-box{min-height:39px;border:1px solid #cfd9e3;border-radius:9px;background:#f7fafc;padding:10px 11px;font-size:11px;color:var(--primary);overflow-wrap:anywhere}.pds-code{font-family:Consolas,"Courier New",monospace}
