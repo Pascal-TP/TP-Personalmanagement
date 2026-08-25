@@ -6,6 +6,7 @@ import { setHead } from "./app.js";
 import { AREA_NAMES, esc, syntheticEmail, ROLE_LABELS, toast } from "./utils.js";
 import { renderPersonalakte } from "./personalakte.js";
 import { ADMIN_PERMISSION_DEFS, DEFAULT_ADMIN_PERMISSIONS, hasAdminPermission, hasAnyAdminPermission, normalizedAdminPermissions } from "./permissions.js";
+import { randomToken, sha256Hex, nfcSupported, writeEmployeeNfcTag } from "./nfc-utils.js";
 
 const PUBLIC_HISTORY_FIELDS=[
   "name","companyId","email","username","hasRealEmail","role","adminPermissions","supervisorId","active","startDate","endDate","weeklyHours","vacationDays","employeeNumber","businessAreaId","projectTimeTracking","department","position","contractType","probationEndDate","fixedTermEndDate","costCenter","workDays","firstAider","firstAiderValidUntil","fireWarden","fireWardenValidUntil","forkliftPermit","forkliftPermitValidUntil","aerialLiftPermit","aerialLiftPermitValidUntil","drivingLicenseClasses","nextDrivingLicenseCheck","occupationalMedicalNotes","bereiche","extraTrainings"
@@ -46,12 +47,13 @@ export async function renderMitarbeiter(el,ctx){
   const canDelete=hasAdminPermission(ctx.profile,'employeesDelete');
   const canManageDocs=hasAdminPermission(ctx.profile,'personnelDocuments');
   const canManagePermissions=hasAdminPermission(ctx.profile,'permissionsManage');
+  const canManageNfc=hasAdminPermission(ctx.profile,'terminalManage');
   if(!hasAnyAdminPermission(ctx.profile,['employeesView','employeesCreate','employeesEdit','employeesDelete'])){
     el.innerHTML='<div class="error-card">Für diesen Admin-Zugang ist keine Berechtigung zur Mitarbeiterverwaltung freigeschaltet.</div>';
     return;
   }
-  const [uSnap,cSnap,tSnap,pSnap,hSnap,bSnap,rSnap,aSnap]=await Promise.all([
-    getDocs(collection(db,'users')),getDocs(collection(db,'companies')),getDocs(collection(db,'trainings')),(canView||canEdit?getDocs(collection(db,'employeePrivate')):Promise.resolve({docs:[]})),getDocs(collection(db,'healthInsurers')),getDocs(collection(db,'banks')),getDocs(collection(db,'religionTaxCodes')),getDocs(collection(db,'businessAreas'))
+  const [uSnap,cSnap,tSnap,pSnap,hSnap,bSnap,rSnap,aSnap,nfcSnap]=await Promise.all([
+    getDocs(collection(db,'users')),getDocs(collection(db,'companies')),getDocs(collection(db,'trainings')),(canView||canEdit?getDocs(collection(db,'employeePrivate')):Promise.resolve({docs:[]})),getDocs(collection(db,'healthInsurers')),getDocs(collection(db,'banks')),getDocs(collection(db,'religionTaxCodes')),getDocs(collection(db,'businessAreas')),(canManageNfc?getDocs(collection(db,'nfcCredentials')):Promise.resolve({docs:[]}))
   ]);
   const users=uSnap.docs.map(d=>({id:d.id,...d.data()})),activeUsers=users.filter(u=>u.archived!==true),companies=cSnap.docs.map(d=>({id:d.id,...d.data()})),trainings=tSnap.docs.map(d=>({id:d.id,...d.data()}));
   const privateMap=new Map(pSnap.docs.map(d=>[d.id,{id:d.id,...d.data()}]));
@@ -61,6 +63,7 @@ export async function renderMitarbeiter(el,ctx){
   const supervisors=activeUsers.filter(u=>u.role==='supervisor'||u.role==='admin');
   const businessAreas=aSnap.docs.map(d=>({id:d.id,...d.data()})).filter(x=>x.active!==false).sort((a,b)=>String(a.code||'').localeCompare(String(b.code||''),'de'));
   const businessAreaMap=new Map(businessAreas.map(x=>[x.id,x]));
+  const nfcCredentials=nfcSnap.docs.map(d=>({id:d.id,...d.data()}));
 
   const personalBody=`
     <label class="field"><span>Name</span><input name="name" required></label><label class="field"><span>Geburtsdatum</span><input name="birthDate" type="date"></label>
@@ -92,6 +95,8 @@ export async function renderMitarbeiter(el,ctx){
     <label class="field"><span>Wochenstunden</span><input name="weeklyHours" type="number" step="0.25" value="40"></label><label class="field"><span>Urlaubstage/Jahr</span><input name="vacationDays" type="number" step="1" value="30"></label><label class="field"><span>Zeiterfassung auf Projekte</span><select name="projectTimeTracking"><option value="false">Nein</option><option value="true">Ja</option></select></label><div></div>
     <div class="field full"><span>Regelmäßige Arbeitstage</span><div class="weekday-grid">${[['1','Mo'],['2','Di'],['3','Mi'],['4','Do'],['5','Fr'],['6','Sa'],['0','So']].map(([v,l])=>`<label><input type="checkbox" name="workDay" value="${v}" ${['1','2','3','4','5'].includes(v)?'checked':''}><span>${l}</span></label>`).join('')}</div></div>`;
 
+  const nfcBody=`<div class="field full"><div id="nfc-credential-box" class="nfc-credential-box"><span class="muted">Mitarbeiter zuerst anlegen bzw. öffnen.</span></div></div>`;
+
   const safetyBody=`
     <label class="field safety-toggle"><span>Ersthelfer</span><select name="firstAider"><option value="false">Nein</option><option value="true">Ja</option></select></label><label class="field"><span>gültig / Auffrischung bis</span><input name="firstAiderValidUntil" type="date"></label>
     <label class="field safety-toggle"><span>Brandschutzhelfer</span><select name="fireWarden"><option value="false">Nein</option><option value="true">Ja</option></select></label><label class="field"><span>gültig / Auffrischung bis</span><input name="fireWardenValidUntil" type="date"></label>
@@ -117,6 +122,7 @@ export async function renderMitarbeiter(el,ctx){
     ${section('€','Bankverbindung','Geschützte Zahlungsdaten des Mitarbeiters.',bankBody,'sensitive-section')}
     ${section('↗','Lohn & Gehalt','Grunddaten zur Vergütung. Eine zeitliche Gehaltsentwicklung kann später ergänzt werden.',salaryBody,'sensitive-section')}
     ${section('◷','Urlaub & Arbeitszeit','Arbeitszeitmodell, Urlaub und Projektzeiterfassung.',timeBody)}
+    ${canManageNfc?section('⌁','NFC-Transponder','Persönlichen NFC-Transponder für die einfache Terminal-Zeiterfassung zuweisen oder sperren.',nfcBody):''}
     ${section('⚑','Arbeitssicherheit & Befähigungen','Qualifikationen, Befähigungen und fällige Kontrollen.',safetyBody,'safety-section')}
     ${section('▤','Schulungen','Bereichsschulungen und individuelle Zusatzschulungen.',trainingBody)}
     ${section('⚙','System & Berechtigungen','Login, Rolle und Kontostatus.',systemBody)}
@@ -125,9 +131,29 @@ export async function renderMitarbeiter(el,ctx){
   </form></section>`;
 
   const show=el.querySelector('#user-show'),create=el.querySelector('#user-create'),form=el.querySelector('#user-form'),akte=el.querySelector('#personalakte-container');
+  async function renderNfcBox(employee){
+    const box=el.querySelector('#nfc-credential-box');if(!box)return;
+    if(!employee){box.innerHTML='<span class="muted">Der NFC-Transponder kann nach dem Anlegen des Mitarbeiters zugewiesen werden.</span>';return;}
+    const active=nfcCredentials.filter(x=>x.userId===employee.id&&x.active!==false);
+    box.innerHTML=`<div class="nfc-status-row"><div><strong>${active.length?'NFC-Transponder aktiv':'Kein NFC-Transponder zugewiesen'}</strong><span>${active.length?'Der Mitarbeiter kann sich an freigeschalteten Terminals identifizieren.':'Für die Terminal-Zeiterfassung zunächst einen Transponder programmieren.'}</span></div><span class="pill ${active.length?'green':'yellow'}">${active.length?'aktiv':'nicht eingerichtet'}</span></div><div class="actions"><button class="btn primary small" type="button" id="assign-nfc">${active.length?'Neuen Transponder zuweisen':'Transponder zuweisen'}</button>${active.length?'<button class="btn danger small" type="button" id="disable-nfc">Transponder sperren</button>':''}</div><small class="nfc-browser-note">${nfcSupported()?'Web NFC ist auf diesem Gerät verfügbar.':'Zum Programmieren bitte diese Mitarbeiterkartei in Google Chrome auf einem NFC-fähigen Android-Gerät öffnen.'}</small>`;
+    const assign=box.querySelector('#assign-nfc');if(assign)assign.onclick=async()=>{
+      if(!nfcSupported()){toast('Bitte Google Chrome auf einem NFC-fähigen Android-Gerät verwenden.');return;}
+      if(active.length&&!confirm('Der bisherige NFC-Transponder wird nach erfolgreicher Zuweisung gesperrt. Fortfahren?'))return;
+      const token=randomToken(24);assign.disabled=true;assign.textContent='Transponder bereithalten …';
+      try{
+        await writeEmployeeNfcTag(token);
+        const hash=await sha256Hex(token);const batch=writeBatch(db);
+        active.forEach(c=>batch.update(doc(db,'nfcCredentials',c.id),{active:false,disabledAt:serverTimestamp(),updatedAt:serverTimestamp()}));
+        batch.set(doc(db,'nfcCredentials',hash),{userId:employee.id,userName:employee.name||'',employeeNumber:employee.employeeNumber||'',active:true,createdAt:serverTimestamp(),createdBy:ctx.profile.id});
+        await batch.commit();toast(`NFC-Transponder für ${employee.name||'Mitarbeiter'} wurde erfolgreich zugewiesen.`);
+        box.innerHTML='<div class="success-box"><strong>NFC-Transponder zugewiesen</strong><span>Der Transponder ist jetzt für die Terminal-Zeiterfassung freigeschaltet.</span></div>';
+      }catch(err){console.error(err);toast(err?.message||'NFC-Transponder konnte nicht programmiert werden.');assign.disabled=false;assign.textContent=active.length?'Neuen Transponder zuweisen':'Transponder zuweisen';}
+    };
+    const disable=box.querySelector('#disable-nfc');if(disable)disable.onclick=async()=>{if(!confirm('Den NFC-Transponder dieses Mitarbeiters wirklich sperren?'))return;try{const batch=writeBatch(db);active.forEach(c=>batch.update(doc(db,'nfcCredentials',c.id),{active:false,disabledAt:serverTimestamp(),updatedAt:serverTimestamp()}));await batch.commit();box.innerHTML='<div class="warning-box"><strong>Transponder gesperrt</strong><span>Der bisherige NFC-Transponder kann nicht mehr zum Stempeln verwendet werden.</span></div>';toast('NFC-Transponder wurde gesperrt.');}catch(err){console.error(err);toast('Transponder konnte nicht gesperrt werden.');}};
+  }
   if(!(canView||canEdit||canDelete)&&canCreate){show?.classList.add('hidden');create?.classList.remove('hidden');}
   function tab(t){show.classList.toggle('hidden',t!=='show');create.classList.toggle('hidden',t!=='create');el.querySelectorAll('.choice-card').forEach(x=>x.classList.toggle('active',x.dataset.tab===t))}
-  async function prepareNew(){if(!canCreate){toast('Keine Berechtigung zum Anlegen von Mitarbeitern.');return;}form.reset();form.elements.loginType.disabled=false;form.elements.login.disabled=false;form.elements.role.disabled=false;form.querySelectorAll('[name=adminPermission]').forEach(x=>{x.checked=true;x.disabled=!canManagePermissions});const adminOption=[...form.elements.role.options].find(o=>o.value==='admin');if(adminOption)adminOption.disabled=!canManagePermissions;form.querySelectorAll('[name=workDay]').forEach(x=>x.checked=['1','2','3','4','5'].includes(x.value));setVal(form,'weeklyHours',40);setVal(form,'vacationDays',30);setVal(form,'projectTimeTracking','false');setVal(form,'active','true');el.querySelector('#employee-form-title').textContent='Mitarbeiter anlegen';form.querySelectorAll('input,select,textarea').forEach(x=>x.disabled=false);form.querySelectorAll('button[type=submit]').forEach(x=>x.classList.remove('hidden'));const box=form.querySelector('#admin-permissions-box');if(box)box.classList.add('hidden');await renderPersonalakte(akte,ctx,null,{readOnly:false,canManage:canManageDocs})}
+  async function prepareNew(){if(!canCreate){toast('Keine Berechtigung zum Anlegen von Mitarbeitern.');return;}form.reset();form.elements.loginType.disabled=false;form.elements.login.disabled=false;form.elements.role.disabled=false;form.querySelectorAll('[name=adminPermission]').forEach(x=>{x.checked=true;x.disabled=!canManagePermissions});const adminOption=[...form.elements.role.options].find(o=>o.value==='admin');if(adminOption)adminOption.disabled=!canManagePermissions;form.querySelectorAll('[name=workDay]').forEach(x=>x.checked=['1','2','3','4','5'].includes(x.value));setVal(form,'weeklyHours',40);setVal(form,'vacationDays',30);setVal(form,'projectTimeTracking','false');setVal(form,'active','true');el.querySelector('#employee-form-title').textContent='Mitarbeiter anlegen';form.querySelectorAll('input,select,textarea').forEach(x=>x.disabled=false);form.querySelectorAll('button[type=submit]').forEach(x=>x.classList.remove('hidden'));const box=form.querySelector('#admin-permissions-box');if(box)box.classList.add('hidden');await renderPersonalakte(akte,ctx,null,{readOnly:false,canManage:canManageDocs});await renderNfcBox(null)}
   el.querySelectorAll('.choice-card').forEach(b=>b.onclick=async()=>{if(b.dataset.tab==='create')await prepareNew();tab(b.dataset.tab)});
   const cancel=()=>tab('show');el.querySelector('#cancel-user').onclick=cancel;el.querySelector('#cancel-user-bottom').onclick=cancel;
 
@@ -157,7 +183,7 @@ el.querySelectorAll('.edit-user').forEach(b=>b.onclick=async()=>{
     const readOnly=!canEdit;form.querySelectorAll('input,select,textarea').forEach(x=>{if(x.name!=='id')x.disabled=readOnly||(['loginType','login'].includes(x.name));});
     if(!readOnly&&!canManagePermissions){form.querySelectorAll('[name=adminPermission]').forEach(x=>x.disabled=true);if(u.role==='admin')form.elements.role.disabled=true;}
     form.querySelectorAll('button[type=submit]').forEach(x=>x.classList.toggle('hidden',readOnly));
-    el.querySelector('#employee-form-title').textContent=`Mitarbeiterkartei · ${u.name||'Mitarbeiter'}`;tab('create');await renderPersonalakte(akte,ctx,u,{readOnly,canManage:canManageDocs});window.scrollTo({top:0,behavior:'smooth'});
+    el.querySelector('#employee-form-title').textContent=`Mitarbeiterkartei · ${u.name||'Mitarbeiter'}`;tab('create');await renderPersonalakte(akte,ctx,u,{readOnly,canManage:canManageDocs});await renderNfcBox(u);window.scrollTo({top:0,behavior:'smooth'});
   });
 
   form.elements.role?.addEventListener('change',()=>{const box=form.querySelector('#admin-permissions-box');if(box)box.classList.toggle('hidden',form.elements.role.value!=='admin');if(form.elements.role.value==='admin'&&![...form.querySelectorAll('[name=adminPermission]')].some(x=>x.checked))form.querySelectorAll('[name=adminPermission]').forEach(x=>x.checked=true)});

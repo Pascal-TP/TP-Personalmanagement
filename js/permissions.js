@@ -3,6 +3,7 @@ export const ADMIN_PERMISSION_DEFS = [
   {key:'employeesCreate',label:'Mitarbeiter anlegen',group:'Mitarbeiter'},
   {key:'employeesEdit',label:'Mitarbeiter bearbeiten',group:'Mitarbeiter'},
   {key:'employeesDelete',label:'Mitarbeiter entfernen',group:'Mitarbeiter'},
+  {key:'terminalManage',label:'NFC-Terminals & Transponder verwalten',group:'Mitarbeiter'},
   {key:'permissionsManage',label:'Rollen & Admin-Berechtigungen verwalten',group:'Mitarbeiter'},
   {key:'personnelDocuments',label:'Personalakten-Dokumente verwalten',group:'Mitarbeiter'},
   {key:'timeAdjustment',label:'Stundenkorrektur buchen',group:'Zeiterfassung & Urlaub'},

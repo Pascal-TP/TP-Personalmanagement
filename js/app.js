@@ -4,6 +4,7 @@ import { doc, getDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-
 import { normalizeLogin, ROLE_LABELS, roleHeading, initials, toast } from "./utils.js";
 import { renderDashboard } from "./dashboard.js";
 import { renderMitarbeiter } from "./mitarbeiter.js";
+import { renderTerminals } from "./terminals.js";
 import { renderZeiterfassung } from "./zeiterfassung.js";
 import { renderUrlaub } from "./urlaub.js";
 import { renderSchulungen } from "./schulungen.js";
@@ -27,6 +28,7 @@ const views = {
   payroll:{label:"Lohn-/Gehaltsabrechnung",icon:"€",roles:["employee","admin"],adminPermission:"payrollManage",render:renderAbrechnungen},
   trainings:{label:"Schulungen",icon:"▤",roles:["employee","supervisor","admin"],render:renderSchulungen},
   employees:{label:"Mitarbeiter",icon:"♙",roles:["admin"],adminAny:["employeesView","employeesCreate","employeesEdit","employeesDelete"],render:renderMitarbeiter},
+  terminals:{label:"NFC-Terminals",icon:"⌁",roles:["admin"],adminPermission:"terminalManage",render:renderTerminals},
   news:{label:"News & Hinweise",icon:"●",roles:["admin"],adminPermission:"newsManage",render:renderNews},
   companies:{label:"Firmen",icon:"▣",roles:["admin"],adminPermission:"companyManage",render:renderFirmen},
   masterdata:{label:"Stammdaten",icon:"≡",roles:["admin"],adminPermission:"masterData",render:renderStammdaten},
