@@ -65,3 +65,65 @@
 .permission-grid input{margin-top:2px;accent-color:#173f6f}
 .permission-grid span{font-size:13px;line-height:1.35;color:#263b4f}
 @media(max-width:760px){.permission-grid{grid-template-columns:1fr}}
+
+/* ========================================================================== */
+/* V1.8.1 – Admin-Berechtigungen: ruhige einspaltige Listenansicht            */
+/* ========================================================================== */
+.permission-grid{
+  display:flex;
+  flex-direction:column;
+  gap:0;
+  border:1px solid #dfe7f0;
+  border-radius:10px;
+  overflow:hidden;
+  background:#fff;
+}
+.permission-grid label{
+  display:flex;
+  align-items:center;
+  justify-content:flex-start;
+  gap:12px;
+  width:100%;
+  padding:9px 14px;
+  margin:0;
+  border:0;
+  border-bottom:1px solid #e7edf4;
+  border-radius:0;
+  background:#fff;
+  cursor:pointer;
+  box-sizing:border-box;
+}
+.permission-grid label:last-child{
+  border-bottom:0;
+}
+.permission-grid label:hover{
+  background:#f8fafc;
+}
+.permission-grid input{
+  flex:0 0 auto;
+  width:16px;
+  height:16px;
+  margin:0;
+  accent-color:#173f6f;
+}
+.permission-grid span{
+  display:block;
+  flex:1 1 auto;
+  min-width:0;
+  font-size:13px;
+  line-height:1.35;
+  color:#263b4f;
+  text-align:left;
+  white-space:normal;
+}
+.permission-group{
+  margin-top:18px;
+}
+.permission-group>strong{
+  margin-bottom:7px;
+}
+@media(max-width:760px){
+  .permission-grid{
+    display:flex;
+  }
+}
