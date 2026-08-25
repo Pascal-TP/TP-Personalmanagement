@@ -4,6 +4,7 @@ import { doc, getDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-
 import { normalizeLogin, ROLE_LABELS, roleHeading, initials, toast } from "./utils.js";
 import { renderDashboard } from "./dashboard.js";
 import { renderMitarbeiter } from "./mitarbeiter.js";
+import { renderSupervisorMitarbeiter } from "./mitarbeiter-vorgesetzter.js";
 import { renderTerminals } from "./terminals.js";
 import { renderZeiterfassung } from "./zeiterfassung.js";
 import { renderUrlaub } from "./urlaub.js";
@@ -27,7 +28,7 @@ const views = {
   vacation:{label:"Urlaub & Abwesenheit",icon:"☀",roles:["employee","supervisor","admin"],render:renderUrlaub},
   payroll:{label:"Lohn-/Gehaltsabrechnung",icon:"€",roles:["employee","admin"],adminPermission:"payrollManage",render:renderAbrechnungen},
   trainings:{label:"Schulungen",icon:"▤",roles:["employee","supervisor","admin"],render:renderSchulungen},
-  employees:{label:"Mitarbeiter",icon:"♙",roles:["admin"],adminAny:["employeesView","employeesCreate","employeesEdit","employeesDelete"],render:renderMitarbeiter},
+  employees:{label:"Mitarbeiter",icon:"♙",roles:["admin","supervisor"],adminAny:["employeesView","employeesCreate","employeesEdit","employeesDelete"],render:async(el,ctx)=>ctx.profile?.role==="supervisor"?renderSupervisorMitarbeiter(el,ctx):renderMitarbeiter(el,ctx)},
   terminals:{label:"NFC-Terminals",icon:"⌁",roles:["admin"],adminPermission:"terminalManage",render:renderTerminals},
   news:{label:"News & Hinweise",icon:"●",roles:["admin"],adminPermission:"newsManage",render:renderNews},
   companies:{label:"Firmen",icon:"▣",roles:["admin"],adminPermission:"companyManage",render:renderFirmen},
