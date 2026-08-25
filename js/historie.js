@@ -5,7 +5,7 @@ import { esc, fmtDate, ROLE_LABELS } from "./utils.js";
 
 const FIELD_LABELS = {
   name:"Name", companyId:"Firma", email:"E-Mail / Login", username:"Benutzername", hasRealEmail:"Login-Art", role:"Rolle", supervisorId:"Vorgesetzter", active:"Status",
-  startDate:"Eintritt", endDate:"Austritt", weeklyHours:"Wochenstunden", vacationDays:"Urlaubstage/Jahr", employeeNumber:"Mitarbeiternummer", companyAreaNumber:"Firmenbereich-Nr.", projectTimeTracking:"Zeiterfassung auf Projekte",
+  startDate:"Eintritt", endDate:"Austritt", weeklyHours:"Wochenstunden", vacationDays:"Urlaubstage/Jahr", employeeNumber:"Mitarbeiternummer", businessAreaId:"Geschäftsbereich", companyAreaNumber:"Geschäftsbereich-Nr.", projectTimeTracking:"Zeiterfassung auf Projekte",
   department:"Abteilung", position:"Position / Tätigkeit", contractType:"Beschäftigungsart", probationEndDate:"Probezeit bis", fixedTermEndDate:"Befristung bis", costCenter:"Kostenstelle", workDays:"Arbeitstage",
   firstAider:"Ersthelfer", firstAiderValidUntil:"Ersthelfer gültig bis", fireWarden:"Brandschutzhelfer", fireWardenValidUntil:"Brandschutzhelfer gültig bis", forkliftPermit:"Staplerschein", forkliftPermitValidUntil:"Staplerschein gültig bis", aerialLiftPermit:"Hubarbeitsbühne", aerialLiftPermitValidUntil:"Hubarbeitsbühne gültig bis", drivingLicenseClasses:"Führerscheinklassen", nextDrivingLicenseCheck:"Nächste Führerscheinkontrolle", occupationalMedicalNotes:"Arbeitsmedizinische Vorsorgen / Hinweise",
   bereiche:"Schulungsbereiche", extraTrainings:"Zusatzschulungen",
@@ -26,10 +26,11 @@ function dateTime(value){
   if(!ms) return "–";
   return new Intl.DateTimeFormat("de-DE",{dateStyle:"short",timeStyle:"short"}).format(new Date(ms));
 }
-function displayValue(key,value,companies,userMap,trainingMap,religionMap){
+function displayValue(key,value,companies,userMap,trainingMap,religionMap,areaMap){
   if(value===null||value===undefined||value==="") return "–";
   if(key==="companyId") return companies.get(value)?.name || value;
   if(key==="supervisorId") return userMap.get(value)?.name || userMap.get(value)?.email || value;
+  if(key==="businessAreaId"){const a=areaMap?.get(value);return a?`${a.code} · ${a.name}`:String(value);}
   if(key==="role") return ROLE_LABELS[value] || value;
   if(key==="active") return value===false ? "inaktiv" : "aktiv";
   if(key==="hasRealEmail") return value===false ? "Benutzername" : "E-Mail-Adresse";
@@ -50,18 +51,20 @@ export async function renderHistorie(el,ctx){
     return;
   }
 
-  const [hSnap,uSnap,cSnap,tSnap,rSnap]=await Promise.all([
+  const [hSnap,uSnap,cSnap,tSnap,rSnap,aSnap]=await Promise.all([
     getDocs(collection(db,"employeeHistory")),
     getDocs(collection(db,"users")),
     getDocs(collection(db,"companies")),
     getDocs(collection(db,"trainings")),
-    getDocs(collection(db,"religionTaxCodes"))
+    getDocs(collection(db,"religionTaxCodes")),
+    getDocs(collection(db,"businessAreas"))
   ]);
   const users=uSnap.docs.map(d=>({id:d.id,...d.data()}));
   const userMap=new Map(users.map(u=>[u.id,u]));
   const companies=new Map(cSnap.docs.map(d=>[d.id,{id:d.id,...d.data()}]));
   const trainingMap=new Map(tSnap.docs.map(d=>[d.id,{id:d.id,...d.data()}]));
   const religionMap=new Map(rSnap.docs.map(d=>{const x={id:d.id,...d.data()};return [String(x.code||''),x]}));
+  const areaMap=new Map(aSnap.docs.map(d=>[d.id,{id:d.id,...d.data()}]));
   const entries=hSnap.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>toMillis(b.createdAt)-toMillis(a.createdAt));
 
   const rows=entries.map(entry=>{
@@ -71,7 +74,7 @@ export async function renderHistorie(el,ctx){
     const details=entry.action==="create"
       ? '<span class="muted">Mitarbeiter wurde neu angelegt.</span>'
       : changes.length
-        ? `<div class="history-changes">${changes.map(ch=>`<div><strong>${esc(FIELD_LABELS[ch.field]||ch.field)}</strong><span>${esc(displayValue(ch.field,ch.oldValue,companies,userMap,trainingMap,religionMap))} → ${esc(displayValue(ch.field,ch.newValue,companies,userMap,trainingMap,religionMap))}</span></div>`).join("")}</div>`
+        ? `<div class="history-changes">${changes.map(ch=>`<div><strong>${esc(FIELD_LABELS[ch.field]||ch.field)}</strong><span>${esc(displayValue(ch.field,ch.oldValue,companies,userMap,trainingMap,religionMap,areaMap))} → ${esc(displayValue(ch.field,ch.newValue,companies,userMap,trainingMap,religionMap,areaMap))}</span></div>`).join("")}</div>`
         : '<span class="muted">Änderung ohne Detailangabe.</span>';
     return `<tr><td>${esc(dateTime(entry.createdAt))}</td><td><strong>${esc(employeeName)}</strong><div class="small muted">${esc(entry.employeeEmail||"")}</div></td><td><span class="pill ${entry.action==='create'?'green':'blue'}">${entry.action==='create'?'angelegt':'geändert'}</span></td><td>${details}</td><td>${esc(actor)}</td></tr>`;
   }).join("");

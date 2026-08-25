@@ -1,29 +1,36 @@
 import { db } from "./firebase.js";
-import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, getDoc, setDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 import { setHead } from "./app.js";
 import { esc, toast } from "./utils.js";
 
 function sortByName(items){return [...items].sort((a,b)=>(a.name||"").localeCompare(b.name||"",'de'))}
+function sortByCode(items){return [...items].sort((a,b)=>String(a.code||"").localeCompare(String(b.code||""),'de'))}
 
 export async function renderStammdaten(el,ctx){
-  setHead("Stammdaten","Zentrale Auswahllisten für die Mitarbeiterkartei pflegen.");
+  setHead("Stammdaten","Zentrale Auswahllisten und PDS-Exporteinstellungen pflegen.");
   if(ctx.profile?.role!=="admin"){
     el.innerHTML='<div class="error-card">Dieser Bereich ist ausschließlich für die Personalabteilung / Admins vorgesehen.</div>';
     return;
   }
-  const [hSnap,bSnap,rSnap]=await Promise.all([
+  const [hSnap,bSnap,rSnap,aSnap,pdsSnap]=await Promise.all([
     getDocs(collection(db,"healthInsurers")),
     getDocs(collection(db,"banks")),
-    getDocs(collection(db,"religionTaxCodes"))
+    getDocs(collection(db,"religionTaxCodes")),
+    getDocs(collection(db,"businessAreas")),
+    getDoc(doc(db,"pdsSettings","default"))
   ]);
   const insurers=sortByName(hSnap.docs.map(d=>({id:d.id,...d.data()})));
   const banks=sortByName(bSnap.docs.map(d=>({id:d.id,...d.data()})));
-  const religions=[...rSnap.docs.map(d=>({id:d.id,...d.data()}))].sort((a,b)=>String(a.code||a.name||"").localeCompare(String(b.code||b.name||""),'de'));
+  const religions=sortByCode(rSnap.docs.map(d=>({id:d.id,...d.data()})));
+  const areas=sortByCode(aSnap.docs.map(d=>({id:d.id,...d.data()})));
+  const pds={personnelCostPrefix:"60",bookingTextPrefix:"$7$ZeitDritts$",bookingTextMode:"period_week",bookingTextCustom:"",dataType:"i",...(pdsSnap.exists()?pdsSnap.data():{})};
 
   el.innerHTML=`<div class="admin-choice-grid">
     <button class="choice-card active" data-tab="health"><span>✚</span><strong>Krankenkassen</strong><small>${insurers.length} Einträge verwalten</small></button>
     <button class="choice-card" data-tab="banks"><span>▤</span><strong>Banken</strong><small>${banks.length} Einträge verwalten</small></button>
     <button class="choice-card" data-tab="religion"><span>◇</span><strong>Religion / Kirchensteuer</strong><small>${religions.length} Einträge verwalten</small></button>
+    <button class="choice-card" data-tab="areas"><span>▦</span><strong>Geschäftsbereiche</strong><small>${areas.length} Einträge verwalten</small></button>
+    <button class="choice-card" data-tab="pds"><span>⇩</span><strong>PDS-Export</strong><small>Kostenart und Buchungstext einstellen</small></button>
   </div>
   <section id="master-health"><article class="card"><div class="card-head"><div><h2>Krankenkassen</h2><p>Diese Einträge stehen in der Mitarbeiterkartei als Dropdown zur Verfügung.</p></div></div>
     <form id="health-form" class="form-grid master-inline"><input type="hidden" name="id"><label class="field"><span>Name der Krankenkasse</span><input name="name" required></label><label class="field"><span>Betriebsnummer / Kennung</span><input name="code"></label><label class="field"><span>Status</span><select name="active"><option value="true">aktiv</option><option value="false">inaktiv</option></select></label><div class="field actions"><button class="btn primary">Speichern</button><button class="btn secondary" type="button" id="health-cancel">Leeren</button></div></form>
@@ -33,34 +40,50 @@ export async function renderStammdaten(el,ctx){
     <form id="bank-form" class="form-grid master-inline"><input type="hidden" name="id"><label class="field"><span>Bankname</span><input name="name" required></label><label class="field"><span>BIC</span><input name="bic" maxlength="11"></label><label class="field"><span>Status</span><select name="active"><option value="true">aktiv</option><option value="false">inaktiv</option></select></label><div class="field actions"><button class="btn primary">Speichern</button><button class="btn secondary" type="button" id="bank-cancel">Leeren</button></div></form>
     <div class="table-wrap"><table><thead><tr><th>Bank</th><th>BIC</th><th>Status</th><th></th></tr></thead><tbody>${banks.length?banks.map(x=>`<tr><td><strong>${esc(x.name)}</strong></td><td>${esc(x.bic||'–')}</td><td><span class="pill ${x.active===false?'red':'green'}">${x.active===false?'inaktiv':'aktiv'}</span></td><td class="actions"><button class="btn secondary small edit-bank" data-id="${x.id}">Bearbeiten</button><button class="btn danger small delete-bank" data-id="${x.id}">Löschen</button></td></tr>`).join(''):'<tr><td colspan="4" class="empty">Noch keine Banken hinterlegt.</td></tr>'}</tbody></table></div>
   </article></section>
-  <section id="master-religion" class="hidden"><article class="card"><div class="card-head"><div><h2>Religion / Kirchensteuer</h2><p>Abrechnungsrelevante Schlüssel können von der Personalabteilung selbst gepflegt werden.</p></div></div>
+  <section id="master-religion" class="hidden"><article class="card"><div class="card-head"><div><h2>Religion / Kirchensteuer</h2><p>Abrechnungsrelevante Schlüssel können selbst gepflegt werden.</p></div></div>
     <form id="religion-form" class="form-grid master-inline"><input type="hidden" name="id"><label class="field"><span>Schlüssel</span><input name="code" maxlength="20" required placeholder="z. B. ev"></label><label class="field"><span>Bezeichnung</span><input name="name" required placeholder="z. B. Evangelisch"></label><label class="field"><span>Status</span><select name="active"><option value="true">aktiv</option><option value="false">inaktiv</option></select></label><div class="field actions"><button class="btn primary">Speichern</button><button class="btn secondary" type="button" id="religion-cancel">Leeren</button></div></form>
-    <div class="info-strip">Die Schlüssel werden nicht fest im Programm vorgegeben. Sobald die endgültigen PDS-/Abrechnungsvorgaben feststehen, können hier exakt die benötigten Werte gepflegt werden.</div>
     <div class="table-wrap"><table><thead><tr><th>Schlüssel</th><th>Bezeichnung</th><th>Status</th><th></th></tr></thead><tbody>${religions.length?religions.map(x=>`<tr><td><strong>${esc(x.code||'–')}</strong></td><td>${esc(x.name||'–')}</td><td><span class="pill ${x.active===false?'red':'green'}">${x.active===false?'inaktiv':'aktiv'}</span></td><td class="actions"><button class="btn secondary small edit-religion" data-id="${x.id}">Bearbeiten</button><button class="btn danger small delete-religion" data-id="${x.id}">Löschen</button></td></tr>`).join(''):'<tr><td colspan="4" class="empty">Noch keine Religions-/Kirchensteuerschlüssel hinterlegt.</td></tr>'}</tbody></table></div>
+  </article></section>
+  <section id="master-areas" class="hidden"><article class="card"><div class="card-head"><div><h2>Geschäftsbereiche</h2><p>Die dreistellige Nummer fließt in die PDS-Kostenträgernummer ein und wird dem Mitarbeiter zugeordnet.</p></div></div>
+    <form id="area-form" class="form-grid master-inline"><input type="hidden" name="id"><label class="field"><span>Geschäftsbereich-Nr.</span><input name="code" inputmode="numeric" maxlength="3" pattern="[0-9]{3}" required placeholder="z. B. 040"></label><label class="field"><span>Bezeichnung</span><input name="name" required placeholder="z. B. Elektrotechnik"></label><label class="field"><span>Status</span><select name="active"><option value="true">aktiv</option><option value="false">inaktiv</option></select></label><div class="field actions"><button class="btn primary">Speichern</button><button class="btn secondary" type="button" id="area-cancel">Leeren</button></div></form>
+    <div class="info-strip"><strong>PDS:</strong> Die Geschäftsbereichsnummer muss exakt dreistellig numerisch sein. Beispiele aus dem KTR-Konzept sind 010 Flächenheizung, 040 Elektrotechnik oder 090 Personal-Dienstleistungen.</div><div class="actions" style="margin-bottom:14px"><button class="btn secondary small" type="button" id="area-seed">Geschäftsbereiche aus KTR-Konzept übernehmen</button></div>
+    <div class="table-wrap"><table><thead><tr><th>Nr.</th><th>Geschäftsbereich</th><th>Status</th><th></th></tr></thead><tbody>${areas.length?areas.map(x=>`<tr><td><strong>${esc(x.code||'–')}</strong></td><td>${esc(x.name||'–')}</td><td><span class="pill ${x.active===false?'red':'green'}">${x.active===false?'inaktiv':'aktiv'}</span></td><td class="actions"><button class="btn secondary small edit-area" data-id="${x.id}">Bearbeiten</button><button class="btn danger small delete-area" data-id="${x.id}">Löschen</button></td></tr>`).join(''):'<tr><td colspan="4" class="empty">Noch keine Geschäftsbereiche hinterlegt.</td></tr>'}</tbody></table></div>
+  </article></section>
+  <section id="master-pds" class="hidden"><article class="card"><div class="card-head"><div><h2>PDS-Exporteinstellungen</h2><p>Parameter, die bei jedem Stundenexport automatisch verwendet werden.</p></div></div>
+    <form id="pds-form" class="form-grid">
+      <label class="field"><span>Kostenarten-Präfix Personal</span><input name="personnelCostPrefix" inputmode="numeric" maxlength="2" pattern="[0-9]{2}" value="${esc(pds.personnelCostPrefix)}" required></label>
+      <label class="field"><span>Datenart</span><input name="dataType" maxlength="5" value="${esc(pds.dataType||'i')}" required></label>
+      <label class="field"><span>Buchungstext-Präfix</span><input name="bookingTextPrefix" value="${esc(pds.bookingTextPrefix)}" required></label>
+      <label class="field"><span>Buchungstext-Ergänzung</span><select name="bookingTextMode"><option value="period_week" ${pds.bookingTextMode==='period_week'?'selected':''}>Automatisch: PeriodeJahr/MonatKW</option><option value="free" ${pds.bookingTextMode==='free'?'selected':''}>Freier Text</option></select></label>
+      <label class="field full"><span>Freier Zusatztext</span><input name="bookingTextCustom" value="${esc(pds.bookingTextCustom||'')}" placeholder="nur bei Auswahl Freier Text"></label>
+      <div class="field full"><div class="info-strip"><strong>Automatische Variante:</strong> Aus dem Präfix <code>${esc(pds.bookingTextPrefix)}</code> wird beim Export z. B. <code>${esc(pds.bookingTextPrefix)}Periode2026/08KW35</code>. Jahr/Monat stammen aus der gewählten Buchungsperiode, die Kalenderwoche aus dem Erstellungsdatum der CSV.</div><button class="btn primary" type="submit">PDS-Einstellungen speichern</button></div>
+    </form>
   </article></section>`;
 
-  const healthSection=el.querySelector('#master-health'),bankSection=el.querySelector('#master-banks'),religionSection=el.querySelector('#master-religion');
-  function tab(name){healthSection.classList.toggle('hidden',name!=='health');bankSection.classList.toggle('hidden',name!=='banks');religionSection.classList.toggle('hidden',name!=='religion');el.querySelectorAll('.choice-card').forEach(b=>b.classList.toggle('active',b.dataset.tab===name))}
+  const sections={health:el.querySelector('#master-health'),banks:el.querySelector('#master-banks'),religion:el.querySelector('#master-religion'),areas:el.querySelector('#master-areas'),pds:el.querySelector('#master-pds')};
+  function tab(name){Object.entries(sections).forEach(([k,s])=>s.classList.toggle('hidden',k!==name));el.querySelectorAll('.choice-card').forEach(b=>b.classList.toggle('active',b.dataset.tab===name))}
   el.querySelectorAll('.choice-card').forEach(b=>b.onclick=()=>tab(b.dataset.tab));
 
-  const healthForm=el.querySelector('#health-form');
-  const resetHealth=()=>healthForm.reset();
-  el.querySelector('#health-cancel').onclick=resetHealth;
+  const healthForm=el.querySelector('#health-form');el.querySelector('#health-cancel').onclick=()=>healthForm.reset();
   el.querySelectorAll('.edit-health').forEach(b=>b.onclick=()=>{const x=insurers.find(v=>v.id===b.dataset.id);healthForm.elements.id.value=x.id;healthForm.elements.name.value=x.name||'';healthForm.elements.code.value=x.code||'';healthForm.elements.active.value=String(x.active!==false);healthForm.scrollIntoView({behavior:'smooth',block:'start'})});
   el.querySelectorAll('.delete-health').forEach(b=>b.onclick=async()=>{if(!confirm('Krankenkasse wirklich löschen? Bereits gespeicherte Mitarbeiterdaten bleiben als ID erhalten.'))return;await deleteDoc(doc(db,'healthInsurers',b.dataset.id));toast('Krankenkasse gelöscht.');renderStammdaten(el,ctx)});
   healthForm.onsubmit=async e=>{e.preventDefault();const f=e.currentTarget,id=f.elements.id.value,data={name:f.elements.name.value.trim(),code:f.elements.code.value.trim(),active:f.elements.active.value==='true',updatedAt:serverTimestamp()};if(id)await updateDoc(doc(db,'healthInsurers',id),data);else await addDoc(collection(db,'healthInsurers'),{...data,createdAt:serverTimestamp()});toast('Krankenkasse gespeichert.');renderStammdaten(el,ctx)};
 
-  const bankForm=el.querySelector('#bank-form');
-  const resetBank=()=>bankForm.reset();
-  el.querySelector('#bank-cancel').onclick=resetBank;
+  const bankForm=el.querySelector('#bank-form');el.querySelector('#bank-cancel').onclick=()=>bankForm.reset();
   el.querySelectorAll('.edit-bank').forEach(b=>b.onclick=()=>{const x=banks.find(v=>v.id===b.dataset.id);bankForm.elements.id.value=x.id;bankForm.elements.name.value=x.name||'';bankForm.elements.bic.value=x.bic||'';bankForm.elements.active.value=String(x.active!==false);bankForm.scrollIntoView({behavior:'smooth',block:'start'})});
   el.querySelectorAll('.delete-bank').forEach(b=>b.onclick=async()=>{if(!confirm('Bank wirklich löschen? Bereits gespeicherte Mitarbeiterdaten bleiben als ID erhalten.'))return;await deleteDoc(doc(db,'banks',b.dataset.id));toast('Bank gelöscht.');renderStammdaten(el,ctx)});
   bankForm.onsubmit=async e=>{e.preventDefault();const f=e.currentTarget,id=f.elements.id.value,data={name:f.elements.name.value.trim(),bic:f.elements.bic.value.trim().toUpperCase(),active:f.elements.active.value==='true',updatedAt:serverTimestamp()};if(id)await updateDoc(doc(db,'banks',id),data);else await addDoc(collection(db,'banks'),{...data,createdAt:serverTimestamp()});toast('Bank gespeichert.');renderStammdaten(el,ctx)};
 
-  const religionForm=el.querySelector('#religion-form');
-  const resetReligion=()=>religionForm.reset();
-  el.querySelector('#religion-cancel').onclick=resetReligion;
+  const religionForm=el.querySelector('#religion-form');el.querySelector('#religion-cancel').onclick=()=>religionForm.reset();
   el.querySelectorAll('.edit-religion').forEach(b=>b.onclick=()=>{const x=religions.find(v=>v.id===b.dataset.id);religionForm.elements.id.value=x.id;religionForm.elements.code.value=x.code||'';religionForm.elements.name.value=x.name||'';religionForm.elements.active.value=String(x.active!==false);religionForm.scrollIntoView({behavior:'smooth',block:'start'})});
   el.querySelectorAll('.delete-religion').forEach(b=>b.onclick=async()=>{if(!confirm('Religions-/Kirchensteuerschlüssel wirklich löschen? Bereits gespeicherte Mitarbeiterwerte bleiben erhalten.'))return;await deleteDoc(doc(db,'religionTaxCodes',b.dataset.id));toast('Religions-/Kirchensteuerschlüssel gelöscht.');renderStammdaten(el,ctx)});
-  religionForm.onsubmit=async e=>{e.preventDefault();const f=e.currentTarget,id=f.elements.id.value,code=f.elements.code.value.trim().toLowerCase(),name=f.elements.name.value.trim();if(!code||!name){toast('Schlüssel und Bezeichnung sind erforderlich.','error');return;}const duplicate=religions.find(x=>x.id!==id&&String(x.code||'').trim().toLowerCase()===code);if(duplicate){toast('Dieser Schlüssel ist bereits vorhanden.','error');return;}const data={code,name,active:f.elements.active.value==='true',updatedAt:serverTimestamp()};if(id)await updateDoc(doc(db,'religionTaxCodes',id),data);else await addDoc(collection(db,'religionTaxCodes'),{...data,createdAt:serverTimestamp()});toast('Religion / Kirchensteuer gespeichert.');renderStammdaten(el,ctx)};
+  religionForm.onsubmit=async e=>{e.preventDefault();const f=e.currentTarget,id=f.elements.id.value,code=f.elements.code.value.trim().toLowerCase(),name=f.elements.name.value.trim();if(!code||!name){toast('Schlüssel und Bezeichnung sind erforderlich.','error');return}const duplicate=religions.find(x=>x.id!==id&&String(x.code||'').trim().toLowerCase()===code);if(duplicate){toast('Dieser Schlüssel ist bereits vorhanden.','error');return}const data={code,name,active:f.elements.active.value==='true',updatedAt:serverTimestamp()};if(id)await updateDoc(doc(db,'religionTaxCodes',id),data);else await addDoc(collection(db,'religionTaxCodes'),{...data,createdAt:serverTimestamp()});toast('Religion / Kirchensteuer gespeichert.');renderStammdaten(el,ctx)};
+
+  const areaForm=el.querySelector('#area-form');el.querySelector('#area-cancel').onclick=()=>areaForm.reset();
+  el.querySelectorAll('.edit-area').forEach(b=>b.onclick=()=>{const x=areas.find(v=>v.id===b.dataset.id);areaForm.elements.id.value=x.id;areaForm.elements.code.value=x.code||'';areaForm.elements.name.value=x.name||'';areaForm.elements.active.value=String(x.active!==false);areaForm.scrollIntoView({behavior:'smooth',block:'start'})});
+  el.querySelectorAll('.delete-area').forEach(b=>b.onclick=async()=>{if(!confirm('Geschäftsbereich wirklich löschen? Bereits gespeicherte Mitarbeiterzuordnungen bleiben erhalten.'))return;await deleteDoc(doc(db,'businessAreas',b.dataset.id));toast('Geschäftsbereich gelöscht.');renderStammdaten(el,ctx)});
+  areaForm.onsubmit=async e=>{e.preventDefault();const f=e.currentTarget,id=f.elements.id.value,code=f.elements.code.value.trim(),name=f.elements.name.value.trim();if(!/^\d{3}$/.test(code)){toast('Die Geschäftsbereich-Nr. muss genau dreistellig numerisch sein.','error');return}const duplicate=areas.find(x=>x.id!==id&&String(x.code||'')===code);if(duplicate){toast('Diese Geschäftsbereich-Nr. ist bereits vorhanden.','error');return}const data={code,name,active:f.elements.active.value==='true',updatedAt:serverTimestamp()};if(id)await updateDoc(doc(db,'businessAreas',id),data);else await addDoc(collection(db,'businessAreas'),{...data,createdAt:serverTimestamp()});toast('Geschäftsbereich gespeichert.');renderStammdaten(el,ctx)};
+  el.querySelector('#area-seed').onclick=async()=>{const defaults=[['010','Flächenheizung'],['020','Estrich'],['030','Fußbodentechnik'],['040','Elektrotechnik'],['050','PV'],['060','Dachdeckerei'],['070','Handel'],['080','Management-Dienstleistungen (DL)'],['090','Personal-Dienstleistungen (DL)'],['100','Fuhrpark-Dienstleistungen (DL)'],['110','Immobilien-Dienstleistungen (DL)'],['120','Lüftung']];const existing=new Set(areas.map(x=>String(x.code||'')));const missing=defaults.filter(([code])=>!existing.has(code));if(!missing.length){toast('Die KTR-Geschäftsbereiche sind bereits vorhanden.');return}if(!confirm(`${missing.length} fehlende Geschäftsbereiche aus dem KTR-Konzept anlegen?`))return;for(const [code,name] of missing)await addDoc(collection(db,'businessAreas'),{code,name,active:true,createdAt:serverTimestamp(),updatedAt:serverTimestamp()});toast(`${missing.length} Geschäftsbereiche angelegt.`);renderStammdaten(el,ctx)};
+
+  el.querySelector('#pds-form').onsubmit=async e=>{e.preventDefault();const f=e.currentTarget,prefix=f.elements.personnelCostPrefix.value.trim();if(!/^\d{2}$/.test(prefix)){toast('Das Kostenarten-Präfix muss genau zweistellig numerisch sein.','error');return}const data={personnelCostPrefix:prefix,bookingTextPrefix:f.elements.bookingTextPrefix.value,bookingTextMode:f.elements.bookingTextMode.value,bookingTextCustom:f.elements.bookingTextCustom.value,dataType:f.elements.dataType.value.trim()||'i',updatedAt:serverTimestamp()};await setDoc(doc(db,'pdsSettings','default'),data,{merge:true});toast('PDS-Exporteinstellungen gespeichert.');renderStammdaten(el,ctx)};
 }
