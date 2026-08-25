@@ -1,7 +1,7 @@
 import { firebaseConfig, db } from "./firebase.js";
 import { initializeApp, deleteApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
 import { initializeAuth, inMemoryPersistence, createUserWithEmailAndPassword, signOut as secondarySignOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-import { collection, getDocs, doc, serverTimestamp, writeBatch } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+import { collection, getDocs, doc, serverTimestamp, writeBatch, updateDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 import { setHead } from "./app.js";
 import { AREA_NAMES, esc, syntheticEmail, ROLE_LABELS, toast } from "./utils.js";
 import { renderPersonalakte } from "./personalakte.js";
@@ -121,7 +121,26 @@ export async function renderMitarbeiter(el,ctx){
     const privateData={birthDate:f.elements.birthDate.value||null,street:f.elements.street.value.trim(),postalCode:f.elements.postalCode.value.trim(),city:f.elements.city.value.trim(),privateEmail:f.elements.privateEmail.value.trim().toLowerCase(),phone:f.elements.phone.value.trim(),mobile:f.elements.mobile.value.trim(),emergencyContactName:f.elements.emergencyContactName.value.trim(),emergencyContactPhone:f.elements.emergencyContactPhone.value.trim(),taxId:f.elements.taxId.value.trim(),taxClass:f.elements.taxClass.value,childAllowance:numberOrNull(f.elements.childAllowance.value),religion:f.elements.religion.value,socialSecurityNumber:f.elements.socialSecurityNumber.value.trim(),healthInsuranceId:f.elements.healthInsuranceId.value,insuranceType:f.elements.insuranceType.value,personGroup:f.elements.personGroup.value.trim(),contributionGroup:f.elements.contributionGroup.value.trim(),iban:f.elements.iban.value.replace(/\s+/g,'').toUpperCase(),bic:f.elements.bic.value.replace(/\s+/g,'').toUpperCase(),bankId:f.elements.bankId.value,accountHolder:f.elements.accountHolder.value.trim(),compensationType:f.elements.compensationType.value,grossSalary:numberOrNull(f.elements.grossSalary.value),hourlyRate:numberOrNull(f.elements.hourlyRate.value),salaryValidFrom:f.elements.salaryValidFrom.value||null,updatedAt:serverTimestamp()};
     try{
       const batch=writeBatch(db);
-      if(id){const prev=users.find(x=>x.id===id)||{},prevPrivate=privateMap.get(id)||{},changes=[...changesFor(PUBLIC_HISTORY_FIELDS,prev,publicData),...changesFor(PRIVATE_HISTORY_FIELDS,prevPrivate,privateData,'private.')];batch.update(doc(db,'users',id),publicData);batch.set(doc(db,'employeePrivate',id),privateData,{merge:true});if(changes.length)batch.set(doc(collection(db,'employeeHistory')),historyRecord(ctx,id,publicData,'update',changes));await batch.commit()}
+      if(id){
+        const prev=users.find(x=>x.id===id)||{},prevPrivate=privateMap.get(id)||{},changes=[...changesFor(PUBLIC_HISTORY_FIELDS,prev,publicData),...changesFor(PRIVATE_HISTORY_FIELDS,prevPrivate,privateData,'private.')];
+        const ownAdminRoleChange=id===ctx.profile.id&&prev.role==='admin'&&publicData.role!=='admin';
+        if(ownAdminRoleChange){
+          // Sensible Daten und Historie zuerst schreiben, solange der angemeldete Benutzer
+          // noch Adminrechte besitzt. Die eigene Rollenänderung erfolgt bewusst als letzter Write.
+          const preBatch=writeBatch(db);
+          preBatch.set(doc(db,'employeePrivate',id),privateData,{merge:true});
+          if(changes.length)preBatch.set(doc(collection(db,'employeeHistory')),historyRecord(ctx,id,publicData,'update',changes));
+          await preBatch.commit();
+          await updateDoc(doc(db,'users',id),publicData);
+          toast('Rolle geändert. Die Ansicht wird neu geladen.');
+          window.location.reload();
+          return;
+        }
+        batch.update(doc(db,'users',id),publicData);
+        batch.set(doc(db,'employeePrivate',id),privateData,{merge:true});
+        if(changes.length)batch.set(doc(collection(db,'employeeHistory')),historyRecord(ctx,id,publicData,'update',changes));
+        await batch.commit();
+      }
       else{if(!password||password.length<6)throw new Error('Für neue Benutzer wird ein Startpasswort mit mindestens 6 Zeichen benötigt.');const uid=await createAuthAccount(email,password);batch.set(doc(db,'users',uid),{...publicData,createdAt:serverTimestamp()});batch.set(doc(db,'employeePrivate',uid),{...privateData,createdAt:serverTimestamp()});batch.set(doc(collection(db,'employeeHistory')),historyRecord(ctx,uid,publicData,'create',[]));await batch.commit()}
       toast('Mitarbeiter gespeichert.');await renderMitarbeiter(el,ctx);
     }catch(err){console.error(err);el.querySelector('#user-message').textContent=err.message||'Mitarbeiter konnte nicht gespeichert werden.'}
