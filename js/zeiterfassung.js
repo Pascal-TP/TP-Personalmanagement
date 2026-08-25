@@ -316,8 +316,9 @@ export async function renderZeiterfassung(el, ctx) {
       <div class="card-head"><div><h2>Stundenkorrektur buchen</h2><p>Manuelle Zu- oder Abbuchungen auf dem Stundenkonto werden als eigene Buchung protokolliert.</p></div></div>
       <div class="info-strip">Beispiele: Auszahlung von Überstunden, Übertrag/Korrektur oder Umwandlung eines Urlaubstages. Die Buchung ersetzt keine Kommen-/Gehen-Zeit und bleibt in der Buchungsliste nachvollziehbar.</div>
       <form id="admin-hours-adjustment-form" class="form-grid">
-        <label class="field"><span>Mitarbeiter</span><select name="userId" required><option value="">Bitte wählen</option>${adminEmployees.map(u => `<option value="${esc(u.id)}">${esc(u.name || u.email || u.username || u.id)}</option>`).join("")}</select></label>
+        <label class="field"><span>Mitarbeiter</span><select name="userId" id="admin-adjustment-user" required><option value="">Bitte wählen</option>${adminEmployees.map(u => `<option value="${esc(u.id)}">${esc(u.name || u.email || u.username || u.id)}</option>`).join("")}</select></label>
         <label class="field"><span>Buchungsdatum</span><input name="adjustmentDate" type="date" required max="${localDateKey()}" value="${localDateKey()}"></label>
+        <label class="field" id="admin-adjustment-project-field"><span>Projektnummer</span><input name="projectNumber" class="project-number-input" inputmode="numeric" maxlength="6" pattern="[0-9]{6}" placeholder="6-stellig (falls projektbezogen)"><small id="admin-adjustment-project-help">Optional. Bei Eingabe sind genau sechs Ziffern erforderlich.</small></label>
         <label class="field"><span>Buchungsart</span><select name="direction" required><option value="plus">Stunden gutschreiben (+)</option><option value="minus">Stunden abziehen (−)</option></select></label>
         <label class="field"><span>Grund</span><select name="reasonPreset" required><option value="">Bitte wählen</option><option>Auszahlung von Überstunden</option><option>Urlaubstag in Stunden umgewandelt</option><option>Übertrag / Stundenkorrektur</option><option>Sonstiges</option></select></label>
         <label class="field"><span>Stunden</span><input name="hours" type="number" min="0" max="999" step="1" value="0" required></label>
@@ -327,7 +328,7 @@ export async function renderZeiterfassung(el, ctx) {
       </form>
       <div class="request-list-head"><strong>Letzte Korrekturbuchungen</strong><span>${adminAdjustments.length} angezeigt</span></div>
       <div class="request-list">${adminAdjustments.length ? adminAdjustments.map(r => `
-        <div class="request-row"><div><strong>${esc(r.userName || r.userId)} · ${signedHm(r.adjustmentMinutes)}</strong><span>${fmtDate(r.adjustmentDate)} · ${esc(r.adjustmentReason || "Stundenkorrektur")}</span>${r.adjustmentDetails ? `<small>${esc(r.adjustmentDetails)}</small>` : ""}</div>${statusPill("gebucht", "blue")}</div>`).join("") : `<div class="empty compact-empty">Noch keine Stundenkorrekturen gebucht.</div>`}</div>
+        <div class="request-row"><div><strong>${esc(r.userName || r.userId)} · ${signedHm(r.adjustmentMinutes)}</strong><span>${fmtDate(r.adjustmentDate)}${validProjectNumber(r.projectNumber) ? ` · Projekt ${esc(r.projectNumber)}` : ""} · ${esc(r.adjustmentReason || "Stundenkorrektur")}</span>${r.adjustmentDetails ? `<small>${esc(r.adjustmentDetails)}</small>` : ""}</div>${statusPill("gebucht", "blue")}</div>`).join("") : `<div class="empty compact-empty">Noch keine Stundenkorrekturen gebucht.</div>`}</div>
     </article>` : ""}
 
     <article class="card">
@@ -340,7 +341,7 @@ export async function renderZeiterfassung(el, ctx) {
               const reason = [r.adjustmentReason, r.adjustmentDetails].filter(Boolean).join(" · ");
               return `<tr class="adjustment-row">
                 <td>${fmtDate(recordDateKey(r))}</td>
-                <td>–</td>
+                <td><strong>${esc(projectText(r.projectNumber))}</strong></td>
                 <td colspan="3"><strong>Stundenkorrektur</strong><small class="booking-note">${esc(reason || "Korrekturbuchung")}</small></td>
                 <td><strong class="adjustment-value ${Number(r.adjustmentMinutes) >= 0 ? "positive" : "negative"}">${signedHm(r.adjustmentMinutes)}</strong></td>
                 <td>${statusPill("Admin-Buchung", "blue")}</td>
@@ -399,6 +400,8 @@ export async function renderZeiterfassung(el, ctx) {
       if (!Number.isFinite(total) || total <= 0) { toast("Bitte eine Stunden- oder Minutenanzahl größer 0 eingeben."); return; }
       if (minutes < 0 || minutes > 59) { toast("Minuten müssen zwischen 0 und 59 liegen."); return; }
       const details = String(data.reasonDetails || "").trim();
+      const projectNumber = String(data.projectNumber || "").trim();
+      if (projectNumber && !validProjectNumber(projectNumber)) { toast("Die Projektnummer muss genau sechs Ziffern enthalten."); return; }
       if (data.reasonPreset === "Sonstiges" && !details) { toast("Bei 'Sonstiges' ist eine Erläuterung erforderlich."); return; }
       const signedMinutes = data.direction === "minus" ? -total : total;
       try {
@@ -414,6 +417,10 @@ export async function renderZeiterfassung(el, ctx) {
           adjustmentMinutes: signedMinutes,
           adjustmentReason: String(data.reasonPreset || "Stundenkorrektur"),
           adjustmentDetails: details,
+          projectNumber,
+          projectTimeTracking: employee.projectTimeTracking === true,
+          employeeNumber: employee.employeeNumber || "",
+          companyAreaNumber: employee.companyAreaNumber || "",
           createdBy: ctx.profile.id,
           createdByName: ctx.profile.name || ctx.profile.email || ctx.profile.id,
           createdAt: serverTimestamp()
@@ -425,6 +432,19 @@ export async function renderZeiterfassung(el, ctx) {
         toast("Die Stundenkorrektur konnte nicht gespeichert werden.");
       }
     };
+  }
+
+  const adminAdjustmentUser = document.getElementById("admin-adjustment-user");
+  const adminAdjustmentProjectHelp = document.getElementById("admin-adjustment-project-help");
+  if (adminAdjustmentUser && adminAdjustmentProjectHelp) {
+    const updateAdminProjectHint = () => {
+      const employee = adminEmployees.find(u => u.id === adminAdjustmentUser.value);
+      adminAdjustmentProjectHelp.textContent = employee?.projectTimeTracking === true
+        ? "Dieser Mitarbeiter erfasst projektbezogen. Für projektwirksame Korrekturen bitte die sechsstellige Projektnummer angeben."
+        : "Optional. Bei Eingabe sind genau sechs Ziffern erforderlich.";
+    };
+    adminAdjustmentUser.addEventListener("change", updateAdminProjectHint);
+    updateAdminProjectHint();
   }
 
   const clockDateEl = document.getElementById("stamp-date");

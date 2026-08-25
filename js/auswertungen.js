@@ -25,6 +25,16 @@ function allocateNetProjectMinutes(records,from,to){
     const totalGross=segments.reduce((s,r)=>s+r._gross,0),pause=totalGross>540?45:totalGross>360?30:0;let assigned=0;
     segments.forEach((r,i)=>{const share=i===segments.length-1?pause-assigned:Math.round(pause*(r._gross/totalGross));assigned+=share;out.push({...r,_net:Math.max(0,r._gross-share)})});
   }
+  // Admin-Korrekturbuchungen mit Projektnummer sind bereits Netto-Minuten und
+  // werden zusätzlich dem Projekt zugeordnet. Ohne Projektnummer bleiben sie
+  // reine Stundenkonto-Korrekturen und erscheinen nicht im PDS-Projektexport.
+  records.filter(r=>r.recordType==="adjustment"&&/^\d{6}$/.test(String(r.projectNumber||""))).forEach(r=>{
+    const dk=String(r.adjustmentDate||"");
+    if(dk<from||dk>to)return;
+    const minutes=Math.round(Number(r.adjustmentMinutes)||0);
+    if(minutes===0)return;
+    out.push({...r,_net:minutes});
+  });
   return out;
 }
 
