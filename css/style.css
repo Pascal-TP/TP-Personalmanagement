@@ -54,3 +54,14 @@
 .backup-top-grid{align-items:stretch}.backup-copy{font-size:11px;line-height:1.55}.backup-info{line-height:1.5}.backup-status{margin-top:14px}.warning-box,.success-box{border-radius:10px;padding:13px 14px;display:grid;gap:4px;font-size:11px}.warning-box{background:#fff7e8;border:1px solid #efd6aa;color:#7a5317}.success-box{background:#eaf7f0;border:1px solid #b9ddc9;color:#176342}.warning-box strong,.success-box strong{font-size:12px}.warning-box span,.success-box span{line-height:1.45}
 /* TP-Personalmanagement V1.6 – PDS-Export */
 .readonly-box{min-height:39px;border:1px solid #cfd9e3;border-radius:9px;background:#f7fafc;padding:10px 11px;font-size:11px;color:var(--primary);overflow-wrap:anywhere}.pds-code{font-family:Consolas,"Courier New",monospace}
+
+/* V1.8 – Admin-Berechtigungen */
+.admin-permissions-box{margin-top:4px;padding:18px;border:1px solid #dce4ee;border-radius:14px;background:#f8fafc}
+.admin-permissions-box>span{font-weight:800;color:#17324d;font-size:15px}
+.permission-group{margin-top:16px}
+.permission-group>strong{display:block;margin-bottom:8px;color:#27445f;font-size:13px;text-transform:uppercase;letter-spacing:.04em}
+.permission-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 12px}
+.permission-grid label{display:flex;align-items:flex-start;gap:9px;padding:9px 10px;border:1px solid #e2e8f0;border-radius:10px;background:#fff;cursor:pointer}
+.permission-grid input{margin-top:2px;accent-color:#173f6f}
+.permission-grid span{font-size:13px;line-height:1.35;color:#263b4f}
+@media(max-width:760px){.permission-grid{grid-template-columns:1fr}}
