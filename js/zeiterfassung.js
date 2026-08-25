@@ -240,26 +240,57 @@ export async function renderZeiterfassung(el, ctx) {
   let entries = [];
   let ownRequests = [];
   let teamRequests = [];
-  let adminEmployees = [];
-  let adminAdjustments = [];
+  let adjustmentEmployees = [];
+  let recentAdjustments = [];
+  const canBookAdjustments = ["admin", "supervisor"].includes(ctx.profile.role);
   try { entries = await loadOwnRecords(ctx.profile.id); } catch (e) { console.error("Zeitdaten konnten nicht geladen werden", e); }
   try { ownRequests = await loadOwnRequests(ctx.profile.id); } catch (e) { console.error("Zeitanträge konnten nicht geladen werden", e); }
   try { teamRequests = await loadTeamRequests(ctx); } catch (e) { console.error("Team-Zeitanträge konnten nicht geladen werden", e); }
-  if (ctx.profile.role === "admin") {
+  if (canBookAdjustments) {
     try {
-      const s = await getDocs(collection(db, "users"));
-      adminEmployees = s.docs.map(d => ({ id: d.id, ...d.data() }))
-        .filter(u => u.active !== false)
-        .sort((a,b) => String(a.name || a.email || "").localeCompare(String(b.name || b.email || ""), "de"));
-      const t = await getDocs(collection(db, "timeRecords"));
-      adminAdjustments = t.docs.map(d => ({ id: d.id, ...d.data() }))
-        .filter(r => r.recordType === "adjustment")
+      if (ctx.profile.role === "admin") {
+        const s = await getDocs(collection(db, "users"));
+        adjustmentEmployees = s.docs.map(d => ({ id: d.id, ...d.data() }))
+          .filter(u => u.active !== false && u.id !== ctx.profile.id)
+          .sort((a,b) => String(a.name || a.email || "").localeCompare(String(b.name || b.email || ""), "de"));
+
+        const t = await getDocs(collection(db, "timeRecords"));
+        recentAdjustments = t.docs.map(d => ({ id: d.id, ...d.data() }))
+          .filter(r => r.recordType === "adjustment");
+      } else {
+        // Vorgesetzte erhalten ausschließlich ihre organisatorisch zugeordneten Mitarbeiter.
+        const s = await getDocs(
+          query(collection(db, "users"), where("supervisorId", "==", ctx.profile.id))
+        );
+        adjustmentEmployees = s.docs.map(d => ({ id: d.id, ...d.data() }))
+          .filter(u => u.active !== false && u.id !== ctx.profile.id)
+          .sort((a,b) => String(a.name || a.email || "").localeCompare(String(b.name || b.email || ""), "de"));
+
+        // Korrekturbuchungen werden je Teammitglied geladen. Dadurch bleibt die
+        // Abfrage mit den Firestore-Berechtigungen des Vorgesetzten vereinbar.
+        const teamAdjustmentLists = await Promise.all(
+          adjustmentEmployees.map(async employee => {
+            const t = await getDocs(
+              query(collection(db, "timeRecords"), where("userId", "==", employee.id))
+            );
+            return t.docs
+              .map(d => ({ id: d.id, ...d.data() }))
+              .filter(r => r.recordType === "adjustment");
+          })
+        );
+        recentAdjustments = teamAdjustmentLists.flat();
+      }
+
+      recentAdjustments = recentAdjustments
         .sort((a,b) => {
           const aa = a.adjustmentDate ? new Date(`${a.adjustmentDate}T12:00:00`).getTime() : toDate(a.createdAt)?.getTime() || 0;
           const bb = b.adjustmentDate ? new Date(`${b.adjustmentDate}T12:00:00`).getTime() : toDate(b.createdAt)?.getTime() || 0;
           return bb-aa;
-        }).slice(0, 10);
-    } catch (e) { console.error("Mitarbeiterliste/Korrekturbuchungen konnten nicht geladen werden", e); }
+        })
+        .slice(0, 10);
+    } catch (e) {
+      console.error("Mitarbeiterliste/Korrekturbuchungen konnten nicht geladen werden", e);
+    }
   }
 
   const openRecord = entries.find(isOpen) || null;
@@ -311,12 +342,12 @@ export async function renderZeiterfassung(el, ctx) {
       </article>
     </div>
 
-    ${ctx.profile.role === "admin" ? `
+    ${canBookAdjustments ? `
     <article class="card admin-adjustment-card">
-      <div class="card-head"><div><h2>Stundenkorrektur buchen</h2><p>Manuelle Zu- oder Abbuchungen auf dem Stundenkonto werden als eigene Buchung protokolliert.</p></div></div>
+      <div class="card-head"><div><h2>Stundenkorrektur buchen</h2><p>${ctx.profile.role === "admin" ? "Manuelle Zu- oder Abbuchungen auf dem Stundenkonto werden als eigene Buchung protokolliert." : "Sie können Stundenkorrekturen ausschließlich für Ihre zugeordneten Mitarbeiter buchen."}</p></div></div>
       <div class="info-strip">Beispiele: Auszahlung von Überstunden, Übertrag/Korrektur oder Umwandlung eines Urlaubstages. Die Buchung ersetzt keine Kommen-/Gehen-Zeit und bleibt in der Buchungsliste nachvollziehbar.</div>
       <form id="admin-hours-adjustment-form" class="form-grid">
-        <label class="field"><span>Mitarbeiter</span><select name="userId" id="admin-adjustment-user" required><option value="">Bitte wählen</option>${adminEmployees.map(u => `<option value="${esc(u.id)}">${esc(u.name || u.email || u.username || u.id)}</option>`).join("")}</select></label>
+        <label class="field"><span>Mitarbeiter</span><select name="userId" id="admin-adjustment-user" required><option value="">Bitte wählen</option>${adjustmentEmployees.map(u => `<option value="${esc(u.id)}">${esc(u.name || u.email || u.username || u.id)}</option>`).join("")}</select></label>
         <label class="field"><span>Buchungsdatum</span><input name="adjustmentDate" type="date" required max="${localDateKey()}" value="${localDateKey()}"></label>
         <label class="field" id="admin-adjustment-project-field"><span>Projektnummer</span><input name="projectNumber" class="project-number-input" inputmode="numeric" maxlength="6" pattern="[0-9]{6}" placeholder="6-stellig (falls projektbezogen)"><small id="admin-adjustment-project-help">Optional. Bei Eingabe sind genau sechs Ziffern erforderlich.</small></label>
         <label class="field"><span>Buchungsart</span><select name="direction" required><option value="plus">Stunden gutschreiben (+)</option><option value="minus">Stunden abziehen (−)</option></select></label>
@@ -326,8 +357,8 @@ export async function renderZeiterfassung(el, ctx) {
         <label class="field full"><span>Bemerkung / Erläuterung</span><textarea name="reasonDetails" placeholder="Optional ergänzende Erläuterung; bei 'Sonstiges' erforderlich."></textarea></label>
         <div class="field full"><button class="btn primary" type="submit">Stundenkorrektur buchen</button></div>
       </form>
-      <div class="request-list-head"><strong>Letzte Korrekturbuchungen</strong><span>${adminAdjustments.length} angezeigt</span></div>
-      <div class="request-list">${adminAdjustments.length ? adminAdjustments.map(r => `
+      <div class="request-list-head"><strong>Letzte Korrekturbuchungen</strong><span>${recentAdjustments.length} angezeigt</span></div>
+      <div class="request-list">${recentAdjustments.length ? recentAdjustments.map(r => `
         <div class="request-row"><div><strong>${esc(r.userName || r.userId)} · ${signedHm(r.adjustmentMinutes)}</strong><span>${fmtDate(r.adjustmentDate)}${validProjectNumber(r.projectNumber) ? ` · Projekt ${esc(r.projectNumber)}` : ""} · ${esc(r.adjustmentReason || "Stundenkorrektur")}</span>${r.adjustmentDetails ? `<small>${esc(r.adjustmentDetails)}</small>` : ""}</div>${statusPill("gebucht", "blue")}</div>`).join("") : `<div class="empty compact-empty">Noch keine Stundenkorrekturen gebucht.</div>`}</div>
     </article>` : ""}
 
@@ -392,7 +423,7 @@ export async function renderZeiterfassung(el, ctx) {
     adminAdjustmentForm.onsubmit = async e => {
       e.preventDefault();
       const data = Object.fromEntries(new FormData(e.currentTarget).entries());
-      const employee = adminEmployees.find(u => u.id === data.userId);
+      const employee = adjustmentEmployees.find(u => u.id === data.userId);
       if (!employee) { toast("Bitte einen Mitarbeiter auswählen."); return; }
       const hours = Number(data.hours || 0);
       const minutes = Number(data.minutes || 0);
@@ -407,7 +438,7 @@ export async function renderZeiterfassung(el, ctx) {
       try {
         await addDoc(collection(db, "timeRecords"), {
           recordType: "adjustment",
-          source: "admin_adjustment",
+          source: ctx.profile.role === "admin" ? "admin_adjustment" : "supervisor_adjustment",
           status: "closed",
           userId: employee.id,
           userName: employee.name || employee.email || employee.username || employee.id,
@@ -429,7 +460,9 @@ export async function renderZeiterfassung(el, ctx) {
         renderZeiterfassung(el, ctx);
       } catch (err) {
         console.error(err);
-        toast("Die Stundenkorrektur konnte nicht gespeichert werden.");
+        toast(err?.code === "permission-denied"
+          ? "Keine Berechtigung für diese Stundenkorrektur."
+          : "Die Stundenkorrektur konnte nicht gespeichert werden.");
       }
     };
   }
@@ -438,7 +471,7 @@ export async function renderZeiterfassung(el, ctx) {
   const adminAdjustmentProjectHelp = document.getElementById("admin-adjustment-project-help");
   if (adminAdjustmentUser && adminAdjustmentProjectHelp) {
     const updateAdminProjectHint = () => {
-      const employee = adminEmployees.find(u => u.id === adminAdjustmentUser.value);
+      const employee = adjustmentEmployees.find(u => u.id === adminAdjustmentUser.value);
       adminAdjustmentProjectHelp.textContent = employee?.projectTimeTracking === true
         ? "Dieser Mitarbeiter erfasst projektbezogen. Für projektwirksame Korrekturen bitte die sechsstellige Projektnummer angeben."
         : "Optional. Bei Eingabe sind genau sechs Ziffern erforderlich.";
