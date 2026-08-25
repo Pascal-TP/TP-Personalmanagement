@@ -13,6 +13,7 @@ import { renderFirmen } from "./firmen.js";
 import { renderAuswertungen } from "./auswertungen.js";
 import { renderHistorie } from "./historie.js";
 import { renderStammdaten } from "./stammdaten.js";
+import { renderDatensicherung } from "./datensicherung.js";
 
 export const ctx = { user:null, profile:null, company:null, view:"dashboard" };
 const content=document.getElementById("content"), nav=document.getElementById("main-nav");
@@ -30,6 +31,7 @@ const views = {
   masterdata:{label:"Stammdaten",icon:"≡",roles:["admin"],render:renderStammdaten},
   reports:{label:"Auswertungen",icon:"▥",roles:["admin","supervisor"],render:renderAuswertungen},
   history:{label:"Historie",icon:"↺",roles:["admin"],render:renderHistorie},
+  backup:{label:"Datensicherung",icon:"⤓",roles:["admin"],render:renderDatensicherung},
   applicants:{label:"Bewerbungsportal",icon:"↗",roles:["admin"],external:true}
 };
 

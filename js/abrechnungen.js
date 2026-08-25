@@ -104,16 +104,13 @@ async function renderAdminPayroll(el,ctx){
       if(matches.length===0)return {index,file,status:"error",message:"Keine Mitarbeiternummer im Dateinamen erkannt"};
       if(matches.length>1)return {index,file,status:"error",message:`Mehrdeutige Zuordnung (${matches.map(x=>x.employeeNumber).join(", ")})`};
       const employee=matches[0];
-      const existing=payrollRows.find(r=>r.userId===employee.id&&r.period===period);
-      return {index,file,employee,existing,status:existing?"replace":"ok",message:existing?"Abrechnung für diesen Monat bereits vorhanden – wird ersetzt":"Bereit zum Upload"};
+      const existingCount=payrollRows.filter(r=>r.userId===employee.id&&r.period===period).length;
+      return {index,file,employee,existingCount,status:existingCount?"warning":"ok",message:existingCount?`Es besteht bereits ${existingCount} Abrechnung(en) für diesen Monat – zusätzlicher Upload möglich`:"Bereit zum Upload"};
     });
-    const assignmentCounts=new Map();
-    previewRows.filter(r=>r.employee).forEach(r=>assignmentCounts.set(r.employee.id,(assignmentCounts.get(r.employee.id)||0)+1));
-    previewRows.forEach(r=>{if(r.employee&&assignmentCounts.get(r.employee.id)>1){r.status="error";r.message="Mehrere ausgewählte PDFs sind demselben Mitarbeiter zugeordnet"}});
-    const valid=previewRows.filter(r=>r.status==="ok"||r.status==="replace").length;
+    const valid=previewRows.filter(r=>r.status==="ok"||r.status==="warning").length;
     const errors=previewRows.length-valid;
     uploadBtn.disabled=valid===0;
-    result.innerHTML=`<div class="payroll-preview-summary"><span class="pill green">${valid} zugeordnet</span>${errors?`<span class="pill red">${errors} fehlerhaft</span>`:""}<span class="pill">${esc(periodLabel(period))}</span></div><div class="table-wrap"><table><thead><tr><th>Datei</th><th>Mitarbeiternummer</th><th>Mitarbeiter</th><th>Firma</th><th>Status</th></tr></thead><tbody>${previewRows.map(r=>`<tr><td>${esc(r.file.name)}</td><td>${esc(r.employee?.employeeNumber||"–")}</td><td>${esc(r.employee?.name||"–")}</td><td>${esc(companyById.get(r.employee?.companyId)?.short||companyById.get(r.employee?.companyId)?.name||"–")}</td><td><span class="pill ${r.status==="error"?"red":r.status==="replace"?"orange":"green"}">${esc(r.message)}</span></td></tr>`).join("")}</tbody></table></div>`;
+    result.innerHTML=`<div class="payroll-preview-summary"><span class="pill green">${valid} zugeordnet</span>${errors?`<span class="pill red">${errors} fehlerhaft</span>`:""}<span class="pill">${esc(periodLabel(period))}</span></div><div class="table-wrap"><table><thead><tr><th>Datei</th><th>Mitarbeiternummer</th><th>Mitarbeiter</th><th>Firma</th><th>Status</th></tr></thead><tbody>${previewRows.map(r=>`<tr><td>${esc(r.file.name)}</td><td>${esc(r.employee?.employeeNumber||"–")}</td><td>${esc(r.employee?.name||"–")}</td><td>${esc(companyById.get(r.employee?.companyId)?.short||companyById.get(r.employee?.companyId)?.name||"–")}</td><td><span class="pill ${r.status==="error"?"red":r.status==="warning"?"orange":"green"}">${esc(r.message)}</span></td></tr>`).join("")}</tbody></table></div>`;
   }
   el.querySelector("#payroll-preview").onclick=buildPreview;
   el.querySelector("#payroll-files").onchange=()=>{previewRows=[];uploadBtn.disabled=true;result.innerHTML='<div class="info-strip">Dateiauswahl geändert. Bitte die Zuordnung erneut prüfen.</div>'};
@@ -121,10 +118,11 @@ async function renderAdminPayroll(el,ctx){
   el.querySelector("#payroll-year").onchange=()=>{if(previewRows.length)buildPreview()};
 
   uploadBtn.onclick=async()=>{
-    const valid=previewRows.filter(r=>r.status==="ok"||r.status==="replace");
+    const valid=previewRows.filter(r=>r.status==="ok"||r.status==="warning");
     if(!valid.length){toast("Keine gültigen Abrechnungen zum Hochladen vorhanden.");return}
     const period=currentPeriod(); const [year,month]=period.split("-");
-    if(valid.some(r=>r.status==="replace")&&!confirm(`${valid.filter(r=>r.status==="replace").length} Abrechnung(en) sind für ${periodLabel(period)} bereits vorhanden und werden ersetzt. Fortfahren?`))return;
+    const warningCount=valid.filter(r=>r.status==="warning").length;
+    if(warningCount&&!confirm(`Für ${warningCount} ausgewählte Abrechnung(en) besteht bereits mindestens eine Abrechnung im Monat ${periodLabel(period)}. Wirklich zusätzlich hochladen?`))return;
     uploadBtn.disabled=true; uploadBtn.textContent=`Upload 0 / ${valid.length}`;
     let ok=0,failed=0;
     for(const row of valid){
@@ -136,10 +134,6 @@ async function renderAdminPayroll(el,ctx){
         const meta={userId:row.employee.id,employeeNumber:row.employee.employeeNumber||"",companyId:row.employee.companyId||"",period,year:Number(year),month:Number(month),fileName:f.name,path:stored.path,size:stored.size||f.size,contentType:"application/pdf",uploadedById:ctx.user.uid,uploadedByName:ctx.profile?.name||"",createdAt:serverTimestamp()};
         const ref=await addDoc(collection(db,"payrollDocuments"),meta);
         payrollRows.push({id:ref.id,...meta});
-        if(row.existing){
-          try{await deletePayrollDocumentFile({idToken:token,employeeId:row.employee.id,path:row.existing.path})}catch(e){console.warn("Alte Payroll-Datei konnte nicht gelöscht werden",e)}
-          try{await deleteDoc(doc(db,"payrollDocuments",row.existing.id));payrollRows=payrollRows.filter(x=>x.id!==row.existing.id)}catch(e){console.warn("Alte Payroll-Metadaten konnten nicht gelöscht werden",e)}
-        }
         ok++;
       }catch(err){console.error("Payroll-Upload fehlgeschlagen",row.file.name,err);row.status="error";row.message=err?.message||"Upload fehlgeschlagen";failed++}
       uploadBtn.textContent=`Upload ${ok+failed} / ${valid.length}`;
