@@ -1,7 +1,7 @@
 import { firebaseConfig, db } from "./firebase.js";
 import { initializeApp, deleteApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-import { initializeAuth, inMemoryPersistence, createUserWithEmailAndPassword, signOut as secondarySignOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-import { collection, getDocs, doc, serverTimestamp, writeBatch, updateDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+import { initializeAuth, inMemoryPersistence, createUserWithEmailAndPassword, deleteUser, signOut as secondarySignOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+import { collection, getDocs, doc, serverTimestamp, writeBatch, updateDoc, setDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 import { setHead } from "./app.js";
 import { AREA_NAMES, esc, syntheticEmail, ROLE_LABELS, toast } from "./utils.js";
 import { renderPersonalakte } from "./personalakte.js";
@@ -18,7 +18,19 @@ const REDACTED_HISTORY_FIELDS=new Set(["taxId","socialSecurityNumber","iban"]);
 function historyValue(field,value){if(REDACTED_HISTORY_FIELDS.has(field))return value?"[hinterlegt]":"[leer]";return comparable(value)}
 function changesFor(fields,before,after,prefix=""){return fields.filter(field=>!sameValue(before?.[field],after?.[field])).map(field=>({field:`${prefix}${field}`,oldValue:historyValue(field,before?.[field]),newValue:historyValue(field,after?.[field])}))}
 function historyRecord(ctx,employeeId,employee,action,changes=[]){return {employeeId,employeeName:employee.name||"",employeeEmail:employee.hasRealEmail===false?(employee.username||""):(employee.email||""),action,changes,actorId:ctx.user?.uid||"",actorName:ctx.profile?.name||"",actorEmail:ctx.profile?.email||ctx.user?.email||"",createdAt:serverTimestamp()}}
-async function createAuthAccount(email,password){const name=`creator-${Date.now()}-${Math.random().toString(36).slice(2,8)}`,app=initializeApp(firebaseConfig,name),a=initializeAuth(app,{persistence:inMemoryPersistence});try{const cred=await createUserWithEmailAndPassword(a,email,password);const uid=cred.user.uid;await secondarySignOut(a);return uid}finally{await deleteApp(app)}}
+async function createAuthAccount(email,password){
+  const name=`creator-${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
+  const app=initializeApp(firebaseConfig,name);
+  const auth=initializeAuth(app,{persistence:inMemoryPersistence});
+  const cred=await createUserWithEmailAndPassword(auth,email,password);
+  return {uid:cred.user.uid,user:cred.user,auth,app};
+}
+async function closeSecondaryAuth(handle,{rollback=false}={}){
+  if(!handle)return;
+  try{if(rollback&&handle.user)await deleteUser(handle.user)}catch(err){console.error("Rollback des Authentication-Benutzers fehlgeschlagen",err)}
+  try{await secondarySignOut(handle.auth)}catch(_){}
+  try{await deleteApp(handle.app)}catch(_){}
+}
 function opt(value,label){return `<option value="${esc(value)}">${esc(label)}</option>`}
 function section(icon,title,text,body,extraClass=""){return `<section class="employee-section ${extraClass}"><div class="employee-section-head"><span class="employee-section-icon">${icon}</span><div><h3>${title}</h3><p>${text}</p></div></div><div class="form-grid">${body}</div></section>`}
 function setVal(form,name,value){const field=form.elements[name];if(!field)return;const normalized=value??'';if(field.tagName==='SELECT'&&normalized!==''&&![...field.options].some(o=>o.value===String(normalized))){field.add(new Option(String(normalized),String(normalized)));}field.value=normalized}
@@ -30,12 +42,12 @@ export async function renderMitarbeiter(el,ctx){
   const [uSnap,cSnap,tSnap,pSnap,hSnap,bSnap,rSnap,aSnap]=await Promise.all([
     getDocs(collection(db,'users')),getDocs(collection(db,'companies')),getDocs(collection(db,'trainings')),getDocs(collection(db,'employeePrivate')),getDocs(collection(db,'healthInsurers')),getDocs(collection(db,'banks')),getDocs(collection(db,'religionTaxCodes')),getDocs(collection(db,'businessAreas'))
   ]);
-  const users=uSnap.docs.map(d=>({id:d.id,...d.data()})),companies=cSnap.docs.map(d=>({id:d.id,...d.data()})),trainings=tSnap.docs.map(d=>({id:d.id,...d.data()}));
+  const users=uSnap.docs.map(d=>({id:d.id,...d.data()})),activeUsers=users.filter(u=>u.archived!==true),companies=cSnap.docs.map(d=>({id:d.id,...d.data()})),trainings=tSnap.docs.map(d=>({id:d.id,...d.data()}));
   const privateMap=new Map(pSnap.docs.map(d=>[d.id,{id:d.id,...d.data()}]));
   const insurers=hSnap.docs.map(d=>({id:d.id,...d.data()})).filter(x=>x.active!==false).sort((a,b)=>(a.name||'').localeCompare(b.name||'','de'));
   const banks=bSnap.docs.map(d=>({id:d.id,...d.data()})).filter(x=>x.active!==false).sort((a,b)=>(a.name||'').localeCompare(b.name||'','de'));
   const religions=rSnap.docs.map(d=>({id:d.id,...d.data()})).filter(x=>x.active!==false).sort((a,b)=>String(a.code||a.name||'').localeCompare(String(b.code||b.name||''),'de'));
-  const supervisors=users.filter(u=>u.role==='supervisor'||u.role==='admin');
+  const supervisors=activeUsers.filter(u=>u.role==='supervisor'||u.role==='admin');
   const businessAreas=aSnap.docs.map(d=>({id:d.id,...d.data()})).filter(x=>x.active!==false).sort((a,b)=>String(a.code||'').localeCompare(String(b.code||''),'de'));
   const businessAreaMap=new Map(businessAreas.map(x=>[x.id,x]));
 
@@ -83,7 +95,7 @@ export async function renderMitarbeiter(el,ctx){
     <label class="field"><span>Login-Art</span><select name="loginType"><option value="email">E-Mail-Adresse</option><option value="username">Benutzername</option></select></label><label class="field"><span>E-Mail / Benutzername</span><input name="login" required></label><label class="field"><span>Startpasswort</span><input name="password" type="text" placeholder="nur bei Neuanlage"></label><label class="field"><span>Rolle</span><select name="role"><option value="employee">Mitarbeiter</option><option value="supervisor">Vorgesetzter</option><option value="admin">Personalabteilung / Admin</option></select></label><label class="field"><span>Status</span><select name="active"><option value="true">aktiv</option><option value="false">inaktiv</option></select></label>`;
 
   el.innerHTML=`<div class="admin-choice-grid"><button class="choice-card active" data-tab="show"><span>♙</span><strong>Benutzer anzeigen</strong><small>Alle vorhandenen Mitarbeiter direkt anzeigen</small></button><button class="choice-card" data-tab="create"><span>＋</span><strong>Benutzer anlegen</strong><small>Neue Mitarbeiterkartei und Zugang anlegen</small></button></div>
-  <section id="user-show"><article class="card"><div class="card-head"><div><h2>Benutzerübersicht</h2><p>${users.length} Benutzer vorhanden</p></div></div><div class="table-wrap"><table><thead><tr><th>Name</th><th>Mitarb.-Nr.</th><th>Firma</th><th>Abteilung / Bereich</th><th>Rolle</th><th>Login</th><th>Status</th><th></th></tr></thead><tbody>${users.length?users.sort((a,b)=>(a.name||'').localeCompare(b.name||'')).map(u=>`<tr><td><strong>${esc(u.name||'')}</strong><div class="small muted">${esc(u.position||'')}</div></td><td>${esc(u.employeeNumber||'–')}</td><td>${esc(companies.find(c=>c.id===u.companyId)?.short||companies.find(c=>c.id===u.companyId)?.name||'–')}</td><td>${esc(u.department||(businessAreaMap.get(u.businessAreaId)?.code&&`${businessAreaMap.get(u.businessAreaId).code} · ${businessAreaMap.get(u.businessAreaId).name}`)||u.companyAreaNumber||'–')}</td><td>${esc(ROLE_LABELS[u.role]||u.role||'–')}</td><td>${esc(u.hasRealEmail===false?(u.username||'Benutzername'):(u.email||'–'))}</td><td><span class="pill ${u.active===false?'red':'green'}">${u.active===false?'inaktiv':'aktiv'}</span></td><td><button class="btn secondary small edit-user" data-id="${u.id}">Mitarbeiterkartei</button></td></tr>`).join(''):`<tr><td colspan="8" class="empty">Noch keine Benutzer angelegt.</td></tr>`}</tbody></table></div></article></section>
+  <section id="user-show"><article class="card"><div class="card-head"><div><h2>Benutzerübersicht</h2><p>${activeUsers.length} aktive Benutzer vorhanden</p></div></div><div class="table-wrap"><table><thead><tr><th>Name</th><th>Mitarb.-Nr.</th><th>Firma</th><th>Abteilung / Bereich</th><th>Rolle</th><th>Login</th><th>Status</th><th></th></tr></thead><tbody>${activeUsers.length?activeUsers.sort((a,b)=>(a.name||'').localeCompare(b.name||'')).map(u=>`<tr><td><strong>${esc(u.name||'')}</strong><div class="small muted">${esc(u.position||'')}</div></td><td>${esc(u.employeeNumber||'–')}</td><td>${esc(companies.find(c=>c.id===u.companyId)?.short||companies.find(c=>c.id===u.companyId)?.name||'–')}</td><td>${esc(u.department||(businessAreaMap.get(u.businessAreaId)?.code&&`${businessAreaMap.get(u.businessAreaId).code} · ${businessAreaMap.get(u.businessAreaId).name}`)||u.companyAreaNumber||'–')}</td><td>${esc(ROLE_LABELS[u.role]||u.role||'–')}</td><td>${esc(u.hasRealEmail===false?(u.username||'Benutzername'):(u.email||'–'))}</td><td><span class="pill ${u.active===false?'red':'green'}">${u.active===false?'inaktiv':'aktiv'}</span></td><td><div class="actions"><button class="btn secondary small edit-user" data-id="${u.id}">Mitarbeiterkartei</button>${u.id!==ctx.profile.id?`<button class="btn danger small remove-user" data-id="${u.id}">Entfernen</button>`:""}</div></td></tr>`).join(''):`<tr><td colspan="8" class="empty">Noch keine Benutzer angelegt.</td></tr>`}</tbody></table></div></article></section>
   <section id="user-create" class="hidden"><form id="user-form" class="employee-file"><input type="hidden" name="id">
     <div class="employee-file-head"><div><span class="eyebrow">Digitale Mitarbeiterkartei</span><h2 id="employee-form-title">Mitarbeiter anlegen</h2><p>Die Bereiche sind fachlich getrennt. Sensible Steuer-, Bank- und Entgeltdaten sind besonders geschützt.</p></div><div class="employee-file-actions"><button class="btn primary" type="submit">Mitarbeiter speichern</button><button class="btn secondary" id="cancel-user" type="button">Abbrechen</button></div></div>
     ${section('⌂','Persönliche Daten & Kontakt','Kontaktdaten und Notfallkontakt.',personalBody)}
@@ -101,12 +113,27 @@ export async function renderMitarbeiter(el,ctx){
 
   const show=el.querySelector('#user-show'),create=el.querySelector('#user-create'),form=el.querySelector('#user-form'),akte=el.querySelector('#personalakte-container');
   function tab(t){show.classList.toggle('hidden',t!=='show');create.classList.toggle('hidden',t!=='create');el.querySelectorAll('.choice-card').forEach(x=>x.classList.toggle('active',x.dataset.tab===t))}
-  async function prepareNew(){form.reset();form.querySelectorAll('[name=workDay]').forEach(x=>x.checked=['1','2','3','4','5'].includes(x.value));setVal(form,'weeklyHours',40);setVal(form,'vacationDays',30);setVal(form,'projectTimeTracking','false');setVal(form,'active','true');el.querySelector('#employee-form-title').textContent='Mitarbeiter anlegen';await renderPersonalakte(akte,ctx,null)}
+  async function prepareNew(){form.reset();form.elements.loginType.disabled=false;form.elements.login.disabled=false;form.querySelectorAll('[name=workDay]').forEach(x=>x.checked=['1','2','3','4','5'].includes(x.value));setVal(form,'weeklyHours',40);setVal(form,'vacationDays',30);setVal(form,'projectTimeTracking','false');setVal(form,'active','true');el.querySelector('#employee-form-title').textContent='Mitarbeiter anlegen';await renderPersonalakte(akte,ctx,null)}
   el.querySelectorAll('.choice-card').forEach(b=>b.onclick=async()=>{if(b.dataset.tab==='create')await prepareNew();tab(b.dataset.tab)});
   const cancel=()=>tab('show');el.querySelector('#cancel-user').onclick=cancel;el.querySelector('#cancel-user-bottom').onclick=cancel;
 
-  el.querySelectorAll('.edit-user').forEach(b=>b.onclick=async()=>{
-    const u=users.find(x=>x.id===b.dataset.id),p=privateMap.get(u.id)||{};form.reset();setVal(form,'id',u.id);setVal(form,'name',u.name);setVal(form,'companyId',u.companyId);const usernameMode=u.hasRealEmail===false||String(u.email||'').endsWith('@portal.local');setVal(form,'loginType',usernameMode?'username':'email');setVal(form,'login',usernameMode?(u.username||String(u.email||'').replace(/@portal\.local$/,'')):(u.email||''));setVal(form,'role',u.role||'employee');setVal(form,'supervisorId',u.supervisorId||'');setVal(form,'active',String(u.active!==false));setVal(form,'startDate',u.startDate||'');setVal(form,'endDate',u.endDate||'');setVal(form,'weeklyHours',u.weeklyHours??40);setVal(form,'vacationDays',u.vacationDays??30);setVal(form,'employeeNumber',u.employeeNumber||'');let areaValue=u.businessAreaId||businessAreas.find(a=>a.code===u.companyAreaNumber)?.id||'';if(!areaValue&&u.companyAreaNumber){const select=form.elements.businessAreaId;select.add(new Option(`${u.companyAreaNumber} · bisheriger Wert`,`legacy:${u.companyAreaNumber}`));areaValue=`legacy:${u.companyAreaNumber}`;}setVal(form,'businessAreaId',areaValue);setVal(form,'projectTimeTracking',String(u.projectTimeTracking===true));
+    el.querySelectorAll('.remove-user').forEach(b=>b.onclick=async()=>{
+    const u=users.find(x=>x.id===b.dataset.id);
+    if(!u)return;
+    if(!confirm(`Mitarbeiter „${u.name||u.email||u.username}“ wirklich entfernen?\n\nDer Zugang wird deaktiviert und aus der aktiven Mitarbeiterübersicht entfernt. Zeit-, Schulungs-, Abrechnungs- und Historiendaten bleiben aus Nachweisgründen erhalten.`))return;
+    try{
+      const changes=[{field:'archived',oldValue:false,newValue:true},{field:'active',oldValue:u.active!==false,newValue:false}];
+      const batch=writeBatch(db);
+      batch.update(doc(db,'users',u.id),{archived:true,active:false,archivedAt:serverTimestamp(),archivedBy:ctx.profile.id,updatedAt:serverTimestamp()});
+      batch.set(doc(collection(db,'employeeHistory')),historyRecord(ctx,u.id,{...u,active:false},'archive',changes));
+      await batch.commit();
+      toast('Mitarbeiter wurde entfernt und der Zugang deaktiviert.');
+      await renderMitarbeiter(el,ctx);
+    }catch(err){console.error(err);toast(err.message||'Mitarbeiter konnte nicht entfernt werden.')}
+  });
+
+el.querySelectorAll('.edit-user').forEach(b=>b.onclick=async()=>{
+    const u=users.find(x=>x.id===b.dataset.id),p=privateMap.get(u.id)||{};form.reset();setVal(form,'id',u.id);setVal(form,'name',u.name);setVal(form,'companyId',u.companyId);const usernameMode=u.hasRealEmail===false||String(u.email||'').endsWith('@portal.local');setVal(form,'loginType',usernameMode?'username':'email');setVal(form,'login',usernameMode?(u.username||String(u.email||'').replace(/@portal\.local$/,'')):(u.email||''));form.elements.loginType.disabled=true;form.elements.login.disabled=true;setVal(form,'role',u.role||'employee');setVal(form,'supervisorId',u.supervisorId||'');setVal(form,'active',String(u.active!==false));setVal(form,'startDate',u.startDate||'');setVal(form,'endDate',u.endDate||'');setVal(form,'weeklyHours',u.weeklyHours??40);setVal(form,'vacationDays',u.vacationDays??30);setVal(form,'employeeNumber',u.employeeNumber||'');let areaValue=u.businessAreaId||businessAreas.find(a=>a.code===u.companyAreaNumber)?.id||'';if(!areaValue&&u.companyAreaNumber){const select=form.elements.businessAreaId;select.add(new Option(`${u.companyAreaNumber} · bisheriger Wert`,`legacy:${u.companyAreaNumber}`));areaValue=`legacy:${u.companyAreaNumber}`;}setVal(form,'businessAreaId',areaValue);setVal(form,'projectTimeTracking',String(u.projectTimeTracking===true));
     ['department','position','contractType','probationEndDate','fixedTermEndDate','costCenter','firstAiderValidUntil','fireWardenValidUntil','forkliftPermitValidUntil','aerialLiftPermitValidUntil','drivingLicenseClasses','nextDrivingLicenseCheck','occupationalMedicalNotes'].forEach(k=>setVal(form,k,u[k]||''));['firstAider','fireWarden','forkliftPermit','aerialLiftPermit'].forEach(k=>boolVal(form,k,u[k]));
     const workDays=Array.isArray(u.workDays)&&u.workDays.length?u.workDays.map(String):['1','2','3','4','5'];form.querySelectorAll('[name=workDay]').forEach(x=>x.checked=workDays.includes(x.value));
     ['birthDate','street','postalCode','city','privateEmail','phone','mobile','emergencyContactName','emergencyContactPhone','taxId','taxClass','religion','socialSecurityNumber','healthInsuranceId','insuranceType','personGroup','contributionGroup','iban','bic','bankId','accountHolder','compensationType','salaryValidFrom'].forEach(k=>setVal(form,k,p[k]||''));setVal(form,'childAllowance',p.childAllowance??'');setVal(form,'grossSalary',p.grossSalary??'');setVal(form,'hourlyRate',p.hourlyRate??'');
@@ -125,23 +152,31 @@ export async function renderMitarbeiter(el,ctx){
         const prev=users.find(x=>x.id===id)||{},prevPrivate=privateMap.get(id)||{},changes=[...changesFor(PUBLIC_HISTORY_FIELDS,prev,publicData),...changesFor(PRIVATE_HISTORY_FIELDS,prevPrivate,privateData,'private.')];
         const ownAdminRoleChange=id===ctx.profile.id&&prev.role==='admin'&&publicData.role!=='admin';
         if(ownAdminRoleChange){
-          // Sensible Daten und Historie zuerst schreiben, solange der angemeldete Benutzer
-          // noch Adminrechte besitzt. Die eigene Rollenänderung erfolgt bewusst als letzter Write.
-          const preBatch=writeBatch(db);
-          preBatch.set(doc(db,'employeePrivate',id),privateData,{merge:true});
-          if(changes.length)preBatch.set(doc(collection(db,'employeeHistory')),historyRecord(ctx,id,publicData,'update',changes));
-          await preBatch.commit();
-          await updateDoc(doc(db,'users',id),publicData);
-          toast('Rolle geändert. Die Ansicht wird neu geladen.');
-          window.location.reload();
-          return;
+          throw new Error('Die Rolle des aktuell angemeldeten Admin-Zugangs kann nicht selbst herabgestuft werden. Bitte mit einem anderen Admin anmelden und die Rolle dort ändern.');
         }
         batch.update(doc(db,'users',id),publicData);
         batch.set(doc(db,'employeePrivate',id),privateData,{merge:true});
         if(changes.length)batch.set(doc(collection(db,'employeeHistory')),historyRecord(ctx,id,publicData,'update',changes));
         await batch.commit();
       }
-      else{if(!password||password.length<6)throw new Error('Für neue Benutzer wird ein Startpasswort mit mindestens 6 Zeichen benötigt.');const uid=await createAuthAccount(email,password);batch.set(doc(db,'users',uid),{...publicData,createdAt:serverTimestamp()});batch.set(doc(db,'employeePrivate',uid),{...privateData,createdAt:serverTimestamp()});batch.set(doc(collection(db,'employeeHistory')),historyRecord(ctx,uid,publicData,'create',[]));await batch.commit()}
+      else{
+        if(!password||password.length<6)throw new Error('Für neue Benutzer wird ein Startpasswort mit mindestens 6 Zeichen benötigt.');
+        if(activeUsers.some(u=>String(u.email||'').toLowerCase()===email.toLowerCase()||(!publicData.hasRealEmail&&String(u.username||'').toLowerCase()===publicData.username)))throw new Error('Dieser Login ist bereits einem Benutzer zugeordnet.');
+        let authHandle=null;
+        try{
+          authHandle=await createAuthAccount(email,password);
+          const uid=authHandle.uid;
+          batch.set(doc(db,'users',uid),{...publicData,email,createdAt:serverTimestamp()});
+          batch.set(doc(db,'employeePrivate',uid),{...privateData,createdAt:serverTimestamp()});
+          batch.set(doc(collection(db,'employeeHistory')),historyRecord(ctx,uid,{...publicData,email},'create',[]));
+          await batch.commit();
+          await closeSecondaryAuth(authHandle);
+          authHandle=null;
+        }catch(createErr){
+          if(authHandle)await closeSecondaryAuth(authHandle,{rollback:true});
+          throw createErr;
+        }
+      }
       toast('Mitarbeiter gespeichert.');await renderMitarbeiter(el,ctx);
     }catch(err){console.error(err);el.querySelector('#user-message').textContent=err.message||'Mitarbeiter konnte nicht gespeichert werden.'}
   };
