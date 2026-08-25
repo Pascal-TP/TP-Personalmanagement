@@ -2,6 +2,7 @@ import { db } from "./firebase.js";
 import { collection, getDocs, doc, getDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 import { setHead } from "./app.js";
 import { esc, toast } from "./utils.js";
+import { hasAdminPermission } from "./permissions.js";
 
 const PDS_HEADERS=['kostenstelle','kostenstelleSek','kostentraeger','kostenart','leistungsart','buchungsperiode','belegnummer','belegdatum','betrag','buchungstext','menge','bucher','datenart','planvariante','notiz','kostentraegerSek'];
 function toDate(value){if(!value)return null;if(value?.toDate)return value.toDate();const d=new Date(value);return Number.isNaN(d.getTime())?null:d}
@@ -78,15 +79,16 @@ export async function renderAuswertungen(el,ctx){
   let users=u.docs.map(d=>({id:d.id,...d.data()}));const companies=c.docs.map(d=>({id:d.id,...d.data()})),records=tr.docs.map(d=>({id:d.id,...d.data()})),areas=a.docs.map(d=>({id:d.id,...d.data()}));
   const settings={personnelCostPrefix:'60',bookingTextPrefix:'$7$ZeitDritts$',bookingTextMode:'period_week',bookingTextCustom:'',dataType:'i',...(pdsDoc.exists()?pdsDoc.data():{})};
   if(ctx.profile.role==='supervisor')users=users.filter(x=>x.id===ctx.profile.id||x.supervisorId===ctx.profile.id);
+  const canHoursExport=hasAdminPermission(ctx.profile,'hoursExport');
   const active=users.filter(x=>x.active!==false).length,pending=v.docs.map(d=>d.data()).filter(x=>x.status==='pending'&&(ctx.profile.role==='admin'||x.supervisorId===ctx.profile.id)).length;
   const now=new Date(),p=n=>String(n).padStart(2,'0'),periodDefault=`${now.getFullYear()}-${p(now.getMonth()+1)}`;
   el.innerHTML=`<div class="kpi-grid three"><div class="kpi"><span>Aktive Mitarbeiter</span><strong>${active}</strong><small>im sichtbaren Bereich</small></div><div class="kpi"><span>Schulungen</span><strong>${t.size}</strong><small>im System angelegt</small></div><div class="kpi"><span>Offene Urlaubsfreigaben</span><strong>${pending}</strong><small>aktuell zu bearbeiten</small></div></div>
-  ${ctx.profile.role==='admin'?`<article class="card"><div class="card-head"><div><h2>PDS-Zeiterfassungsexport</h2><p>Projektzeiten automatisch im vorgegebenen 16-spaltigen PDS-Importformat erzeugen.</p></div></div>
+  ${canHoursExport?`<article class="card"><div class="card-head"><div><h2>PDS-Zeiterfassungsexport</h2><p>Projektzeiten automatisch im vorgegebenen 16-spaltigen PDS-Importformat erzeugen.</p></div></div>
     <div class="info-strip"><strong>Exportlogik:</strong> Kostenträger = Firma (2) + Geschäftsbereich (3) + IC-Firma (2) + Projekt (6). In V1.6 wird für den reinen Stundenimport die eigene Firmennummer auch als IC-Firma verwendet. Kostenart = <strong>${esc(settings.personnelCostPrefix||'60')}</strong> + fünfstellige Mitarbeiternummer. Die Pause wird pro Tag einmal ermittelt und anteilig auf die Projektzeiten verteilt.</div>
     <form id="pds-export-form" class="form-grid"><label class="field"><span>Buchungsperiode</span><input name="period" type="month" value="${periodDefault}" required></label><div class="field"><span>Aktueller Buchungstext</span><div class="readonly-box" id="pds-booking-text"></div></div><div class="field full actions"><button class="btn secondary" type="button" id="pds-preview">PDS-Vorschau erzeugen</button><button class="btn primary" type="button" id="pds-download">CSV für PDS herunterladen</button></div></form>
     <div id="pds-export-result" class="table-wrap"></div></article>`:''}
   <article class="card"><div class="card-head"><div><h2>Weitere Auswertungen</h2><p>Dieser Bereich bleibt modular erweiterbar.</p></div></div><div class="info-strip">Später können hier u. a. Arbeitszeitkonten, Fehlzeiten, Urlaub, Schulungsquoten, Personalbewegungen und firmenbezogene Kennzahlen ergänzt werden.</div></article>`;
-  if(ctx.profile.role!=='admin')return;
+  if(!canHoursExport)return;
   const form=el.querySelector('#pds-export-form'),result=el.querySelector('#pds-export-result'),booking=el.querySelector('#pds-booking-text');
   function currentPeriod(){return monthBounds(form.elements.period.value)}
   function refreshBooking(){const period=currentPeriod();booking.textContent=period?buildBookingText(settings,period,new Date()):'–'}

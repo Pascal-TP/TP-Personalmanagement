@@ -14,6 +14,7 @@ import { renderAuswertungen } from "./auswertungen.js";
 import { renderHistorie } from "./historie.js";
 import { renderStammdaten } from "./stammdaten.js";
 import { renderDatensicherung } from "./datensicherung.js";
+import { hasAdminPermission, hasAnyAdminPermission } from "./permissions.js";
 
 export const ctx = { user:null, profile:null, company:null, view:"dashboard" };
 const content=document.getElementById("content"), nav=document.getElementById("main-nav");
@@ -23,16 +24,16 @@ const views = {
   dashboard:{label:"Dashboard",icon:"⌂",roles:["employee","supervisor","admin"],render:renderDashboard},
   time:{label:"Zeiterfassung",icon:"◷",roles:["employee","supervisor","admin"],render:renderZeiterfassung},
   vacation:{label:"Urlaub & Abwesenheit",icon:"☀",roles:["employee","supervisor","admin"],render:renderUrlaub},
-  payroll:{label:"Lohn-/Gehaltsabrechnung",icon:"€",roles:["employee","admin"],render:renderAbrechnungen},
+  payroll:{label:"Lohn-/Gehaltsabrechnung",icon:"€",roles:["employee","admin"],adminPermission:"payrollManage",render:renderAbrechnungen},
   trainings:{label:"Schulungen",icon:"▤",roles:["employee","supervisor","admin"],render:renderSchulungen},
-  employees:{label:"Mitarbeiter",icon:"♙",roles:["admin"],render:renderMitarbeiter},
-  news:{label:"News & Hinweise",icon:"●",roles:["admin"],render:renderNews},
-  companies:{label:"Firmen",icon:"▣",roles:["admin"],render:renderFirmen},
-  masterdata:{label:"Stammdaten",icon:"≡",roles:["admin"],render:renderStammdaten},
-  reports:{label:"Auswertungen",icon:"▥",roles:["admin","supervisor"],render:renderAuswertungen},
-  history:{label:"Historie",icon:"↺",roles:["admin"],render:renderHistorie},
-  backup:{label:"Datensicherung",icon:"⤓",roles:["admin"],render:renderDatensicherung},
-  applicants:{label:"Bewerbungsportal",icon:"↗",roles:["admin"],external:true}
+  employees:{label:"Mitarbeiter",icon:"♙",roles:["admin"],adminAny:["employeesView","employeesCreate","employeesEdit","employeesDelete"],render:renderMitarbeiter},
+  news:{label:"News & Hinweise",icon:"●",roles:["admin"],adminPermission:"newsManage",render:renderNews},
+  companies:{label:"Firmen",icon:"▣",roles:["admin"],adminPermission:"companyManage",render:renderFirmen},
+  masterdata:{label:"Stammdaten",icon:"≡",roles:["admin"],adminPermission:"masterData",render:renderStammdaten},
+  reports:{label:"Auswertungen",icon:"▥",roles:["admin","supervisor"],adminPermission:"hoursExport",render:renderAuswertungen},
+  history:{label:"Historie",icon:"↺",roles:["admin"],adminPermission:"historyView",render:renderHistorie},
+  backup:{label:"Datensicherung",icon:"⤓",roles:["admin"],adminPermission:"backup",render:renderDatensicherung},
+  applicants:{label:"Bewerbungsportal",icon:"↗",roles:["admin"],adminPermission:"applicantPortal",external:true}
 };
 
 export async function refreshProfile(){
@@ -48,7 +49,7 @@ export async function navigate(view){
   ctx.view=view; renderNav(); const item=views[view]||views.dashboard; content.innerHTML=`<div class="loading">Bereich wird geladen …</div>`;
   try{await item.render(content,ctx)}catch(e){console.error(e);content.innerHTML=`<div class="error-card"><strong>Der Bereich konnte nicht geladen werden.</strong><p>${e.message}</p></div>`}
 }
-function renderNav(){const role=ctx.profile?.role||"employee";nav.innerHTML=Object.entries(views).filter(([,v])=>v.roles.includes(role)).map(([k,v])=>`<button class="nav-btn ${ctx.view===k?'active':''}" data-view="${k}"><span class="icon">${v.icon}</span><span>${v.label}</span></button>`).join("");nav.querySelectorAll("button").forEach(b=>b.onclick=()=>navigate(b.dataset.view))}
+function renderNav(){const role=ctx.profile?.role||"employee";nav.innerHTML=Object.entries(views).filter(([,v])=>{if(!v.roles.includes(role))return false;if(role!=="admin")return true;if(v.adminPermission&&!hasAdminPermission(ctx.profile,v.adminPermission))return false;if(v.adminAny&&!hasAnyAdminPermission(ctx.profile,v.adminAny))return false;return true}).map(([k,v])=>`<button class="nav-btn ${ctx.view===k?'active':''}" data-view="${k}"><span class="icon">${v.icon}</span><span>${v.label}</span></button>`).join("");nav.querySelectorAll("button").forEach(b=>b.onclick=()=>navigate(b.dataset.view))}
 function updateChrome(){
   const p=ctx.profile,c=ctx.company;document.getElementById("company-name").textContent=c?.name||"TP-Personalmanagement";
   const logo=document.querySelector("#company-logo img");logo.src=c?.logoUrl||c?.logoDataUrl||"assets/tp-logo.png";

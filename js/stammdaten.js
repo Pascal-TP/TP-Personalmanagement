@@ -2,13 +2,14 @@ import { db } from "./firebase.js";
 import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, getDoc, setDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 import { setHead } from "./app.js";
 import { esc, toast } from "./utils.js";
+import { hasAdminPermission } from "./permissions.js";
 
 function sortByName(items){return [...items].sort((a,b)=>(a.name||"").localeCompare(b.name||"",'de'))}
 function sortByCode(items){return [...items].sort((a,b)=>String(a.code||"").localeCompare(String(b.code||""),'de'))}
 
 export async function renderStammdaten(el,ctx){
   setHead("Stammdaten","Zentrale Auswahllisten und PDS-Exporteinstellungen pflegen.");
-  if(ctx.profile?.role!=="admin"){
+  if(!hasAdminPermission(ctx.profile,"masterData")){
     el.innerHTML='<div class="error-card">Dieser Bereich ist ausschließlich für die Personalabteilung / Admins vorgesehen.</div>';
     return;
   }

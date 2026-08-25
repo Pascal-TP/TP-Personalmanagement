@@ -3,9 +3,11 @@ import { collection, addDoc, getDocs, doc, updateDoc, deleteDoc, serverTimestamp
 import { httpsCallable } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-functions.js";
 import { setHead } from "./app.js";
 import { esc, fmtDate, toast } from "./utils.js";
+import { hasAdminPermission } from "./permissions.js";
 const sendPersonnelNewsEmail=httpsCallable(functions,'sendPersonnelNewsEmail');
 function exec(cmd,val=null){document.execCommand(cmd,false,val);document.getElementById('news-editor')?.focus()}
 export async function renderNews(el,ctx){
+  if(!hasAdminPermission(ctx.profile,'newsManage')){el.innerHTML='<div class="error-card">Keine Berechtigung für News & Hinweise.</div>';return;}
   setHead("News & Hinweise","Dashboard-Mitteilungen, E-Mail-Texte und wiederverwendbare Textbausteine verwalten.");
   const [newsSnap,tplSnap]=await Promise.all([getDocs(collection(db,'news')),getDocs(collection(db,'newsTemplates'))]);
   const news=newsSnap.docs.map(d=>({id:d.id,...d.data()})),templates=tplSnap.docs.map(d=>({id:d.id,...d.data()}));

@@ -2,6 +2,7 @@ import { functions } from "./firebase.js";
 import { httpsCallable } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-functions.js";
 import { setHead } from "./app.js";
 import { esc, toast } from "./utils.js";
+import { hasAdminPermission } from "./permissions.js";
 
 const createBackup = httpsCallable(functions, "createPersonnelBackup", { timeout: 540000 });
 const listBackups = httpsCallable(functions, "listPersonnelBackups");
@@ -23,7 +24,7 @@ function fmtDate(value=""){
 
 export async function renderDatensicherung(el,ctx){
   setHead("Datensicherung","Anwendungsdaten und Personaldateien sichern und bei Bedarf wiederherstellen.");
-  if(ctx.profile.role!=="admin"){
+  if(!hasAdminPermission(ctx.profile,"backup")){
     el.innerHTML='<div class="error-card"><strong>Keine Berechtigung.</strong><p>Die Datensicherung steht ausschließlich der Personalabteilung/Admin zur Verfügung.</p></div>';
     return;
   }

@@ -13,6 +13,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 import { setHead } from "./app.js";
 import { esc, fmtDate, fmtDateTime, statusPill, toast } from "./utils.js";
+import { hasAdminPermission } from "./permissions.js";
 
 
 function validProjectNumber(value) {
@@ -242,10 +243,11 @@ export async function renderZeiterfassung(el, ctx) {
   let teamRequests = [];
   let adjustmentEmployees = [];
   let recentAdjustments = [];
-  const canBookAdjustments = ["admin", "supervisor"].includes(ctx.profile.role);
+  const canBookAdjustments = ctx.profile.role === "supervisor" || hasAdminPermission(ctx.profile, "timeAdjustment");
+  const canApproveTime = ctx.profile.role === "supervisor" || hasAdminPermission(ctx.profile, "timeApprove");
   try { entries = await loadOwnRecords(ctx.profile.id); } catch (e) { console.error("Zeitdaten konnten nicht geladen werden", e); }
   try { ownRequests = await loadOwnRequests(ctx.profile.id); } catch (e) { console.error("Zeitanträge konnten nicht geladen werden", e); }
-  try { teamRequests = await loadTeamRequests(ctx); } catch (e) { console.error("Team-Zeitanträge konnten nicht geladen werden", e); }
+  if (canApproveTime) { try { teamRequests = await loadTeamRequests(ctx); } catch (e) { console.error("Team-Zeitanträge konnten nicht geladen werden", e); } }
   if (canBookAdjustments) {
     try {
       if (ctx.profile.role === "admin") {
@@ -397,7 +399,7 @@ export async function renderZeiterfassung(el, ctx) {
       </table></div>
     </article>
 
-    ${ctx.profile.role !== "employee" ? `
+    ${canApproveTime ? `
       <article class="card">
         <div class="card-head"><div><h2>Freigaben Zeiterfassung</h2><p>Offene Anträge ${ctx.profile.role === "admin" ? "aller Mitarbeiter" : "Ihrer zugeordneten Mitarbeiter"}.</p></div></div>
         <div class="approval-list">

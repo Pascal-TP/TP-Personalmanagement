@@ -3,6 +3,7 @@ import { httpsCallable } from "https://www.gstatic.com/firebasejs/11.6.1/firebas
 import { collection, getDocs, query, where, addDoc, deleteDoc, doc, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 import { setHead } from "./app.js";
 import { esc, fmtDateTime, toast } from "./utils.js";
+import { hasAdminPermission } from "./permissions.js";
 
 const uploadPayrollDocument = httpsCallable(functions, "uploadPersonnelPayrollDocument");
 const getPayrollDocumentUrl = httpsCallable(functions, "getPersonnelPayrollDocumentDownloadUrl");
@@ -179,8 +180,10 @@ async function renderAdminPayroll(el,ctx){
 }
 
 export async function renderAbrechnungen(el,ctx){
-  setHead("Lohn-/Gehaltsabrechnung",ctx.profile.role==="admin"?"Abrechnungen gesammelt bereitstellen und sicher verwalten.":"Persönliche Abrechnungen sicher abrufen, herunterladen und ausdrucken.");
-  if(ctx.profile.role==="admin")return renderAdminPayroll(el,ctx);
+  const adminPayroll=hasAdminPermission(ctx.profile,"payrollManage");
+  setHead("Lohn-/Gehaltsabrechnung",adminPayroll?"Abrechnungen gesammelt bereitstellen und sicher verwalten.":"Persönliche Abrechnungen sicher abrufen, herunterladen und ausdrucken.");
+  if(ctx.profile.role==="admin"&&!adminPayroll){el.innerHTML='<div class="error-card">Für diesen Admin-Zugang ist die Verwaltung von Lohn-/Gehaltsabrechnungen nicht freigeschaltet.</div>';return;}
+  if(adminPayroll)return renderAdminPayroll(el,ctx);
   const rows=await loadPayrollRowsForUser(ctx.profile.id);
   renderEmployeeArchive(el,ctx,rows);
 }

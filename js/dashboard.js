@@ -2,6 +2,7 @@ import { db } from "./firebase.js";
 import { collection, getDocs, query, where, orderBy, limit } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 import { setHead } from "./app.js";
 import { esc, fmtDate, statusPill } from "./utils.js";
+import { hasAdminPermission } from "./permissions.js";
 
 function toDate(value){
   if(!value) return null;
@@ -115,14 +116,16 @@ function currentMonthBalance(profile,timeRecords,vacations){
 export async function renderDashboard(el,ctx){
   setHead("Dashboard","Personalinformationen, Termine und offene Aufgaben auf einen Blick.");
   const p=ctx.profile;
+  const canApproveVacation=p.role==="supervisor"||hasAdminPermission(p,"vacationApprove");
+  const canApproveTime=p.role==="supervisor"||hasAdminPermission(p,"timeApprove");
   let news=[],trainingProgress=[],allTrainingDefinitions=[],vacations=[],timeRequests=[],timeRecords=[],teamVacations=[];
   try{const s=await getDocs(query(collection(db,"news"),orderBy("createdAt","desc"),limit(6)));news=s.docs.map(d=>({id:d.id,...d.data()})).filter(n=>n.active!==false&&(n.companyId==="all"||!n.companyId||n.companyId===p.companyId)&&(n.audience==="all"||!n.audience||n.audience===p.role))}catch{}
   try{const s=await getDocs(query(collection(db,"trainingProgress"),where("userId","==",p.id)));trainingProgress=s.docs.map(d=>d.data())}catch{}
   try{const s=await getDocs(collection(db,"trainings"));allTrainingDefinitions=s.docs.map(d=>({id:d.id,...d.data()}))}catch{}
   try{const s=await getDocs(query(collection(db,"vacationRequests"),where("userId","==",p.id)));vacations=s.docs.map(d=>({id:d.id,...d.data()}))}catch{}
   try{const s=await getDocs(query(collection(db,"timeRecords"),where("userId","==",p.id)));timeRecords=s.docs.map(d=>({id:d.id,...d.data()}))}catch{}
-  try{const s=await getDocs(collection(db,"timeCorrectionRequests"));timeRequests=s.docs.map(d=>({id:d.id,...d.data()}))}catch{}
-  if(p.role!=="employee"){
+  if(p.role==="employee"||canApproveTime){try{const s=await getDocs(collection(db,"timeCorrectionRequests"));timeRequests=s.docs.map(d=>({id:d.id,...d.data()}))}catch{}}
+  if(canApproveVacation){
     try{const s=await getDocs(collection(db,"vacationRequests"));teamVacations=s.docs.map(d=>({id:d.id,...d.data()})).filter(v=>v.status==="pending"&&(p.role==="admin"||v.supervisorId===p.id))}catch{}
   }
 
@@ -142,28 +145,28 @@ export async function renderDashboard(el,ctx){
   const openTrainings=assignedTrainings.filter(t=>!completedTrainingIds.has(t.id)).length;
   const pendingOwnVac=vacations.filter(x=>x.status==="pending"||x.status==="beantragt").length;
   const pendingTeamVac=teamVacations.length;
-  const vacationCount=p.role==="employee"?pendingOwnVac:pendingTeamVac;
+  const vacationCount=canApproveVacation?pendingTeamVac:pendingOwnVac;
   const pendingOwnTime=timeRequests.filter(x=>x.userId===p.id&&x.status==="pending").length;
-  const pendingTeamTime=p.role==="admin"
+  const pendingTeamTime=p.role==="admin"&&canApproveTime
     ? timeRequests.filter(x=>x.status==="pending").length
     : p.role==="supervisor"
       ? timeRequests.filter(x=>x.status==="pending"&&x.supervisorId===p.id).length
       : 0;
-  const pendingTime=p.role==="employee"?pendingOwnTime:pendingTeamTime;
+  const pendingTime=canApproveTime?pendingTeamTime:pendingOwnTime;
   const hours=currentMonthBalance(p,timeRecords,vacations);
   const monthName=new Intl.DateTimeFormat("de-DE",{month:"long"}).format(new Date());
   const saldoClass=hours.balanceMinutes>0?"positive":hours.balanceMinutes<0?"negative":"neutral";
 
   const trainingAction=openTrainings>0;
-  const vacationAction=p.role!=="employee"&&pendingTeamVac>0;
-  const timeAction=p.role!=="employee"&&pendingTeamTime>0;
-  const adminHint=p.role==="admin"?`<div class="info-strip">Die Personalabteilung kann über <strong>News & Hinweise</strong> interne Meldungen und E-Mail-Vorlagen verwalten.</div>`:"";
+  const vacationAction=canApproveVacation&&pendingTeamVac>0;
+  const timeAction=canApproveTime&&pendingTeamTime>0;
+  const adminHint=hasAdminPermission(p,"newsManage")?`<div class="info-strip">Die Personalabteilung kann über <strong>News & Hinweise</strong> interne Meldungen und E-Mail-Vorlagen verwalten.</div>`:"";
 
   el.innerHTML=`
     <div class="kpi-grid">
       <div class="kpi ${trainingAction?"needs-action":""}"><span>Offene Schulungen</span><strong>${openTrainings}</strong><small>${trainingAction?"Bearbeitung erforderlich":"keine offene Aufgabe"}</small></div>
-      <div class="kpi ${vacationAction?"needs-action":""}"><span>Urlaubsanträge</span><strong>${vacationCount}</strong><small>${p.role==="employee"?"aktuell in Bearbeitung":vacationAction?"zur Freigabe":"keine offene Freigabe"}</small></div>
-      <div class="kpi ${timeAction?"needs-action":""}"><span>Zeiterfassungsanträge</span><strong>${pendingTime}</strong><small>${p.role==="employee"?"eigene offene Anträge":timeAction?"zur Freigabe":"keine offene Freigabe"}</small></div>
+      <div class="kpi ${vacationAction?"needs-action":""}"><span>Urlaubsanträge</span><strong>${vacationCount}</strong><small>${canApproveVacation?(vacationAction?"zur Freigabe":"keine offene Freigabe"):"aktuell in Bearbeitung"}</small></div>
+      <div class="kpi ${timeAction?"needs-action":""}"><span>Zeiterfassungsanträge</span><strong>${pendingTime}</strong><small>${canApproveTime?(timeAction?"zur Freigabe":"keine offene Freigabe"):"eigene offene Anträge"}</small></div>
       <div class="kpi hours-kpi"><span>Soll / Ist · ${esc(monthName)}</span><strong>${hm(hours.targetMinutes)} / ${hm(hours.actualMinutes)}</strong><small class="hours-balance ${saldoClass}">Monatssaldo: ${hm(hours.balanceMinutes,{signed:true})}</small></div>
     </div>${adminHint}
     <div class="two-col">
