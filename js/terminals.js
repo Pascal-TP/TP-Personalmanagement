@@ -21,6 +21,7 @@ export async function renderTerminals(el, ctx){
     <div class="terminal-admin-grid">
       <article class="card">
         <div class="card-head"><div><h2>Neues Terminal</h2><p>Die sichtbare Bezeichnung wird automatisch fortlaufend vergeben.</p></div></div>
+        <label class="field"><span>Beschreibung</span><input id="new-terminal-description" type="text" maxlength="120" placeholder="z. B. Team Müller · Tablet Samsung A9 oder Haupteingang"></label>
         <button class="btn primary" id="create-terminal" type="button">Nächstes Terminal anlegen</button>
         <div id="terminal-activation" class="terminal-activation hidden"></div>
       </article>
@@ -32,8 +33,8 @@ export async function renderTerminals(el, ctx){
     </div>
     <article class="card">
       <div class="card-head"><div><h2>Vorhandene Terminals</h2><p>${terminals.length} Terminal${terminals.length===1?'':'s'} angelegt</p></div></div>
-      <div class="table-wrap"><table><thead><tr><th>Terminal</th><th>Status</th><th>Letzte Nutzung</th><th></th></tr></thead><tbody>
-        ${terminals.length?terminals.map(t=>`<tr><td><strong>${esc(t.name||`Terminal ${terminalNo(t)}`)}</strong><div class="small muted">${esc(t.id)}</div></td><td><span class="pill ${t.active===false?'red':'green'}">${t.active===false?'gesperrt':'aktiv'}</span></td><td>${t.lastUsedAt?.toDate?t.lastUsedAt.toDate().toLocaleString('de-DE'):'–'}</td><td><div class="actions"><button class="btn secondary small reset-terminal" data-id="${esc(t.id)}">Aktivierung erneuern</button><button class="btn ${t.active===false?'secondary':'danger'} small toggle-terminal" data-id="${esc(t.id)}" data-active="${t.active!==false}">${t.active===false?'Freigeben':'Sperren'}</button></div></td></tr>`).join(''):'<tr><td colspan="4" class="empty">Noch kein Terminal angelegt.</td></tr>'}
+      <div class="table-wrap"><table><thead><tr><th>Terminal</th><th>Beschreibung</th><th>Status</th><th>Letzte Nutzung</th><th></th></tr></thead><tbody>
+        ${terminals.length?terminals.map(t=>`<tr><td><strong>${esc(t.name||`Terminal ${terminalNo(t)}`)}</strong><div class="small muted">${esc(t.id)}</div></td><td><div class="terminal-description-cell"><span>${esc(t.description||'–')}</span><button class="btn secondary small edit-terminal-description" data-id="${esc(t.id)}" data-description="${esc(t.description||'')}">Bearbeiten</button></div></td><td><span class="pill ${t.active===false?'red':'green'}">${t.active===false?'gesperrt':'aktiv'}</span></td><td>${t.lastUsedAt?.toDate?t.lastUsedAt.toDate().toLocaleString('de-DE'):'–'}</td><td><div class="actions"><button class="btn secondary small reset-terminal" data-id="${esc(t.id)}">Aktivierung erneuern</button><button class="btn ${t.active===false?'secondary':'danger'} small toggle-terminal" data-id="${esc(t.id)}" data-active="${t.active!==false}">${t.active===false?'Freigeben':'Sperren'}</button></div></td></tr>`).join(''):'<tr><td colspan="5" class="empty">Noch kein Terminal angelegt.</td></tr>'}
       </tbody></table></div>
     </article>`;
 
@@ -54,12 +55,26 @@ export async function renderTerminals(el, ctx){
     const id=`terminal-${String(next).padStart(3,'0')}`;
     const name=`Terminal ${next}`;
     const code=activationCode();
+    const description=el.querySelector('#new-terminal-description')?.value.trim()||'';
     try{
-      await setDoc(doc(db,'terminals',id),{terminalNumber:next,name,active:true,secretHash:await sha256Hex(code),createdAt:serverTimestamp(),createdBy:ctx.profile.id,updatedAt:serverTimestamp()});
+      await setDoc(doc(db,'terminals',id),{terminalNumber:next,name,description,active:true,secretHash:await sha256Hex(code),createdAt:serverTimestamp(),createdBy:ctx.profile.id,updatedAt:serverTimestamp()});
       const box=el.querySelector('#terminal-activation');box.classList.remove('hidden');box.innerHTML=`<strong>${name} wurde angelegt.</strong><p>Terminal-ID: <b>${id}</b></p><p>Aktivierungscode:</p><code>${code}</code><small>Beides einmalig auf dem Tablet eingeben.</small>`;
       toast(`${name} wurde angelegt.`);
     }catch(e){console.error(e);toast('Terminal konnte nicht angelegt werden.');}
   };
+
+
+  el.querySelectorAll('.edit-terminal-description').forEach(b=>b.onclick=async()=>{
+    const current=b.dataset.description||'';
+    const description=window.prompt('Beschreibung für dieses Terminal:',current);
+    if(description===null)return;
+    const clean=description.trim().slice(0,120);
+    try{
+      await updateDoc(doc(db,'terminals',b.dataset.id),{description:clean,updatedAt:serverTimestamp()});
+      toast('Terminalbeschreibung wurde gespeichert.');
+      await renderTerminals(el,ctx);
+    }catch(e){console.error(e);toast('Terminalbeschreibung konnte nicht gespeichert werden.');}
+  });
 
   el.querySelectorAll('.reset-terminal').forEach(b=>b.onclick=async()=>{const code=activationCode();try{await saveSecret(b.dataset.id,code);toast('Neuer Aktivierungscode wurde erzeugt.');}catch(e){console.error(e);toast('Aktivierungscode konnte nicht erneuert werden.');}});
   el.querySelectorAll('.toggle-terminal').forEach(b=>b.onclick=async()=>{try{await updateDoc(doc(db,'terminals',b.dataset.id),{active:b.dataset.active!=='true',updatedAt:serverTimestamp()});toast('Terminalstatus wurde geändert.');await renderTerminals(el,ctx);}catch(e){console.error(e);toast('Terminalstatus konnte nicht geändert werden.');}});
