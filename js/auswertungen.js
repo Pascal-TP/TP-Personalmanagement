@@ -212,7 +212,7 @@ function birthdayListHtml(users,privateMap,companies){
   const rows=birthdayRows(users,privateMap,companies),months=['Januar','Februar','März','April','Mai','Juni','Juli','August','September','Oktober','November','Dezember'];
   const grouped=months.map((name,i)=>({name,items:rows.filter(r=>r.month===i+1)})).filter(g=>g.items.length);
   const content=grouped.length?grouped.map(g=>`<section class="birthday-month"><h3>${g.name}</h3><div class="birthday-lines"><div class="birthday-row birthday-head"><span>Name</span><span>Vorname</span><span>Geburtstag</span><span>Firma</span></div>${g.items.map(r=>`<div class="birthday-row"><strong>${esc(r.lastName)}</strong><span>${esc(r.firstName)}</span><span class="birthday-date">${String(r.day).padStart(2,'0')}.${String(r.month).padStart(2,'0')}.</span><span>${esc(r.company)}</span></div>`).join('')}</div></section>`).join(''):'<div class="birthday-empty">Für die Geburtstagsliste sind derzeit keine Mitarbeiter freigegeben.</div>';
-  return `<div class="birthday-sheet print-sheet"><div class="birthday-title"><div><small>TP-Personalmanagement</small><h2>Geburtstagsliste</h2><p>Nur Mitarbeiter mit aktivierter Zustimmung „Geburtstagsliste ja“.</p></div><span>Stand ${deDate(new Date())}</span></div><div class="birthday-grid">${content}</div><div class="birthday-footer">Das Geburtsjahr und das Alter werden nicht ausgegeben.</div></div>`;
+  return `<div class="birthday-sheet print-sheet"><div class="birthday-title"><div><small>TP-Personalmanagement</small><h2>Geburtstagsliste</h2></div><span>Stand ${deDate(new Date())}</span></div><div class="birthday-grid">${content}</div></div>`;
 }
 function printReport(type){
   document.body.dataset.printReport=type;
