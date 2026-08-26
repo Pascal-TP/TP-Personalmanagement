@@ -191,12 +191,43 @@ function buildPdsExport(records,users,companies,areas,settings,period,createdAt)
 }
 function pdsCsv(rows){return [PDS_HEADERS.join(';'),...rows.map(r=>['','',r.kostentraeger,r.kostenart,'',r.buchungsperiode,'',r.belegdatum,'',r.buchungstext,r.menge,'',r.datenart,'','',''].map(csvCell).join(';'))].join('\r\n')}
 
+function splitBirthdayName(value){
+  const parts=String(value||'').trim().split(/\s+/).filter(Boolean);
+  if(!parts.length)return {lastName:'–',firstName:'–'};
+  if(parts.length===1)return {lastName:parts[0],firstName:''};
+  return {lastName:parts[parts.length-1],firstName:parts.slice(0,-1).join(' ')};
+}
+function birthdayRows(users,privateMap,companies){
+  const companyMap=new Map(companies.map(c=>[c.id,c]));
+  return users.filter(u=>u.active!==false&&u.archived!==true).map(u=>{
+    const p=privateMap.get(u.id)||{};
+    if(p.birthdayList!==true||!/^\d{4}-\d{2}-\d{2}$/.test(String(p.birthDate||'')))return null;
+    const [,m,d]=p.birthDate.split('-').map(Number);
+    const names=splitBirthdayName(u.name||u.email||u.id);
+    const company=companyMap.get(u.companyId)||{};
+    return {user:u,month:m,day:d,...names,company:company.short||company.name||'–'};
+  }).filter(Boolean).sort((a,b)=>a.month-b.month||a.day-b.day||a.lastName.localeCompare(b.lastName,'de')||a.firstName.localeCompare(b.firstName,'de'));
+}
+function birthdayListHtml(users,privateMap,companies){
+  const rows=birthdayRows(users,privateMap,companies),months=['Januar','Februar','März','April','Mai','Juni','Juli','August','September','Oktober','November','Dezember'];
+  const grouped=months.map((name,i)=>({name,items:rows.filter(r=>r.month===i+1)})).filter(g=>g.items.length);
+  const content=grouped.length?grouped.map(g=>`<section class="birthday-month"><h3>${g.name}</h3><div class="birthday-lines"><div class="birthday-row birthday-head"><span>Name</span><span>Vorname</span><span>Geburtstag</span><span>Firma</span></div>${g.items.map(r=>`<div class="birthday-row"><strong>${esc(r.lastName)}</strong><span>${esc(r.firstName)}</span><span class="birthday-date">${String(r.day).padStart(2,'0')}.${String(r.month).padStart(2,'0')}.</span><span>${esc(r.company)}</span></div>`).join('')}</div></section>`).join(''):'<div class="birthday-empty">Für die Geburtstagsliste sind derzeit keine Mitarbeiter freigegeben.</div>';
+  return `<div class="birthday-sheet print-sheet"><div class="birthday-title"><div><small>TP-Personalmanagement</small><h2>Geburtstagsliste</h2><p>Nur Mitarbeiter mit aktivierter Zustimmung „Geburtstagsliste ja“.</p></div><span>Stand ${deDate(new Date())}</span></div><div class="birthday-grid">${content}</div><div class="birthday-footer">Das Geburtsjahr und das Alter werden nicht ausgegeben.</div></div>`;
+}
+function printReport(type){
+  document.body.dataset.printReport=type;
+  const cleanup=()=>{delete document.body.dataset.printReport;window.removeEventListener('afterprint',cleanup)};
+  window.addEventListener('afterprint',cleanup);
+  window.print();
+}
+
 export async function renderAuswertungen(el,ctx){
   if(ctx.profile.role==='supervisor')return renderSupervisorAttendance(el,ctx);
   setHead('Auswertungen','Übergreifende Übersicht und fertiger PDS-Zeiterfassungsexport.');
   const canAnnual=ctx.profile.role==='admin'&&(hasAdminPermission(ctx.profile,'absenceManage')||hasAdminPermission(ctx.profile,'hoursExport'));
-  const [u,t,v,c,tr,a,pdsDoc,ab]=await Promise.all([getDocs(collection(db,'users')),getDocs(collection(db,'trainings')),getDocs(collection(db,'vacationRequests')),getDocs(collection(db,'companies')),getDocs(collection(db,'timeRecords')),getDocs(collection(db,'businessAreas')),getDoc(doc(db,'pdsSettings','default')),canAnnual?getDocs(collection(db,'absences')):Promise.resolve({docs:[]})]);
-  let users=u.docs.map(d=>({id:d.id,...d.data()}));const absences=ab.docs.map(d=>({id:d.id,...d.data()})),vacations=v.docs.map(d=>({id:d.id,...d.data()}));const companies=c.docs.map(d=>({id:d.id,...d.data()})),records=tr.docs.map(d=>({id:d.id,...d.data()})),areas=a.docs.map(d=>({id:d.id,...d.data()}));
+  const canBirthday=ctx.profile.role==='admin'&&hasAdminPermission(ctx.profile,'employeesView');
+  const [u,t,v,c,tr,a,pdsDoc,ab,priv]=await Promise.all([getDocs(collection(db,'users')),getDocs(collection(db,'trainings')),getDocs(collection(db,'vacationRequests')),getDocs(collection(db,'companies')),getDocs(collection(db,'timeRecords')),getDocs(collection(db,'businessAreas')),getDoc(doc(db,'pdsSettings','default')),canAnnual?getDocs(collection(db,'absences')):Promise.resolve({docs:[]}),canBirthday?getDocs(collection(db,'employeePrivate')):Promise.resolve({docs:[]})]);
+  let users=u.docs.map(d=>({id:d.id,...d.data()}));const absences=ab.docs.map(d=>({id:d.id,...d.data()})),vacations=v.docs.map(d=>({id:d.id,...d.data()})),privateMap=new Map(priv.docs.map(d=>[d.id,{id:d.id,...d.data()}]));const companies=c.docs.map(d=>({id:d.id,...d.data()})),records=tr.docs.map(d=>({id:d.id,...d.data()})),areas=a.docs.map(d=>({id:d.id,...d.data()}));
   const settings={personnelCostPrefix:'60',bookingTextPrefix:'$7$ZeitDritts$',bookingTextMode:'period_week',bookingTextCustom:'',dataType:'i',...(pdsDoc.exists()?pdsDoc.data():{})};
   if(ctx.profile.role==='supervisor')users=users.filter(x=>x.id===ctx.profile.id||x.supervisorId===ctx.profile.id);
   const canHoursExport=hasAdminPermission(ctx.profile,'hoursExport');
@@ -208,8 +239,10 @@ export async function renderAuswertungen(el,ctx){
     <form id="pds-export-form" class="form-grid"><label class="field"><span>Buchungsperiode</span><input name="period" type="month" value="${periodDefault}" required></label><div class="field"><span>Aktueller Buchungstext</span><div class="readonly-box" id="pds-booking-text"></div></div><div class="field full actions"><button class="btn secondary" type="button" id="pds-preview">PDS-Vorschau erzeugen</button><button class="btn primary" type="button" id="pds-download">CSV für PDS herunterladen</button></div></form>
     <div id="pds-export-result" class="table-wrap"></div></article>`:''}
   ${canAnnual?`<article class="card annual-report-card"><div class="card-head"><div><h2>Jahresübersicht Anwesenheit</h2><p>Mitarbeiter und Jahr auswählen, Jahresübersicht anzeigen und drucken bzw. als PDF speichern.</p></div></div><form id="annual-form" class="form-grid annual-controls"><label class="field"><span>Mitarbeiter</span><select name="userId" required><option value="">– auswählen –</option>${users.filter(x=>x.active!==false).sort((a,b)=>(a.name||'').localeCompare(b.name||'','de')).map(x=>`<option value="${esc(x.id)}">${esc(x.name||x.email||x.id)}</option>`).join('')}</select></label><label class="field"><span>Jahr</span><input name="year" type="number" min="2020" max="2100" value="${now.getFullYear()}" required></label><div class="field actions annual-actions"><button type="button" class="btn primary" id="annual-show">Übersicht anzeigen</button><button type="button" class="btn secondary" id="annual-print" disabled>Drucken / PDF</button><span class="annual-print-hint">Hinweis: Skalierung auf 73 % einstellen und „Hintergrundgrafiken“ aktivieren.</span></div></form><div id="annual-result"></div></article>`:''}
+  ${canBirthday?`<article class="card birthday-report-card"><div class="card-head"><div><h2>Geburtstagsliste</h2><p>Nach Monaten sortierte Liste aller Mitarbeiter, die der Aufnahme in die Geburtstagsliste zugestimmt haben.</p></div></div><div class="actions birthday-actions"><button type="button" class="btn primary" id="birthday-show">Liste anzeigen</button><button type="button" class="btn secondary" id="birthday-print" disabled>Drucken / PDF</button></div><div id="birthday-result"></div></article>`:''}
   <article class="card"><div class="card-head"><div><h2>Weitere Auswertungen</h2><p>Dieser Bereich bleibt modular erweiterbar.</p></div></div><div class="info-strip">Weitere Kennzahlen wie Schulungsquoten, Personalbewegungen und firmenbezogene Auswertungen können hier später ergänzt werden.</div></article>`;
-  if(canAnnual){const af=el.querySelector('#annual-form'),ar=el.querySelector('#annual-result'),pb=el.querySelector('#annual-print');el.querySelector('#annual-show').onclick=()=>{const user=users.find(x=>x.id===af.elements.userId.value),year=Number(af.elements.year.value);if(!user||year<2020||year>2100){toast('Bitte Mitarbeiter und gültiges Jahr auswählen.','error');return}ar.innerHTML=annualHtml(user,year,vacations,absences);pb.disabled=false};pb.onclick=()=>window.print()}
+  if(canAnnual){const af=el.querySelector('#annual-form'),ar=el.querySelector('#annual-result'),pb=el.querySelector('#annual-print');el.querySelector('#annual-show').onclick=()=>{const user=users.find(x=>x.id===af.elements.userId.value),year=Number(af.elements.year.value);if(!user||year<2020||year>2100){toast('Bitte Mitarbeiter und gültiges Jahr auswählen.','error');return}ar.innerHTML=annualHtml(user,year,vacations,absences);pb.disabled=false};pb.onclick=()=>printReport('annual')}
+  if(canBirthday){const br=el.querySelector('#birthday-result'),bp=el.querySelector('#birthday-print');el.querySelector('#birthday-show').onclick=()=>{br.innerHTML=birthdayListHtml(users,privateMap,companies);bp.disabled=false};bp.onclick=()=>printReport('birthday')}
   if(!canHoursExport)return;
   const form=el.querySelector('#pds-export-form'),result=el.querySelector('#pds-export-result'),booking=el.querySelector('#pds-booking-text');
   function currentPeriod(){return monthBounds(form.elements.period.value)}
