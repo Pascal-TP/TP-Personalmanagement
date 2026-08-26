@@ -170,3 +170,28 @@
 .hr-reminder-icon{width:32px;height:32px;border-radius:9px;background:#eef4fa;color:var(--primary);display:grid;place-items:center;font-weight:800;font-size:11px}.hr-reminder-row.overdue .hr-reminder-icon{background:#fdecec;color:var(--bad)}
 .hr-reminder-main{min-width:0}.hr-reminder-main strong,.hr-reminder-main span{display:block}.hr-reminder-main strong{font-size:12px}.hr-reminder-main span{font-size:10.5px;color:var(--muted);margin-top:3px;overflow-wrap:anywhere}.hr-reminder-date{display:flex;align-items:center;justify-content:flex-end;gap:9px;min-width:210px}.hr-reminder-date>strong{font-size:11px;white-space:nowrap}
 @media(max-width:700px){.hr-reminder-row{grid-template-columns:34px minmax(0,1fr)}.hr-reminder-date{grid-column:2;min-width:0;justify-content:flex-start;flex-wrap:wrap}.tool-release{display:none}}
+
+
+/* V2.4: Anwesenheitsübersicht für Vorgesetzte */
+.supervisor-attendance-head{align-items:flex-start}.attendance-view-switch{display:flex;gap:8px;flex-wrap:wrap}
+.attendance-toolbar{display:grid;grid-template-columns:auto 1fr minmax(190px,260px);gap:14px;align-items:end;margin-bottom:14px}
+.attendance-week-nav{display:flex;gap:7px;flex-wrap:wrap}.attendance-toolbar>strong{text-align:center;align-self:center;font-size:14px;color:var(--primary)}
+.attendance-search{display:grid;gap:5px}.attendance-search span{font-size:11px;font-weight:650;color:var(--muted)}
+.team-week-scroll{overflow:auto;max-width:100%;border:1px solid var(--line);border-radius:12px;background:#fff}
+.team-week-table{width:100%;min-width:980px;border-collapse:separate;border-spacing:0;font-size:12px}
+.team-week-table th,.team-week-table td{border-right:1px solid var(--line);border-bottom:1px solid var(--line);padding:8px;text-align:center;vertical-align:middle}
+.team-week-table thead th{position:sticky;top:0;z-index:2;background:#f7f9fb;color:var(--primary);min-width:112px}
+.team-week-table thead th span,.team-week-table thead th strong{display:block}.team-week-table thead th span{font-size:11px;color:var(--muted);font-weight:600}.team-week-table thead th strong{font-size:12px;margin-top:2px}
+.team-week-table tr:last-child th,.team-week-table tr:last-child td{border-bottom:0}.team-week-table th:last-child,.team-week-table td:last-child{border-right:0}
+.team-week-table .team-name-cell{position:sticky;left:0;z-index:1;width:230px;min-width:230px;max-width:230px;text-align:left;background:#fff}
+.team-week-table thead .team-name-cell{z-index:3;background:#f7f9fb}
+.team-name-cell strong,.team-name-cell span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.team-name-cell span{font-size:10px;color:var(--muted);font-weight:500;margin-top:3px}
+.team-day-cell{height:48px;background:#fff}.team-day-badge{display:inline-flex;align-items:center;justify-content:center;min-height:26px;padding:4px 7px;border-radius:7px;font-size:10.5px;font-weight:700;line-height:1.15}
+.team-day-empty{color:#c1c9d1}.team-day-cell.state-vacation .team-day-badge{background:#dfeaf6;color:#173e67}.team-day-cell.state-sick .team-day-badge{background:#f9dddd;color:#8a2c2c}
+.team-day-cell.state-child-sick .team-day-badge{background:#f8e5d7;color:#8a4b18}.team-day-cell.state-special .team-day-badge{background:#ede2f7;color:#69408b}
+.team-day-cell.state-unpaid .team-day-badge,.team-day-cell.state-release .team-day-badge,.team-day-cell.state-parental .team-day-badge,.team-day-cell.state-other .team-day-badge{background:#eceff2;color:#4e5b68}
+.team-day-cell.state-holiday .team-day-badge{background:#e1f2e8;color:#276345}.team-day-cell.state-off .team-day-badge{background:#f0f2f4;color:#74808b}
+.team-attendance-legend{display:flex;gap:12px 18px;flex-wrap:wrap;align-items:center;margin-top:12px;font-size:10.5px;color:var(--muted)}
+.team-attendance-legend span{display:inline-flex;gap:6px;align-items:center}.team-attendance-legend i{width:12px;height:12px;border-radius:3px;display:inline-block}
+.team-attendance-legend i.state-vacation{background:#dfeaf6}.team-attendance-legend i.state-sick{background:#f9dddd}.team-attendance-legend i.state-child-sick{background:#f8e5d7}.team-attendance-legend i.state-special{background:#ede2f7}.team-attendance-legend i.state-release{background:#eceff2}.team-attendance-legend i.state-holiday{background:#e1f2e8}.team-attendance-legend i.state-off{background:#f0f2f4}
+@media(max-width:900px){.attendance-toolbar{grid-template-columns:1fr}.attendance-toolbar>strong{text-align:left}.attendance-search{max-width:none}.team-week-table .team-name-cell{width:180px;min-width:180px;max-width:180px}}
