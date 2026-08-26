@@ -71,7 +71,7 @@ function hm(minutes,{signed=false}={}){
   return `${sign}${Math.floor(abs/60)}:${String(abs%60).padStart(2,"0")} h`;
 }
 
-function currentMonthBalance(profile,timeRecords,vacations){
+function currentMonthBalance(profile,timeRecords,vacations,absences=[]){
   const now=new Date();
   const monthStart=new Date(now.getFullYear(),now.getMonth(),1,12);
   const today=new Date(now.getFullYear(),now.getMonth(),now.getDate(),12);
@@ -87,7 +87,8 @@ function currentMonthBalance(profile,timeRecords,vacations){
   const approvedLeaveDays=vacations
     .filter(v=>v.status==="approved")
     .reduce((sum,v)=>sum+overlapWorkdays(v.from,v.to,calcStart,today),0);
-  const targetMinutes=Math.max(0,Math.round((weekdays-approvedLeaveDays)*dailyTargetMinutes));
+  const absenceDays=absences.reduce((sum,a)=>sum+overlapWorkdays(a.from,a.to,calcStart,today),0);
+  const targetMinutes=Math.max(0,Math.round((weekdays-approvedLeaveDays-absenceDays)*dailyTargetMinutes));
 
   let adjustmentMinutes=0;
   const grossByDay=new Map();
@@ -118,11 +119,12 @@ export async function renderDashboard(el,ctx){
   const p=ctx.profile;
   const canApproveVacation=p.role==="supervisor"||hasAdminPermission(p,"vacationApprove");
   const canApproveTime=p.role==="supervisor"||hasAdminPermission(p,"timeApprove");
-  let news=[],trainingProgress=[],allTrainingDefinitions=[],vacations=[],timeRequests=[],timeRecords=[],teamVacations=[];
+  let news=[],trainingProgress=[],allTrainingDefinitions=[],vacations=[],absences=[],timeRequests=[],timeRecords=[],teamVacations=[];
   try{const s=await getDocs(query(collection(db,"news"),orderBy("createdAt","desc"),limit(6)));news=s.docs.map(d=>({id:d.id,...d.data()})).filter(n=>n.active!==false&&(n.companyId==="all"||!n.companyId||n.companyId===p.companyId)&&(n.audience==="all"||!n.audience||n.audience===p.role))}catch{}
   try{const s=await getDocs(query(collection(db,"trainingProgress"),where("userId","==",p.id)));trainingProgress=s.docs.map(d=>d.data())}catch{}
   try{const s=await getDocs(collection(db,"trainings"));allTrainingDefinitions=s.docs.map(d=>({id:d.id,...d.data()}))}catch{}
   try{const s=await getDocs(query(collection(db,"vacationRequests"),where("userId","==",p.id)));vacations=s.docs.map(d=>({id:d.id,...d.data()}))}catch{}
+  try{const s=await getDocs(query(collection(db,"absences"),where("userId","==",p.id)));absences=s.docs.map(d=>({id:d.id,...d.data()}))}catch{}
   try{const s=await getDocs(query(collection(db,"timeRecords"),where("userId","==",p.id)));timeRecords=s.docs.map(d=>({id:d.id,...d.data()}))}catch{}
   if(p.role==="employee"||canApproveTime){try{const s=await getDocs(collection(db,"timeCorrectionRequests"));timeRequests=s.docs.map(d=>({id:d.id,...d.data()}))}catch{}}
   if(canApproveVacation){
@@ -153,7 +155,7 @@ export async function renderDashboard(el,ctx){
       ? timeRequests.filter(x=>x.status==="pending"&&x.supervisorId===p.id).length
       : 0;
   const pendingTime=canApproveTime?pendingTeamTime:pendingOwnTime;
-  const hours=currentMonthBalance(p,timeRecords,vacations);
+  const hours=currentMonthBalance(p,timeRecords,vacations,absences);
   const monthName=new Intl.DateTimeFormat("de-DE",{month:"long"}).format(new Date());
   const saldoClass=hours.balanceMinutes>0?"positive":hours.balanceMinutes<0?"negative":"neutral";
 

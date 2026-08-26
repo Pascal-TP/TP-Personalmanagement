@@ -9,6 +9,7 @@ export const ADMIN_PERMISSION_DEFS = [
   {key:'timeAdjustment',label:'Stundenkorrektur buchen',group:'Zeiterfassung & Urlaub'},
   {key:'timeApprove',label:'Anträge zur Zeiterfassung freigeben',group:'Zeiterfassung & Urlaub'},
   {key:'vacationApprove',label:'Urlaubsanträge freigeben',group:'Zeiterfassung & Urlaub'},
+  {key:'absenceManage',label:'Abwesenheiten / Krankheit buchen',group:'Zeiterfassung & Urlaub'},
   {key:'hoursExport',label:'PDS-Stundenexport / Auswertungen',group:'Zeiterfassung & Urlaub'},
   {key:'trainingOverview',label:'Schulungsübersichten / Nachweise',group:'Schulungen'},
   {key:'trainingManage',label:'Schulungen verwalten',group:'Schulungen'},
