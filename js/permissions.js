@@ -14,6 +14,7 @@ export const ADMIN_PERMISSION_DEFS = [
   {key:'trainingOverview',label:'Schulungsübersichten / Nachweise',group:'Schulungen'},
   {key:'trainingManage',label:'Schulungen verwalten',group:'Schulungen'},
   {key:'payrollManage',label:'Lohn-/Gehaltsabrechnungen verwalten',group:'Personalverwaltung'},
+  {key:'personalDataChanges',label:'Stammdaten-Änderungsanträge bearbeiten',group:'Personalverwaltung'},
   {key:'masterData',label:'Stammdaten ändern',group:'Personalverwaltung'},
   {key:'companyManage',label:'Firmen verwalten',group:'Personalverwaltung'},
   {key:'newsManage',label:'News & Hinweise verwalten',group:'Personalverwaltung'},

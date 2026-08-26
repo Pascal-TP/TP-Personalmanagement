@@ -11,7 +11,7 @@ const FIELD_LABELS = {
   firstAider:"Ersthelfer", firstAiderValidUntil:"Ersthelfer gültig bis", fireWarden:"Brandschutzhelfer", fireWardenValidUntil:"Brandschutzhelfer gültig bis", forkliftPermit:"Staplerschein", forkliftPermitValidUntil:"Staplerschein gültig bis", aerialLiftPermit:"Hubarbeitsbühne", aerialLiftPermitValidUntil:"Hubarbeitsbühne gültig bis", drivingLicenseClasses:"Führerscheinklassen", nextDrivingLicenseCheck:"Nächste Führerscheinkontrolle", occupationalMedicalNotes:"Arbeitsmedizinische Vorsorgen / Hinweise",
   bereiche:"Schulungsbereiche", extraTrainings:"Zusatzschulungen",
   "private.birthDate":"Geburtsdatum", "private.street":"Straße / Hausnummer", "private.postalCode":"PLZ", "private.city":"Ort", "private.privateEmail":"Private E-Mail", "private.phone":"Telefon", "private.mobile":"Mobil", "private.emergencyContactName":"Notfallkontakt", "private.emergencyContactPhone":"Telefon Notfallkontakt",
-  "private.taxId":"Steuer-ID", "private.taxClass":"Steuerklasse", "private.childAllowance":"Kinderfreibetrag", "private.religion":"Religion / Kirchensteuer", "private.socialSecurityNumber":"Sozialversicherungsnummer", "private.healthInsuranceId":"Krankenkasse", "private.insuranceType":"Versicherungsart", "private.personGroup":"Personengruppe", "private.contributionGroup":"Beitragsgruppe",
+  "private.maritalStatus":"Familienstand", "private.marriageDate":"Heirat am", "private.taxId":"Steuer-ID", "private.taxClass":"Steuerklasse", "private.childAllowance":"Kinderfreibetrag", "private.religion":"Religion / Kirchensteuer", "private.socialSecurityNumber":"Sozialversicherungsnummer", "private.healthInsuranceId":"Krankenkasse", "private.insuranceType":"Versicherungsart", "private.personGroup":"Personengruppe", "private.contributionGroup":"Beitragsgruppe",
   "private.iban":"IBAN", "private.bic":"BIC", "private.bankId":"Bank", "private.accountHolder":"Kontoinhaber", "private.compensationType":"Entgeltart", "private.grossSalary":"Bruttogehalt", "private.hourlyRate":"Stundenlohn", "private.salaryValidFrom":"Vergütung gültig ab"
 };
 
@@ -39,7 +39,7 @@ function displayValue(key,value,companies,userMap,trainingMap,religionMap,areaMa
   if(key==="projectTimeTracking" || ["firstAider","fireWarden","forkliftPermit","aerialLiftPermit"].includes(key)) return value===true ? "Ja" : "Nein";
   if(key==="private.religion"){const r=religionMap?.get(String(value));return r?`${r.code} · ${r.name}`:String(value);}
   if(key==="workDays") return Array.isArray(value) ? value.join(", ") : String(value);
-  if(["startDate","endDate","probationEndDate","fixedTermEndDate","firstAiderValidUntil","fireWardenValidUntil","forkliftPermitValidUntil","aerialLiftPermitValidUntil","nextDrivingLicenseCheck","private.birthDate","private.salaryValidFrom"].includes(key)) return fmtDate(value);
+  if(["startDate","endDate","probationEndDate","fixedTermEndDate","firstAiderValidUntil","fireWardenValidUntil","forkliftPermitValidUntil","aerialLiftPermitValidUntil","nextDrivingLicenseCheck","private.birthDate","private.marriageDate","private.salaryValidFrom"].includes(key)) return fmtDate(value);
   if(key.startsWith("private.")) return key.includes("grossSalary")||key.includes("hourlyRate") ? (Number(value).toLocaleString("de-DE",{minimumFractionDigits:2,maximumFractionDigits:2})+" €") : String(value);
   if(key==="bereiche") return Array.isArray(value) && value.length ? value.join(", ") : "–";
   if(key==="extraTrainings") return Array.isArray(value) && value.length ? value.map(id=>trainingMap.get(id)?.title||id).join(", ") : "–";
@@ -78,7 +78,7 @@ export async function renderHistorie(el,ctx){
       : changes.length
         ? `<div class="history-changes">${changes.map(ch=>`<div><strong>${esc(FIELD_LABELS[ch.field]||ch.field)}</strong><span>${esc(displayValue(ch.field,ch.oldValue,companies,userMap,trainingMap,religionMap,areaMap))} → ${esc(displayValue(ch.field,ch.newValue,companies,userMap,trainingMap,religionMap,areaMap))}</span></div>`).join("")}</div>`
         : '<span class="muted">Änderung ohne Detailangabe.</span>';
-    return `<tr><td>${esc(dateTime(entry.createdAt))}</td><td><strong>${esc(employeeName)}</strong><div class="small muted">${esc(entry.employeeEmail||"")}</div></td><td><span class="pill ${entry.action==='create'?'green':'blue'}">${entry.action==='create'?'angelegt':'geändert'}</span></td><td>${details}</td><td>${esc(actor)}</td></tr>`;
+    return `<tr><td>${esc(dateTime(entry.createdAt))}</td><td><strong>${esc(employeeName)}</strong><div class="small muted">${esc(entry.employeeEmail||"")}</div></td><td><span class="pill ${entry.action==='create'?'green':'blue'}">${entry.action==='create'?'angelegt':entry.action==='change_request_applied'?'Antrag übernommen':'geändert'}</span></td><td>${details}</td><td>${esc(actor)}</td></tr>`;
   }).join("");
 
   el.innerHTML=`<article class="card"><div class="card-head"><div><h2>Mitarbeiter-Historie</h2><p>${entries.length} protokollierte Vorgänge. Neueste Änderungen stehen oben.</p></div></div>

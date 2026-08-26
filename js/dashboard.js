@@ -190,14 +190,14 @@ export async function renderDashboard(el,ctx){
   const p=ctx.profile;
   const canApproveVacation=p.role==="supervisor"||hasAdminPermission(p,"vacationApprove");
   const canApproveTime=p.role==="supervisor"||hasAdminPermission(p,"timeApprove");
-  let news=[],trainingProgress=[],allTrainingDefinitions=[],vacations=[],absences=[],timeRequests=[],timeRecords=[],teamVacations=[],hrUsers=[];
+  let news=[],trainingProgress=[],allTrainingDefinitions=[],vacations=[],absences=[],timeRequests=[],timeRecords=[],teamVacations=[],hrUsers=[],personalChangeRequests=[];
   try{const s=await getDocs(query(collection(db,"news"),orderBy("createdAt","desc"),limit(6)));news=s.docs.map(d=>({id:d.id,...d.data()})).filter(n=>n.active!==false&&(n.companyId==="all"||!n.companyId||n.companyId===p.companyId)&&(n.audience==="all"||!n.audience||n.audience===p.role))}catch{}
   try{const s=await getDocs(query(collection(db,"trainingProgress"),where("userId","==",p.id)));trainingProgress=s.docs.map(d=>d.data())}catch{}
   try{const s=await getDocs(collection(db,"trainings"));allTrainingDefinitions=s.docs.map(d=>({id:d.id,...d.data()}))}catch{}
   try{const s=await getDocs(query(collection(db,"vacationRequests"),where("userId","==",p.id)));vacations=s.docs.map(d=>({id:d.id,...d.data()}))}catch{}
   try{const s=await getDocs(query(collection(db,"absences"),where("userId","==",p.id)));absences=s.docs.map(d=>({id:d.id,...d.data()}))}catch{}
   try{const s=await getDocs(query(collection(db,"timeRecords"),where("userId","==",p.id)));timeRecords=s.docs.map(d=>({id:d.id,...d.data()}))}catch{}
-  if(p.role==="admin"){try{const s=await getDocs(collection(db,"users"));hrUsers=s.docs.map(d=>({id:d.id,...d.data()}))}catch(e){console.error("HR-Fristen konnten nicht geladen werden",e)}}
+  if(p.role==="admin"){try{const s=await getDocs(collection(db,"users"));hrUsers=s.docs.map(d=>({id:d.id,...d.data()}))}catch(e){console.error("HR-Fristen konnten nicht geladen werden",e)} if(hasAdminPermission(p,"personalDataChanges")){try{const s=await getDocs(collection(db,"personalDataChangeRequests"));personalChangeRequests=s.docs.map(d=>({id:d.id,...d.data()})).filter(x=>x.status==="pending")}catch(e){console.error("Stammdaten-Änderungsanträge konnten nicht geladen werden",e)}}}
   if(p.role==="employee"||canApproveTime){try{const s=await getDocs(collection(db,"timeCorrectionRequests"));timeRequests=s.docs.map(d=>({id:d.id,...d.data()}))}catch{}}
   if(canApproveVacation){
     try{const s=await getDocs(collection(db,"vacationRequests"));teamVacations=s.docs.map(d=>({id:d.id,...d.data()})).filter(v=>v.status==="pending"&&(p.role==="admin"||v.supervisorId===p.id))}catch{}
@@ -236,6 +236,7 @@ export async function renderDashboard(el,ctx){
   const timeAction=canApproveTime&&pendingTeamTime>0;
   const adminHint=hasAdminPermission(p,"newsManage")?`<div class="info-strip">Die Personalabteilung kann über <strong>News & Hinweise</strong> interne Meldungen und E-Mail-Vorlagen verwalten.</div>`:"";
   const hrReminderHtml=p.role==="admin"?renderHrReminders(buildHrReminders(hrUsers)):"";
+  const changeRequestHint=p.role==="admin"&&hasAdminPermission(p,"personalDataChanges")&&personalChangeRequests.length?`<div class="info-strip"><strong>${personalChangeRequests.length}</strong> offene${personalChangeRequests.length===1?'r':''} Stammdaten-Änderungsantrag${personalChangeRequests.length===1?'':'e'} unter <strong>Änderungsanträge</strong>.</div>`:"";
 
   el.innerHTML=`
     <div class="kpi-grid">
@@ -243,7 +244,7 @@ export async function renderDashboard(el,ctx){
       <div class="kpi ${vacationAction?"needs-action":""}"><span>Urlaubsanträge</span><strong>${vacationCount}</strong><small>${canApproveVacation?(vacationAction?"zur Freigabe":"keine offene Freigabe"):"aktuell in Bearbeitung"}</small></div>
       <div class="kpi ${timeAction?"needs-action":""}"><span>Zeiterfassungsanträge</span><strong>${pendingTime}</strong><small>${canApproveTime?(timeAction?"zur Freigabe":"keine offene Freigabe"):"eigene offene Anträge"}</small></div>
       <div class="kpi hours-kpi"><span>Soll / Ist · ${esc(monthName)}</span><strong>${hm(hours.targetMinutes)} / ${hm(hours.actualMinutes)}</strong><small class="hours-balance ${saldoClass}">Monatssaldo: ${hm(hours.balanceMinutes,{signed:true})}</small></div>
-    </div>${adminHint}${hrReminderHtml}
+    </div>${changeRequestHint}${adminHint}${hrReminderHtml}
     <div class="two-col">
       <article class="card"><div class="card-head"><div><h2>News & Hinweise</h2><p>Aktuelle Informationen der Personalabteilung</p></div></div>
         <div class="news-list">${news.length?news.map(n=>`<div class="news-card ${n.priority==='important'?'important':''}"><div class="news-icon">${n.priority==='important'?'!':'i'}</div><div><h3>${esc(n.title||'Hinweis')}</h3><div class="rich-content">${n.html||esc(n.text||'')}</div><span>${n.validTo?`gültig bis ${fmtDate(n.validTo)}`:'interne Mitteilung'}</span></div></div>`).join(""):`<div class="empty">Aktuell liegen keine Hinweise vor.</div>`}</div>

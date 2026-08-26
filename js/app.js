@@ -16,6 +16,7 @@ import { renderAuswertungen } from "./auswertungen.js";
 import { renderHistorie } from "./historie.js";
 import { renderStammdaten } from "./stammdaten.js";
 import { renderDatensicherung } from "./datensicherung.js";
+import { renderAenderungsantraege } from "./aenderungsantraege.js";
 import { hasAdminPermission, hasAnyAdminPermission } from "./permissions.js";
 
 export const ctx = { user:null, profile:null, company:null, view:"dashboard" };
@@ -28,6 +29,7 @@ const views = {
   vacation:{label:"Urlaub & Abwesenheit",icon:"☀",roles:["employee","supervisor","admin"],render:renderUrlaub},
   payroll:{label:"Lohn-/Gehaltsabrechnung",icon:"€",roles:["employee","admin"],adminPermission:"payrollManage",render:renderAbrechnungen},
   trainings:{label:"Schulungen",icon:"▤",roles:["employee","supervisor","admin"],render:renderSchulungen},
+  changes:{label:"Änderungsanträge",icon:"✎",roles:["employee","supervisor","admin"],adminPermission:"personalDataChanges",render:renderAenderungsantraege},
   employees:{label:"Mitarbeiter",icon:"♙",roles:["admin","supervisor"],adminAny:["employeesView","employeesCreate","employeesEdit","employeesDelete"],render:async(el,ctx)=>ctx.profile?.role==="supervisor"?renderSupervisorMitarbeiter(el,ctx):renderMitarbeiter(el,ctx)},
   terminals:{label:"NFC-Terminals",icon:"⌁",roles:["admin"],adminPermission:"terminalManage",render:renderTerminals},
   news:{label:"News & Hinweise",icon:"●",roles:["admin"],adminPermission:"newsManage",render:renderNews},
