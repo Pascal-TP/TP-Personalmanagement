@@ -1,5 +1,5 @@
 import { db } from "./firebase.js";
-import { collection, getDocs, doc, getDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+import { collection, getDocs, doc, getDoc, query, where } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 import { setHead } from "./app.js";
 import { esc, toast } from "./utils.js";
 import { hasAdminPermission } from "./permissions.js";
@@ -15,6 +15,111 @@ function annualHtml(user,year,vacations,absences){const workDays=new Set((user.w
   const months=['Jan','Feb','Mär','Apr','Mai','Jun','Jul','Aug','Sep','Okt','Nov','Dez'];let rows='';for(let d=1;d<=31;d++){rows+=`<tr><th>${String(d).padStart(2,'0')}</th>`;for(let m=0;m<12;m++){const valid=d<=new Date(year,m+1,0).getDate();if(!valid){rows+='<td class="na"></td>';continue}const k=dateKey(new Date(year,m,d,12)),x=marks.get(k);rows+=`<td class="${x?.cls||''}" title="${esc(x?.title||'')}">${esc(x?.code||'')}</td>`}rows+='</tr>'}
   const vac=user.vacationDays||30,approved=vacations.filter(v=>v.userId===user.id&&v.status==='approved'&&String(v.from||'').startsWith(String(year))).reduce((s,v)=>s+Number(v.days||0),0),sick=absences.filter(a=>a.userId===user.id&&a.type==='sick'&&String(a.from||'').startsWith(String(year))).reduce((s,a)=>s+Number(a.days||0),0);
   return `<div class="annual-sheet"><div class="annual-title"><div><small>TP-Personalmanagement</small><h2>Jahresübersicht Anwesenheit ${year}</h2><strong>${esc(user.name||user.email||'')}</strong></div><span>Stand ${deDate(new Date())}</span></div><div class="annual-calendar-wrap"><table class="annual-calendar"><thead><tr><th>Tag</th>${months.map(x=>`<th>${x}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table></div><div class="annual-bottom"><div class="annual-stats"><div><span>Urlaubsanspruch</span><strong>${vac}</strong></div><div><span>Genehmigter Urlaub</span><strong>${approved}</strong></div><div><span>Rest (ohne Übertrag)</span><strong>${Math.max(0,vac-approved)}</strong></div><div><span>Krankheitstage</span><strong>${sick}</strong></div></div><div class="annual-legend"><span><i class="vacation"></i>U = Urlaub / G = Gleittag</span><span><i class="absence"></i>K = krank / weitere Abwesenheit</span><span><i class="holiday"></i>F = bundesweiter Feiertag</span><span><i class="off"></i>– = regelmäßig arbeitsfrei</span></div></div><p class="annual-note">Feiertage: bundesweit geltende Feiertage. Regionale Feiertage werden in V2.2 noch nicht automatisch ergänzt.</p></div>`}
+
+
+function mondayOfWeek(value=new Date()){
+  const d=new Date(value.getFullYear(),value.getMonth(),value.getDate(),12);
+  const day=d.getDay()||7;
+  d.setDate(d.getDate()-(day-1));
+  return d;
+}
+function isoDate(d){return dateKey(d)}
+function deDayShort(d){return new Intl.DateTimeFormat('de-DE',{weekday:'short',day:'2-digit',month:'2-digit'}).format(d)}
+function deWeekRange(monday){const sunday=addDays(monday,6);return `${deDate(monday)} – ${deDate(sunday)}`}
+function rangeContains(from,to,key){return !!from&&!!to&&from<=key&&to>=key}
+function absenceMark(type){
+  const map={
+    sick:{label:'Krank',code:'K',cls:'sick'},
+    child_sick:{label:'Kind krank',code:'KK',cls:'child-sick'},
+    special_leave:{label:'Sonderurlaub',code:'SU',cls:'special'},
+    unpaid_leave:{label:'Unbez. Urlaub',code:'UU',cls:'unpaid'},
+    release:{label:'Freistellung',code:'FR',cls:'release'},
+    parental_leave:{label:'Elternzeit',code:'EZ',cls:'parental'},
+    other:{label:'Abwesend',code:'A',cls:'other'}
+  };
+  return map[type]||map.other;
+}
+function vacationMark(v){
+  const type=String(v.type||'Urlaub');
+  if(type==='Freizeitausgleich')return {label:'Gleittag',code:'G',cls:'vacation'};
+  if(type==='Sonderurlaub')return {label:'Sonderurlaub',code:'SU',cls:'special'};
+  return {label:'Urlaub',code:'U',cls:'vacation'};
+}
+function teamDayMark(user,key,vacations,absences){
+  const abs=absences.find(a=>a.userId===user.id&&rangeContains(a.from,a.to,key));
+  if(abs)return absenceMark(abs.type);
+  const vac=vacations.find(v=>v.userId===user.id&&v.status==='approved'&&rangeContains(v.from,v.to,key));
+  if(vac)return vacationMark(vac);
+  const d=new Date(`${key}T12:00:00`);
+  const holiday=germanNationalHolidays(d.getFullYear()).get(key);
+  if(holiday)return {label:'Feiertag',code:'F',cls:'holiday',title:holiday};
+  const workDays=new Set((user.workDays?.length?user.workDays:['1','2','3','4','5']).map(String));
+  if(!workDays.has(String(d.getDay())))return {label:'Frei',code:'–',cls:'off'};
+  return null;
+}
+function teamWeekHtml(users,monday,vacations,absences,filter=''){
+  const days=Array.from({length:7},(_,i)=>addDays(monday,i));
+  const q=String(filter||'').trim().toLocaleLowerCase('de');
+  const visible=users.filter(u=>!q||(u.name||u.email||'').toLocaleLowerCase('de').includes(q));
+  const rows=visible.map(u=>`<tr><th class="team-name-cell"><strong>${esc(u.name||u.email||u.id)}</strong><span>${esc(u.position||u.department||'')}</span></th>${days.map(d=>{const k=isoDate(d),m=teamDayMark(u,k,vacations,absences);return `<td class="team-day-cell ${m?`state-${m.cls}`:''}" title="${esc(m?.title||m?.label||'Keine Abwesenheit hinterlegt')}">${m?`<span class="team-day-badge">${esc(m.label)}</span>`:'<span class="team-day-empty">–</span>'}</td>`}).join('')}</tr>`).join('');
+  return `<div class="team-week-scroll"><table class="team-week-table"><thead><tr><th class="team-name-cell">Mitarbeiter</th>${days.map(d=>`<th><span>${esc(new Intl.DateTimeFormat('de-DE',{weekday:'short'}).format(d))}</span><strong>${esc(new Intl.DateTimeFormat('de-DE',{day:'2-digit',month:'2-digit'}).format(d))}</strong></th>`).join('')}</tr></thead><tbody>${rows||'<tr><td colspan="8" class="empty">Keine Mitarbeiter gefunden.</td></tr>'}</tbody></table></div><div class="team-attendance-legend"><span><i class="state-vacation"></i>Urlaub / Gleittag</span><span><i class="state-sick"></i>Krank</span><span><i class="state-child-sick"></i>Kind krank</span><span><i class="state-special"></i>Sonderurlaub</span><span><i class="state-release"></i>weitere Abwesenheit</span><span><i class="state-holiday"></i>Feiertag</span><span><i class="state-off"></i>regelmäßig frei</span><span class="muted">Leere Zelle = keine Abwesenheit hinterlegt</span></div>`;
+}
+
+async function renderSupervisorAttendance(el,ctx){
+  setHead('Auswertungen','Anwesenheits- und Abwesenheitsübersicht für die zugeordneten Mitarbeiter.');
+  const [uSnap,vSnap,aSnap]=await Promise.all([
+    getDocs(query(collection(db,'users'),where('supervisorId','==',ctx.profile.id))),
+    getDocs(query(collection(db,'vacationRequests'),where('supervisorId','==',ctx.profile.id))),
+    getDocs(query(collection(db,'absences'),where('supervisorId','==',ctx.profile.id)))
+  ]);
+  const users=uSnap.docs.map(d=>({id:d.id,...d.data()})).filter(u=>u.active!==false).sort((a,b)=>(a.name||'').localeCompare(b.name||'','de'));
+  const vacations=vSnap.docs.map(d=>({id:d.id,...d.data()}));
+  const absences=aSnap.docs.map(d=>({id:d.id,...d.data()}));
+  let currentMonday=mondayOfWeek(new Date()),activeView='team',filter='';
+  const currentYear=new Date().getFullYear();
+
+  el.innerHTML=`<div class="kpi-grid three"><div class="kpi"><span>Zugeordnete Mitarbeiter</span><strong>${users.length}</strong><small>aktive Mitarbeiter</small></div><div class="kpi"><span>Heute abwesend</span><strong id="team-away-today">0</strong><small>Urlaub / Krankheit / sonstige Abwesenheit</small></div><div class="kpi"><span>Offene Urlaubsanträge</span><strong>${vacations.filter(v=>v.status==='pending').length}</strong><small>noch zu bearbeiten</small></div></div>
+  <article class="card supervisor-attendance-card">
+    <div class="card-head supervisor-attendance-head"><div><h2>Anwesenheitsübersicht</h2><p>Wochenübersicht für das Team oder Jahresansicht für einzelne Mitarbeiter.</p></div><div class="attendance-view-switch"><button type="button" class="btn primary" id="attendance-team-tab">Team-Woche</button><button type="button" class="btn secondary" id="attendance-single-tab">Einzelansicht</button></div></div>
+    <div id="attendance-team-view">
+      <div class="attendance-toolbar"><div class="attendance-week-nav"><button type="button" class="btn secondary small" id="week-prev">‹ Vorherige Woche</button><button type="button" class="btn secondary small" id="week-today">Aktuelle Woche</button><button type="button" class="btn secondary small" id="week-next">Nächste Woche ›</button></div><strong id="week-label"></strong><label class="attendance-search"><span>Mitarbeiter suchen</span><input id="team-search" type="search" placeholder="Name eingeben …"></label></div>
+      <div id="team-week-result"></div>
+    </div>
+    <div id="attendance-single-view" class="hidden">
+      <form class="form-grid annual-controls" id="supervisor-annual-form"><label class="field"><span>Mitarbeiter</span><select name="userId" required><option value="">– auswählen –</option>${users.map(u=>`<option value="${esc(u.id)}">${esc(u.name||u.email||u.id)}</option>`).join('')}</select></label><label class="field"><span>Jahr</span><input name="year" type="number" min="2020" max="2100" value="${currentYear}" required></label><div class="field actions"><button class="btn primary" type="button" id="supervisor-annual-show">Übersicht anzeigen</button></div></form>
+      <div id="supervisor-annual-result"><div class="empty">Mitarbeiter und Jahr auswählen.</div></div>
+    </div>
+  </article>`;
+
+  const todayKey=dateKey(new Date());
+  const awayToday=new Set();
+  absences.forEach(a=>{if(rangeContains(a.from,a.to,todayKey))awayToday.add(a.userId)});
+  vacations.forEach(v=>{if(v.status==='approved'&&rangeContains(v.from,v.to,todayKey))awayToday.add(v.userId)});
+  el.querySelector('#team-away-today').textContent=awayToday.size;
+
+  const teamView=el.querySelector('#attendance-team-view'),singleView=el.querySelector('#attendance-single-view');
+  const teamTab=el.querySelector('#attendance-team-tab'),singleTab=el.querySelector('#attendance-single-tab');
+  const weekLabel=el.querySelector('#week-label'),weekResult=el.querySelector('#team-week-result');
+
+  function switchView(view){
+    activeView=view;
+    const team=view==='team';
+    teamView.classList.toggle('hidden',!team);singleView.classList.toggle('hidden',team);
+    teamTab.className=`btn ${team?'primary':'secondary'}`;singleTab.className=`btn ${team?'secondary':'primary'}`;
+  }
+  function renderWeek(){
+    weekLabel.textContent=deWeekRange(currentMonday);
+    weekResult.innerHTML=teamWeekHtml(users,currentMonday,vacations,absences,filter);
+  }
+  teamTab.onclick=()=>switchView('team');singleTab.onclick=()=>switchView('single');
+  el.querySelector('#week-prev').onclick=()=>{currentMonday=addDays(currentMonday,-7);renderWeek()};
+  el.querySelector('#week-next').onclick=()=>{currentMonday=addDays(currentMonday,7);renderWeek()};
+  el.querySelector('#week-today').onclick=()=>{currentMonday=mondayOfWeek(new Date());renderWeek()};
+  el.querySelector('#team-search').oninput=e=>{filter=e.target.value;renderWeek()};
+  const form=el.querySelector('#supervisor-annual-form'),result=el.querySelector('#supervisor-annual-result');
+  el.querySelector('#supervisor-annual-show').onclick=()=>{const user=users.find(u=>u.id===form.elements.userId.value),year=Number(form.elements.year.value);if(!user||year<2020||year>2100){toast('Bitte Mitarbeiter und gültiges Jahr auswählen.','error');return}result.innerHTML=annualHtml(user,year,vacations,absences)};
+  renderWeek();
+}
 
 
 const PDS_HEADERS=['kostenstelle','kostenstelleSek','kostentraeger','kostenart','leistungsart','buchungsperiode','belegnummer','belegdatum','betrag','buchungstext','menge','bucher','datenart','planvariante','notiz','kostentraegerSek'];
@@ -87,6 +192,7 @@ function buildPdsExport(records,users,companies,areas,settings,period,createdAt)
 function pdsCsv(rows){return [PDS_HEADERS.join(';'),...rows.map(r=>['','',r.kostentraeger,r.kostenart,'',r.buchungsperiode,'',r.belegdatum,'',r.buchungstext,r.menge,'',r.datenart,'','',''].map(csvCell).join(';'))].join('\r\n')}
 
 export async function renderAuswertungen(el,ctx){
+  if(ctx.profile.role==='supervisor')return renderSupervisorAttendance(el,ctx);
   setHead('Auswertungen','Übergreifende Übersicht und fertiger PDS-Zeiterfassungsexport.');
   const canAnnual=ctx.profile.role==='admin'&&(hasAdminPermission(ctx.profile,'absenceManage')||hasAdminPermission(ctx.profile,'hoursExport'));
   const [u,t,v,c,tr,a,pdsDoc,ab]=await Promise.all([getDocs(collection(db,'users')),getDocs(collection(db,'trainings')),getDocs(collection(db,'vacationRequests')),getDocs(collection(db,'companies')),getDocs(collection(db,'timeRecords')),getDocs(collection(db,'businessAreas')),getDoc(doc(db,'pdsSettings','default')),canAnnual?getDocs(collection(db,'absences')):Promise.resolve({docs:[]})]);
