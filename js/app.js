@@ -67,11 +67,23 @@ function updateChrome(){
 document.getElementById("login-form").addEventListener("submit",async e=>{e.preventDefault();const msg=document.getElementById("login-message");msg.textContent="Anmeldung läuft …";try{await signInWithEmailAndPassword(auth,normalizeLogin(document.getElementById("login-identifier").value),document.getElementById("login-password").value);msg.textContent=""}catch(err){console.error(err);msg.textContent="Anmeldung nicht möglich. Bitte Zugangsdaten prüfen."}});
 document.getElementById("forgot-password-btn").onclick=async()=>{const raw=document.getElementById("login-identifier").value.trim();if(!raw){toast("Bitte zuerst die E-Mail-Adresse eintragen.");return}if(!raw.includes("@")){toast("Bei Benutzernamen erfolgt der Passwort-Reset derzeit über die Personalabteilung.");return}try{await sendPasswordResetEmail(auth,raw);toast("Passwort-Link wurde angefordert.")}catch(e){console.error(e);toast("Passwort-Link konnte nicht angefordert werden.")}};
 async function changeOwnPassword(){const p=prompt("Neues Passwort (mindestens 6 Zeichen):");if(!p)return;if(p.length<6){toast("Das Passwort ist zu kurz.");return}try{await updatePassword(auth.currentUser,p);toast("Passwort geändert.")}catch(e){toast("Passwort konnte nicht geändert werden. Ggf. erneut anmelden.")}}
+const HELP_URLS={
+  admin:"anleitungen/TP-Personalmanagement_Anleitung_Admin.pdf",
+  supervisor:"anleitungen/TP-Personalmanagement_Anleitung_Vorgesetzte.pdf",
+  employee:"anleitungen/TP-Personalmanagement_Anleitung_Mitarbeiter.pdf"
+};
+function openRoleHelp(){
+  const role=ctx.profile?.role||"employee";
+  const url=HELP_URLS[role]||HELP_URLS.employee;
+  window.open(url,"_blank","noopener");
+}
 function closeMobileUserMenu(){const menu=document.getElementById("mobile-user-menu"),chip=document.getElementById("user-chip");menu.classList.remove("open");menu.setAttribute("aria-hidden","true");chip.setAttribute("aria-expanded","false")}
 function toggleMobileUserMenu(){if(!window.matchMedia("(max-width: 700px)").matches)return;const menu=document.getElementById("mobile-user-menu"),chip=document.getElementById("user-chip"),open=!menu.classList.contains("open");menu.classList.toggle("open",open);menu.setAttribute("aria-hidden",String(!open));chip.setAttribute("aria-expanded",String(open))}
 
 document.getElementById("logout-btn").onclick=()=>signOut(auth);
 document.getElementById("change-password-btn").onclick=changeOwnPassword;
+document.getElementById("help-btn").onclick=openRoleHelp;
+document.getElementById("mobile-help-btn").onclick=()=>{closeMobileUserMenu();openRoleHelp()};
 document.getElementById("mobile-change-password-btn").onclick=()=>{closeMobileUserMenu();changeOwnPassword()};
 document.getElementById("mobile-logout-btn").onclick=()=>{closeMobileUserMenu();signOut(auth)};
 document.getElementById("user-chip").onclick=e=>{e.stopPropagation();toggleMobileUserMenu()};
