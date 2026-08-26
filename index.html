@@ -46,7 +46,9 @@
     <main class="main-area">
       <header class="topbar">
         <div><h1 id="page-title">Dashboard</h1><p id="page-subtitle">Willkommen im TP-Personalmanagement.</p></div>
-        <div class="user-menu-wrap">
+        <div class="topbar-actions">
+          <button id="help-btn" class="topbar-help-btn" type="button" title="Bedienungsanleitung öffnen" aria-label="Bedienungsanleitung öffnen"><span aria-hidden="true">?</span> Hilfe</button>
+          <div class="user-menu-wrap">
           <div id="user-chip" class="user-chip" role="button" tabindex="0" aria-haspopup="true" aria-expanded="false" aria-controls="mobile-user-menu">
             <div id="user-avatar" class="avatar">TP</div>
             <div><strong id="user-name">–</strong><span id="user-role">–</span></div>
@@ -56,8 +58,10 @@
               <strong id="mobile-user-name">–</strong>
               <span id="mobile-user-role">–</span>
             </div>
+            <button id="mobile-help-btn" type="button">Hilfe / Bedienungsanleitung</button>
             <button id="mobile-change-password-btn" type="button">Passwort ändern</button>
             <button id="mobile-logout-btn" type="button" class="logout">Abmelden</button>
+          </div>
           </div>
         </div>
       </header>
