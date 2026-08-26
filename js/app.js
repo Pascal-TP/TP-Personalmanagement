@@ -57,12 +57,24 @@ function updateChrome(){
   const p=ctx.profile,c=ctx.company;document.getElementById("company-name").textContent=c?.name||"TP-Personalmanagement";
   const logo=document.querySelector("#company-logo img");logo.src=c?.logoUrl||c?.logoDataUrl||"assets/tp-logo.png";
   document.getElementById("role-heading").textContent=roleHeading(p.role);document.getElementById("user-name").textContent=p.name||p.email||"Mitarbeiter";
-  document.getElementById("user-role").textContent=ROLE_LABELS[p.role]||p.role;document.getElementById("user-avatar").textContent=initials(p.name||p.email);
+  const displayName=p.name||p.email||"Mitarbeiter", displayRole=ROLE_LABELS[p.role]||p.role;
+  document.getElementById("user-role").textContent=displayRole;document.getElementById("user-avatar").textContent=initials(p.name||p.email);
+  document.getElementById("mobile-user-name").textContent=displayName;document.getElementById("mobile-user-role").textContent=displayRole;
 }
 
 document.getElementById("login-form").addEventListener("submit",async e=>{e.preventDefault();const msg=document.getElementById("login-message");msg.textContent="Anmeldung läuft …";try{await signInWithEmailAndPassword(auth,normalizeLogin(document.getElementById("login-identifier").value),document.getElementById("login-password").value);msg.textContent=""}catch(err){console.error(err);msg.textContent="Anmeldung nicht möglich. Bitte Zugangsdaten prüfen."}});
 document.getElementById("forgot-password-btn").onclick=async()=>{const raw=document.getElementById("login-identifier").value.trim();if(!raw){toast("Bitte zuerst die E-Mail-Adresse eintragen.");return}if(!raw.includes("@")){toast("Bei Benutzernamen erfolgt der Passwort-Reset derzeit über die Personalabteilung.");return}try{await sendPasswordResetEmail(auth,raw);toast("Passwort-Link wurde angefordert.")}catch(e){console.error(e);toast("Passwort-Link konnte nicht angefordert werden.")}};
-document.getElementById("logout-btn").onclick=()=>signOut(auth);
-document.getElementById("change-password-btn").onclick=async()=>{const p=prompt("Neues Passwort (mindestens 6 Zeichen):");if(!p)return;if(p.length<6){toast("Das Passwort ist zu kurz.");return}try{await updatePassword(auth.currentUser,p);toast("Passwort geändert.")}catch(e){toast("Passwort konnte nicht geändert werden. Ggf. erneut anmelden.")}};
+async function changeOwnPassword(){const p=prompt("Neues Passwort (mindestens 6 Zeichen):");if(!p)return;if(p.length<6){toast("Das Passwort ist zu kurz.");return}try{await updatePassword(auth.currentUser,p);toast("Passwort geändert.")}catch(e){toast("Passwort konnte nicht geändert werden. Ggf. erneut anmelden.")}}
+function closeMobileUserMenu(){const menu=document.getElementById("mobile-user-menu"),chip=document.getElementById("user-chip");menu.classList.remove("open");menu.setAttribute("aria-hidden","true");chip.setAttribute("aria-expanded","false")}
+function toggleMobileUserMenu(){if(!window.matchMedia("(max-width: 700px)").matches)return;const menu=document.getElementById("mobile-user-menu"),chip=document.getElementById("user-chip"),open=!menu.classList.contains("open");menu.classList.toggle("open",open);menu.setAttribute("aria-hidden",String(!open));chip.setAttribute("aria-expanded",String(open))}
 
-onAuthStateChanged(auth,async user=>{ctx.user=user;if(!user){ctx.profile=null;loginPage.classList.remove("hidden");shell.classList.add("hidden");return}try{await refreshProfile();updateChrome();renderNav();loginPage.classList.add("hidden");shell.classList.remove("hidden");ctx.view="dashboard";await navigate("dashboard")}catch(e){console.error(e);await signOut(auth);document.getElementById("login-message").textContent=e.message}});
+document.getElementById("logout-btn").onclick=()=>signOut(auth);
+document.getElementById("change-password-btn").onclick=changeOwnPassword;
+document.getElementById("mobile-change-password-btn").onclick=()=>{closeMobileUserMenu();changeOwnPassword()};
+document.getElementById("mobile-logout-btn").onclick=()=>{closeMobileUserMenu();signOut(auth)};
+document.getElementById("user-chip").onclick=e=>{e.stopPropagation();toggleMobileUserMenu()};
+document.getElementById("user-chip").onkeydown=e=>{if((e.key==="Enter"||e.key===" ")&&window.matchMedia("(max-width: 700px)").matches){e.preventDefault();toggleMobileUserMenu()}else if(e.key==="Escape")closeMobileUserMenu()};
+document.addEventListener("click",e=>{if(!e.target.closest(".user-menu-wrap"))closeMobileUserMenu()});
+window.addEventListener("resize",()=>{if(!window.matchMedia("(max-width: 700px)").matches)closeMobileUserMenu()});
+
+onAuthStateChanged(auth,async user=>{ctx.user=user;if(!user){ctx.profile=null;closeMobileUserMenu();loginPage.classList.remove("hidden");shell.classList.add("hidden");return}try{await refreshProfile();updateChrome();renderNav();loginPage.classList.add("hidden");shell.classList.remove("hidden");ctx.view="dashboard";await navigate("dashboard")}catch(e){console.error(e);await signOut(auth);document.getElementById("login-message").textContent=e.message}});
