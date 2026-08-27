@@ -16,7 +16,7 @@ export async function renderSchulungen(el,ctx){
   const admin=ctx.profile.role==='admin',supervisor=ctx.profile.role==='supervisor';
   const canOverview=supervisor||hasAdminPermission(ctx.profile,'trainingOverview');
   const canManage=hasAdminPermission(ctx.profile,'trainingManage');
-  el.innerHTML=`<div class="subnav"> <button class="subnav-btn active" data-tab="mine">Meine Schulungen</button><button class="subnav-btn" data-tab="progress">Mein Bearbeitungsstand</button>${canOverview?'<button class="subnav-btn" data-tab="proofs">Nachweise je Mitarbeiter</button>':''}${canManage?'<button class="subnav-btn" data-tab="manage">Schulungsverwaltung</button>':''}${canOverview?'<button class="subnav-btn" data-tab="matrix">Tabellarische Schulungsübersicht</button>':''}</div><div id="training-content"></div>`;
+  el.innerHTML=`<div class="subnav">${admin?'':'<button class="subnav-btn active" data-tab="mine">Meine Schulungen</button><button class="subnav-btn" data-tab="progress">Mein Bearbeitungsstand</button>'}${canOverview?`<button class="subnav-btn ${admin?'active':''}" data-tab="proofs">Nachweise je Mitarbeiter</button>`:''}${canManage?`<button class="subnav-btn ${admin&&!canOverview?'active':''}" data-tab="manage">Schulungsverwaltung</button>`:''}${canOverview?'<button class="subnav-btn" data-tab="matrix">Tabellarische Schulungsübersicht</button>':''}</div><div id="training-content"></div>`;
   const target=el.querySelector('#training-content');
   async function tab(name){
     el.querySelectorAll('.subnav-btn').forEach(b=>b.classList.toggle('active',b.dataset.tab===name));
@@ -48,16 +48,20 @@ export async function renderSchulungen(el,ctx){
         .filter(u=>u.active!==false && u.id!==ctx.profile.id);
     }
 
-    // Auch im Adminbereich gehört das eigene Profil nicht in die
-    // Mitarbeiter-/Teamübersichten. Eigene Schulungen und der eigene
-    // Bearbeitungsstand werden separat über „Meine Schulungen“ und
-    // „Mein Bearbeitungsstand“ angezeigt.
+    // Im Adminbereich werden ausschließlich aktive Mitarbeiter und
+    // Vorgesetzte in den Schulungsübersichten berücksichtigt. Reine
+    // Adminzugänge besitzen keine persönlichen Schulungsansichten.
     const snap=await getDocs(collection(db,'users'));
     return snap.docs
       .map(d=>({id:d.id,...d.data()}))
-      .filter(u=>u.active!==false && u.id!==ctx.profile.id);
+      .filter(u=>u.active!==false && u.archived!==true && (u.role==='employee'||u.role==='supervisor'));
   }
   async function proofs(){const us=await relevantUsers();target.innerHTML=`<article class="card"><div class="card-head"><div><h2>Nachweise je Mitarbeiter</h2><p>Bearbeitungsstände und vorhandene Schulungsnachweise</p></div></div><div id="proof-list"></div></article>`;const box=target.querySelector('#proof-list');for(const u of us){const ps=await progress(u.id);box.insertAdjacentHTML('beforeend',`<div class="employee-proof-block"><div class="employee-proof-head"><strong>${esc(u.name||u.email)}</strong><button class="btn secondary small all-proofs" data-id="${u.id}">Alle Nachweise</button></div>${ps.length?ps.map(p=>`<div class="list-row"><div><strong>${esc(p.trainingTitle||'Schulung')}</strong><span>${p.proofName?`Nachweis: ${esc(p.proofName)}`:'Kein Nachweis'}</span></div>${p.proofPath?`<button class="btn secondary small one-proof" data-user="${u.id}" data-training="${p.trainingId}">Download</button>`:''}</div>`).join(''):'<div class="muted small">Noch keine Bearbeitungsstände.</div>'}</div>`)}box.querySelectorAll('.one-proof').forEach(b=>b.onclick=async()=>{try{const idToken=await auth.currentUser.getIdToken();const r=await proofUrl({idToken,employeeId:b.dataset.user,trainingId:b.dataset.training});if(r.data?.url)window.open(r.data.url,'_blank','noopener')}catch(e){console.error(e);toast('Download nicht möglich.')}});box.querySelectorAll('.all-proofs').forEach(b=>b.onclick=async()=>{try{const idToken=await auth.currentUser.getIdToken();const r=await employeeProofs({idToken,employeeId:b.dataset.id});for(const f of r.data?.files||[])window.open(f.url,'_blank','noopener')}catch(e){console.error(e);toast('Sammeldownload nicht möglich.')}})}
   async function matrix(){const [ts,us]=await Promise.all([allTrainings(),relevantUsers()]);const pmap={};for(const u of us)pmap[u.id]=await progress(u.id);target.innerHTML=`<article class="card"><div class="card-head"><div><h2>Tabellarische Schulungsübersicht</h2><p>Zuordnung und Bearbeitungsstand je Mitarbeiter</p></div></div><div class="table-wrap"><table class="matrix"><thead><tr><th>Mitarbeiter</th>${ts.map(t=>`<th>${esc(t.title)}</th>`).join('')}</tr></thead><tbody>${us.map(u=>`<tr><td><strong>${esc(u.name||u.email)}</strong></td>${ts.map(t=>{const assigned=visible([t],u).length>0,p=(pmap[u.id]||[]).find(x=>x.trainingId===t.id);return`<td class="${!assigned?'matrix-na':p?.status==='completed'?'matrix-completed':p?'matrix-started':'matrix-open'}">${!assigned?'–':p?.status==='completed'?'✓':p?'◐':'!'}</td>`}).join('')}</tr>`).join('')}</tbody></table></div></article>`}
-  el.querySelectorAll('.subnav-btn').forEach(b=>b.onclick=()=>tab(b.dataset.tab));await tab('mine');
+  el.querySelectorAll('.subnav-btn').forEach(b=>b.onclick=()=>tab(b.dataset.tab));
+  if(admin){
+    if(canOverview)await tab('proofs');
+    else if(canManage)await tab('manage');
+    else target.innerHTML='<article class="card"><div class="empty">Für diesen Admin-Zugang ist keine Schulungsübersicht oder Schulungsverwaltung freigeschaltet.</div></article>';
+  }else await tab('mine');
 }

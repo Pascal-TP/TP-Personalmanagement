@@ -237,6 +237,7 @@ function correctionRequestForm(projectTracking) {
 export async function renderZeiterfassung(el, ctx) {
   setHead("Zeiterfassung", "Arbeitszeit stempeln, Buchungen einsehen und notwendige Korrekturen beantragen.");
   const projectTracking = ctx.profile.projectTimeTracking === true;
+  const isAdmin = ctx.profile.role === "admin";
 
   let entries = [];
   let ownRequests = [];
@@ -308,7 +309,7 @@ export async function renderZeiterfassung(el, ctx) {
     : "Aktuell ist keine Arbeitszeit gestartet.";
 
   el.innerHTML = `
-    <div class="two-col time-top-grid">
+    <div class="two-col time-top-grid ${isAdmin?"admin-self-hidden":""}">
       <article class="card">
         <div class="card-head"><div><h2>Anträge zur Zeiterfassung</h2><p>Nachträgliche Erfassungen und Korrekturen werden erst nach Freigabe wirksam.</p></div></div>
         <div class="info-strip">Bereits gestempelte Zeiten können nicht direkt geändert werden. Für jede nachträgliche Änderung ist eine Begründung erforderlich.</div>
@@ -364,7 +365,7 @@ export async function renderZeiterfassung(el, ctx) {
         <div class="request-row"><div><strong>${esc(r.userName || r.userId)} · ${signedHm(r.adjustmentMinutes)}</strong><span>${fmtDate(r.adjustmentDate)}${validProjectNumber(r.projectNumber) ? ` · Projekt ${esc(r.projectNumber)}` : ""} · ${esc(r.adjustmentReason || "Stundenkorrektur")}</span>${r.adjustmentDetails ? `<small>${esc(r.adjustmentDetails)}</small>` : ""}</div>${statusPill("gebucht", "blue")}</div>`).join("") : `<div class="empty compact-empty">Noch keine Stundenkorrekturen gebucht.</div>`}</div>
     </article>` : ""}
 
-    <article class="card">
+    <article class="card ${isAdmin?"admin-self-hidden":""}">
       <div class="card-head"><div><h2>Meine Buchungen</h2><p>Gespeicherte Arbeitszeiten und Stundenkorrekturen. Arbeitszeiten können ausschließlich über einen Korrekturantrag geändert werden.</p></div></div>
       <div class="table-wrap"><table>
         <thead><tr><th>Datum</th><th>Projekt</th><th>Beginn</th><th>Ende</th><th>Pause</th><th>Arbeitszeit</th><th>Status</th><th>Aktion</th></tr></thead>

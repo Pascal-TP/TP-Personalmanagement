@@ -190,14 +190,14 @@ export async function renderDashboard(el,ctx){
   const p=ctx.profile;
   const canApproveVacation=p.role==="supervisor"||hasAdminPermission(p,"vacationApprove");
   const canApproveTime=p.role==="supervisor"||hasAdminPermission(p,"timeApprove");
-  let news=[],trainingProgress=[],allTrainingDefinitions=[],vacations=[],absences=[],timeRequests=[],timeRecords=[],teamVacations=[],hrUsers=[],personalChangeRequests=[];
+  let news=[],trainingProgress=[],allTrainingProgress=[],allTrainingDefinitions=[],vacations=[],absences=[],timeRequests=[],timeRecords=[],teamVacations=[],hrUsers=[],personalChangeRequests=[];
   try{const s=await getDocs(query(collection(db,"news"),orderBy("createdAt","desc"),limit(6)));news=s.docs.map(d=>({id:d.id,...d.data()})).filter(n=>n.active!==false&&(n.companyId==="all"||!n.companyId||n.companyId===p.companyId)&&(n.audience==="all"||!n.audience||n.audience===p.role))}catch{}
   try{const s=await getDocs(query(collection(db,"trainingProgress"),where("userId","==",p.id)));trainingProgress=s.docs.map(d=>d.data())}catch{}
   try{const s=await getDocs(collection(db,"trainings"));allTrainingDefinitions=s.docs.map(d=>({id:d.id,...d.data()}))}catch{}
   try{const s=await getDocs(query(collection(db,"vacationRequests"),where("userId","==",p.id)));vacations=s.docs.map(d=>({id:d.id,...d.data()}))}catch{}
   try{const s=await getDocs(query(collection(db,"absences"),where("userId","==",p.id)));absences=s.docs.map(d=>({id:d.id,...d.data()}))}catch{}
   try{const s=await getDocs(query(collection(db,"timeRecords"),where("userId","==",p.id)));timeRecords=s.docs.map(d=>({id:d.id,...d.data()}))}catch{}
-  if(p.role==="admin"){try{const s=await getDocs(collection(db,"users"));hrUsers=s.docs.map(d=>({id:d.id,...d.data()}))}catch(e){console.error("HR-Fristen konnten nicht geladen werden",e)} if(hasAdminPermission(p,"personalDataChanges")){try{const s=await getDocs(collection(db,"personalDataChangeRequests"));personalChangeRequests=s.docs.map(d=>({id:d.id,...d.data()})).filter(x=>x.status==="pending")}catch(e){console.error("Stammdaten-Änderungsanträge konnten nicht geladen werden",e)}}}
+  if(p.role==="admin"){try{const s=await getDocs(collection(db,"users"));hrUsers=s.docs.map(d=>({id:d.id,...d.data()}))}catch(e){console.error("HR-Fristen konnten nicht geladen werden",e)} if(hasAdminPermission(p,"trainingOverview")){try{const s=await getDocs(collection(db,"trainingProgress"));allTrainingProgress=s.docs.map(d=>({id:d.id,...d.data()}))}catch(e){console.error("Unternehmensweite Schulungsstände konnten nicht geladen werden",e)}} if(hasAdminPermission(p,"personalDataChanges")){try{const s=await getDocs(collection(db,"personalDataChangeRequests"));personalChangeRequests=s.docs.map(d=>({id:d.id,...d.data()})).filter(x=>x.status==="pending")}catch(e){console.error("Stammdaten-Änderungsanträge konnten nicht geladen werden",e)}}}
   if(p.role==="employee"||canApproveTime){try{const s=await getDocs(collection(db,"timeCorrectionRequests"));timeRequests=s.docs.map(d=>({id:d.id,...d.data()}))}catch{}}
   if(canApproveVacation){
     try{const s=await getDocs(collection(db,"vacationRequests"));teamVacations=s.docs.map(d=>({id:d.id,...d.data()})).filter(v=>v.status==="pending"&&(p.role==="admin"||v.supervisorId===p.id))}catch{}
@@ -216,7 +216,25 @@ export async function renderDashboard(el,ctx){
       .map(x=>x.trainingId)
       .filter(Boolean)
   );
-  const openTrainings=assignedTrainings.filter(t=>!completedTrainingIds.has(t.id)).length;
+  let openTrainings=assignedTrainings.filter(t=>!completedTrainingIds.has(t.id)).length;
+  const globalTrainingCountAvailable=p.role==="admin"&&hasAdminPermission(p,"trainingOverview");
+  if(globalTrainingCountAvailable){
+    const relevantUsers=hrUsers.filter(u=>u.active!==false&&u.archived!==true&&(u.role==="employee"||u.role==="supervisor"));
+    openTrainings=relevantUsers.reduce((sum,u)=>{
+      const userAreas=Array.isArray(u.bereiche)?u.bereiche:[];
+      const extras=Array.isArray(u.extraTrainings)?u.extraTrainings:[];
+      const assigned=allTrainingDefinitions.filter(t=>{
+        if(t.active===false)return false;
+        const areas=Array.isArray(t.bereiche)?t.bereiche:[];
+        return areas.length===0||areas.some(a=>userAreas.includes(a))||extras.includes(t.id);
+      });
+      const done=new Set(allTrainingProgress
+        .filter(x=>x.userId===u.id&&(x.status==="abgeschlossen"||x.status==="completed"))
+        .map(x=>x.trainingId)
+        .filter(Boolean));
+      return sum+assigned.filter(t=>!done.has(t.id)).length;
+    },0);
+  }
   const pendingOwnVac=vacations.filter(x=>x.status==="pending"||x.status==="beantragt").length;
   const pendingTeamVac=teamVacations.length;
   const vacationCount=canApproveVacation?pendingTeamVac:pendingOwnVac;
@@ -231,7 +249,7 @@ export async function renderDashboard(el,ctx){
   const monthName=new Intl.DateTimeFormat("de-DE",{month:"long"}).format(new Date());
   const saldoClass=hours.balanceMinutes>0?"positive":hours.balanceMinutes<0?"negative":"neutral";
 
-  const trainingAction=openTrainings>0;
+  const trainingAction=p.role==="admin"?(globalTrainingCountAvailable&&openTrainings>0):openTrainings>0;
   const vacationAction=canApproveVacation&&pendingTeamVac>0;
   const timeAction=canApproveTime&&pendingTeamTime>0;
   const adminHint=hasAdminPermission(p,"newsManage")?`<div class="info-strip">Die Personalabteilung kann über <strong>News & Hinweise</strong> interne Meldungen und E-Mail-Vorlagen verwalten.</div>`:"";
@@ -240,10 +258,10 @@ export async function renderDashboard(el,ctx){
 
   el.innerHTML=`
     <div class="kpi-grid">
-      <div class="kpi ${trainingAction?"needs-action":""}"><span>Offene Schulungen</span><strong>${openTrainings}</strong><small>${trainingAction?"Bearbeitung erforderlich":"keine offene Aufgabe"}</small></div>
-      <div class="kpi ${vacationAction?"needs-action":""}"><span>Urlaubsanträge</span><strong>${vacationCount}</strong><small>${canApproveVacation?(vacationAction?"zur Freigabe":"keine offene Freigabe"):"aktuell in Bearbeitung"}</small></div>
-      <div class="kpi ${timeAction?"needs-action":""}"><span>Zeiterfassungsanträge</span><strong>${pendingTime}</strong><small>${canApproveTime?(timeAction?"zur Freigabe":"keine offene Freigabe"):"eigene offene Anträge"}</small></div>
-      <div class="kpi hours-kpi"><span>Soll / Ist · ${esc(monthName)}</span><strong>${hm(hours.targetMinutes)} / ${hm(hours.actualMinutes)}</strong><small class="hours-balance ${saldoClass}">Monatssaldo: ${hm(hours.balanceMinutes,{signed:true})}</small></div>
+      <div class="kpi ${trainingAction?"needs-action":""}"><span>Offene Schulungen</span><strong>${p.role==="admin"&&!globalTrainingCountAvailable?"–":openTrainings}</strong><small>${p.role==="admin"?(globalTrainingCountAvailable?(trainingAction?"offene Zuordnungen im Unternehmen":"keine offenen Zuordnungen"):"Schulungsübersicht nicht freigeschaltet"):(trainingAction?"Bearbeitung erforderlich":"keine offene Aufgabe")}</small></div>
+      <div class="kpi ${vacationAction?"needs-action":""}"><span>Urlaubsanträge</span><strong>${p.role==="admin"&&!canApproveVacation?"–":vacationCount}</strong><small>${p.role==="admin"?(canApproveVacation?(vacationAction?"offen im Unternehmen":"keine offenen Anträge"):"Urlaubsübersicht nicht freigeschaltet"):(canApproveVacation?(vacationAction?"zur Freigabe":"keine offene Freigabe"):"aktuell in Bearbeitung")}</small></div>
+      <div class="kpi ${timeAction?"needs-action":""}"><span>Zeiterfassungsanträge</span><strong>${p.role==="admin"&&!canApproveTime?"–":pendingTime}</strong><small>${p.role==="admin"?(canApproveTime?(timeAction?"offen im Unternehmen":"keine offenen Anträge"):"Zeitfreigaben nicht freigeschaltet"):(canApproveTime?(timeAction?"zur Freigabe":"keine offene Freigabe"):"eigene offene Anträge")}</small></div>
+      ${p.role!=="admin"?`<div class="kpi hours-kpi"><span>Soll / Ist · ${esc(monthName)}</span><strong>${hm(hours.targetMinutes)} / ${hm(hours.actualMinutes)}</strong><small class="hours-balance ${saldoClass}">Monatssaldo: ${hm(hours.balanceMinutes,{signed:true})}</small></div>`:""}
     </div>${changeRequestHint}${adminHint}${hrReminderHtml}
     <div class="two-col">
       <article class="card"><div class="card-head"><div><h2>News & Hinweise</h2><p>Aktuelle Informationen der Personalabteilung</p></div></div>
