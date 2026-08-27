@@ -1,7 +1,7 @@
 import { firebaseConfig, db } from "./firebase.js";
 import { initializeApp, deleteApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
 import { initializeAuth, inMemoryPersistence, createUserWithEmailAndPassword, deleteUser, signOut as secondarySignOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-import { collection, getDocs, doc, serverTimestamp, writeBatch, updateDoc, setDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+import { collection, getDocs, doc, serverTimestamp, writeBatch, updateDoc, setDoc, query, where } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 import { setHead } from "./app.js";
 import { AREA_NAMES, esc, syntheticEmail, ROLE_LABELS, toast, initials } from "./utils.js";
 import { renderPersonalakte } from "./personalakte.js";
@@ -40,6 +40,50 @@ function setVal(form,name,value){const field=form.elements[name];if(!field)retur
 function boolVal(form,name,value){setVal(form,name,String(value===true))}
 function numberOrNull(v){const s=String(v??'').trim();return s===''?null:Number(s)}
 
+
+function bookingToDate(value){
+  if(!value)return null;
+  if(value?.toDate)return value.toDate();
+  const d=new Date(value);
+  return Number.isNaN(d.getTime())?null:d;
+}
+function bookingPad(v){return String(v).padStart(2,'0')}
+function bookingDateKey(record){
+  if(record.recordType==='adjustment')return String(record.adjustmentDate||'');
+  const d=bookingToDate(record.startAt);
+  if(d)return `${d.getFullYear()}-${bookingPad(d.getMonth()+1)}-${bookingPad(d.getDate())}`;
+  return String(record.date||'');
+}
+function bookingTime(record,kind){
+  const d=bookingToDate(kind==='start'?record.startAt:record.endAt);
+  if(d)return `${bookingPad(d.getHours())}:${bookingPad(d.getMinutes())}`;
+  return String(record[kind]||'');
+}
+function bookingMinutesText(minutes,{signed=false}={}){
+  const value=Math.round(Number(minutes)||0);
+  const sign=signed?(value>0?'+':value<0?'−':''):'';
+  const abs=Math.abs(value);
+  return `${sign}${Math.floor(abs/60)}:${bookingPad(abs%60)} h`;
+}
+function bookingNetMinutes(record){
+  if(record.recordType==='adjustment')return Number(record.adjustmentMinutes)||0;
+  const start=bookingToDate(record.startAt),end=bookingToDate(record.endAt);
+  if(!start||!end||end<start)return null;
+  const gross=Math.max(0,Math.round((end-start)/60000));
+  const pause=gross>540?45:gross>360?30:0;
+  return Math.max(0,gross-pause);
+}
+function bookingSourceLabel(record){
+  if(record.recordType==='adjustment')return 'Stundenkorrektur';
+  if(record.source==='nfc_terminal')return 'NFC-Terminal';
+  if(record.source==='approved_request')return 'genehmigter Antrag';
+  if(record.source==='desktop_stamp')return 'Personalmanagement';
+  return record.source?String(record.source):'Buchung';
+}
+function bookingMonthLabel(date){
+  return date.toLocaleDateString('de-DE',{month:'long',year:'numeric'});
+}
+
 export async function renderMitarbeiter(el,ctx){
   setHead("Mitarbeiter","Digitale Mitarbeiterkartei, Zugang, Organisation, Arbeitssicherheit und Personalakte verwalten.");
   const canView=hasAdminPermission(ctx.profile,'employeesView');
@@ -49,6 +93,7 @@ export async function renderMitarbeiter(el,ctx){
   const canManageDocs=hasAdminPermission(ctx.profile,'personnelDocuments');
   const canManagePermissions=hasAdminPermission(ctx.profile,'permissionsManage');
   const canManageNfc=hasAdminPermission(ctx.profile,'terminalManage');
+  const canViewBookings=hasAnyAdminPermission(ctx.profile,['timeAdjustment','timeApprove','hoursExport','backup']);
   if(!hasAnyAdminPermission(ctx.profile,['employeesView','employeesCreate','employeesEdit','employeesDelete'])){
     el.innerHTML='<div class="error-card">Für diesen Admin-Zugang ist keine Berechtigung zur Mitarbeiterverwaltung freigeschaltet.</div>';
     return;
@@ -101,6 +146,8 @@ export async function renderMitarbeiter(el,ctx){
 
   const nfcBody=`<div class="field full"><div id="nfc-credential-box" class="nfc-credential-box"><span class="muted">Mitarbeiter zuerst anlegen bzw. öffnen.</span></div></div>`;
 
+  const bookingsBody=`<div class="field full"><div id="employee-bookings-box" class="employee-bookings-box"><span class="muted">Mitarbeiter zuerst öffnen.</span></div></div>`;
+
   const safetyBody=`
     <label class="field safety-toggle"><span>Ersthelfer</span><select name="firstAider"><option value="false">Nein</option><option value="true">Ja</option></select></label><label class="field"><span>gültig / Auffrischung bis</span><input name="firstAiderValidUntil" type="date"></label>
     <label class="field safety-toggle"><span>Brandschutzhelfer</span><select name="fireWarden"><option value="false">Nein</option><option value="true">Ja</option></select></label><label class="field"><span>gültig / Auffrischung bis</span><input name="fireWardenValidUntil" type="date"></label>
@@ -127,6 +174,7 @@ export async function renderMitarbeiter(el,ctx){
     ${section('↗','Lohn & Gehalt','Grunddaten zur Vergütung. Eine zeitliche Gehaltsentwicklung kann später ergänzt werden.',salaryBody,'sensitive-section')}
     ${section('◷','Urlaub & Arbeitszeit','Arbeitszeitmodell, Urlaub und Projektzeiterfassung.',timeBody)}
     ${canManageNfc?section('⌁','NFC-Transponder','Persönlichen NFC-Transponder für die einfache Terminal-Zeiterfassung zuweisen oder sperren.',nfcBody):''}
+    ${canViewBookings?section('◴','Buchungen','Arbeitszeitbuchungen des Mitarbeiters kontrollieren. Angezeigt werden auch Projekt, Buchungsart und verwendetes NFC-Terminal.',bookingsBody):''}
     ${section('⚑','Arbeitssicherheit & Befähigungen','Qualifikationen, Befähigungen und fällige Kontrollen.',safetyBody,'safety-section')}
     ${section('▤','Schulungen','Bereichsschulungen und individuelle Zusatzschulungen.',trainingBody)}
     ${section('⚙','System & Berechtigungen','Login, Rolle und Kontostatus.',systemBody)}
@@ -135,6 +183,58 @@ export async function renderMitarbeiter(el,ctx){
   </form></section>`;
 
   const show=el.querySelector('#user-show'),create=el.querySelector('#user-create'),form=el.querySelector('#user-form'),akte=el.querySelector('#personalakte-container');
+  async function renderBookingBox(employee,initialMonth=new Date()){
+    const box=el.querySelector('#employee-bookings-box');if(!box)return;
+    if(!employee){box.innerHTML='<span class="muted">Die Buchungen können nach dem Öffnen eines Mitarbeiters angezeigt werden.</span>';return;}
+    let records=[];
+    try{
+      const snap=await getDocs(query(collection(db,'timeRecords'),where('userId','==',employee.id)));
+      records=snap.docs.map(d=>({id:d.id,...d.data()}));
+    }catch(err){
+      console.error('Buchungen konnten nicht geladen werden',err);
+      box.innerHTML='<div class="error-card compact">Die Buchungen konnten nicht geladen werden. Bitte die Zeit-Berechtigungen dieses Adminzugangs prüfen.</div>';
+      return;
+    }
+    let month=new Date(initialMonth.getFullYear(),initialMonth.getMonth(),1,12);
+    const renderMonth=()=>{
+      const year=month.getFullYear(),monthNo=month.getMonth()+1;
+      const monthRecords=records.filter(r=>{
+        const key=bookingDateKey(r);
+        return key.startsWith(`${year}-${bookingPad(monthNo)}-`);
+      }).sort((a,b)=>{
+        const ak=bookingDateKey(a),bk=bookingDateKey(b);
+        const at=bookingTime(a,'start'),bt=bookingTime(b,'start');
+        return (bk+bt).localeCompare(ak+at);
+      });
+      box.innerHTML=`
+        <div class="employee-bookings-toolbar">
+          <div class="actions">
+            <button class="btn secondary small" type="button" id="bookings-prev">← Vorheriger Monat</button>
+            <button class="btn secondary small" type="button" id="bookings-current">Aktueller Monat</button>
+            <button class="btn secondary small" type="button" id="bookings-next">Nächster Monat →</button>
+          </div>
+          <strong>${esc(bookingMonthLabel(month))}</strong>
+        </div>
+        <div class="table-wrap"><table class="employee-bookings-table">
+          <thead><tr><th>Datum</th><th>Projekt</th><th>KOMMEN</th><th>GEHEN</th><th>Arbeitszeit</th><th>Buchungsart</th><th>Terminal / Hinweis</th></tr></thead>
+          <tbody>${monthRecords.length?monthRecords.map(r=>{
+            if(r.recordType==='adjustment'){
+              const note=[r.adjustmentReason,r.adjustmentDetails].filter(Boolean).join(' · ');
+              return `<tr class="adjustment-row"><td>${esc(bookingDateKey(r).split('-').reverse().join('.'))}</td><td>${esc(r.projectNumber||'–')}</td><td colspan="2"><strong>Stundenkorrektur</strong></td><td><strong>${esc(bookingMinutesText(r.adjustmentMinutes,{signed:true}))}</strong></td><td>${esc(bookingSourceLabel(r))}</td><td>${esc(note||r.createdByName||'Personalabteilung')}</td></tr>`;
+            }
+            const net=bookingNetMinutes(r);
+            const terminal=[r.terminalName||r.terminalId,r.terminalEndId&&r.terminalEndId!==(r.terminalId||'')?`GEHEN: ${r.terminalEndId}`:''].filter(Boolean).join(' · ');
+            const open=!bookingToDate(r.endAt)&&r.status!=='closed';
+            return `<tr><td>${esc(bookingDateKey(r).split('-').reverse().join('.'))}</td><td>${esc(r.projectNumber||'–')}</td><td>${esc(bookingTime(r,'start')||'–')}</td><td>${esc(bookingTime(r,'end')||'–')}</td><td>${net===null?(open?'<span class="pill yellow">läuft</span>':'–'):esc(bookingMinutesText(net))}</td><td>${esc(bookingSourceLabel(r))}</td><td>${esc(terminal|| (open?'offene Buchung':'–'))}</td></tr>`;
+          }).join(''):`<tr><td colspan="7" class="empty">Für ${esc(bookingMonthLabel(month))} sind keine Buchungen vorhanden.</td></tr>`}</tbody>
+        </table></div>`;
+      box.querySelector('#bookings-prev').onclick=()=>{month=new Date(month.getFullYear(),month.getMonth()-1,1,12);renderMonth()};
+      box.querySelector('#bookings-current').onclick=()=>{const n=new Date();month=new Date(n.getFullYear(),n.getMonth(),1,12);renderMonth()};
+      box.querySelector('#bookings-next').onclick=()=>{month=new Date(month.getFullYear(),month.getMonth()+1,1,12);renderMonth()};
+    };
+    renderMonth();
+  }
+
   async function renderNfcBox(employee){
     const box=el.querySelector('#nfc-credential-box');if(!box)return;
     if(!employee){box.innerHTML='<span class="muted">Der NFC-Transponder kann nach dem Anlegen des Mitarbeiters zugewiesen werden.</span>';return;}
@@ -157,7 +257,7 @@ export async function renderMitarbeiter(el,ctx){
   }
   if(!(canView||canEdit||canDelete)&&canCreate){show?.classList.add('hidden');create?.classList.remove('hidden');}
   function tab(t){show.classList.toggle('hidden',t!=='show');create.classList.toggle('hidden',t!=='create');el.querySelectorAll('.choice-card').forEach(x=>x.classList.toggle('active',x.dataset.tab===t))}
-  async function prepareNew(){if(!canCreate){toast('Keine Berechtigung zum Anlegen von Mitarbeitern.');return;}form.reset();form.elements.loginType.disabled=false;form.elements.login.disabled=false;form.elements.role.disabled=false;form.querySelectorAll('[name=adminPermission]').forEach(x=>{x.checked=true;x.disabled=!canManagePermissions});const adminOption=[...form.elements.role.options].find(o=>o.value==='admin');if(adminOption)adminOption.disabled=!canManagePermissions;form.querySelectorAll('[name=workDay]').forEach(x=>x.checked=['1','2','3','4','5'].includes(x.value));setVal(form,'weeklyHours',40);setVal(form,'vacationDays',30);setVal(form,'projectTimeTracking','false');setVal(form,'active','true');el.querySelector('#employee-form-title').textContent='Mitarbeiter anlegen';form.querySelectorAll('input,select,textarea').forEach(x=>x.disabled=false);form.querySelectorAll('button[type=submit]').forEach(x=>x.classList.remove('hidden'));const box=form.querySelector('#admin-permissions-box');if(box)box.classList.add('hidden');renderPhotoEditor(null);await renderPersonalakte(akte,ctx,null,{readOnly:false,canManage:canManageDocs});await renderNfcBox(null)}
+  async function prepareNew(){if(!canCreate){toast('Keine Berechtigung zum Anlegen von Mitarbeitern.');return;}form.reset();form.elements.loginType.disabled=false;form.elements.login.disabled=false;form.elements.role.disabled=false;form.querySelectorAll('[name=adminPermission]').forEach(x=>{x.checked=true;x.disabled=!canManagePermissions});const adminOption=[...form.elements.role.options].find(o=>o.value==='admin');if(adminOption)adminOption.disabled=!canManagePermissions;form.querySelectorAll('[name=workDay]').forEach(x=>x.checked=['1','2','3','4','5'].includes(x.value));setVal(form,'weeklyHours',40);setVal(form,'vacationDays',30);setVal(form,'projectTimeTracking','false');setVal(form,'active','true');el.querySelector('#employee-form-title').textContent='Mitarbeiter anlegen';form.querySelectorAll('input,select,textarea').forEach(x=>x.disabled=false);form.querySelectorAll('button[type=submit]').forEach(x=>x.classList.remove('hidden'));const box=form.querySelector('#admin-permissions-box');if(box)box.classList.add('hidden');renderPhotoEditor(null);await renderPersonalakte(akte,ctx,null,{readOnly:false,canManage:canManageDocs});await renderNfcBox(null);if(canViewBookings)await renderBookingBox(null)}
   el.querySelectorAll('.choice-card').forEach(b=>b.onclick=async()=>{if(b.dataset.tab==='create')await prepareNew();tab(b.dataset.tab)});
   const cancel=()=>tab('show');el.querySelector('#cancel-user').onclick=cancel;el.querySelector('#cancel-user-bottom').onclick=cancel;
 
@@ -196,7 +296,7 @@ el.querySelectorAll('.edit-user').forEach(b=>b.onclick=async()=>{
     const readOnly=!canEdit;form.querySelectorAll('input,select,textarea').forEach(x=>{if(x.name!=='id')x.disabled=readOnly||(['loginType','login'].includes(x.name));});
     if(!readOnly&&!canManagePermissions){form.querySelectorAll('[name=adminPermission]').forEach(x=>x.disabled=true);if(u.role==='admin')form.elements.role.disabled=true;}
     form.querySelectorAll('button[type=submit]').forEach(x=>x.classList.toggle('hidden',readOnly));
-    el.querySelector('#employee-form-title').textContent=`Mitarbeiterkartei · ${u.name||'Mitarbeiter'}`;renderPhotoEditor(u);tab('create');await renderPersonalakte(akte,ctx,u,{readOnly,canManage:canManageDocs});await renderNfcBox(u);window.scrollTo({top:0,behavior:'smooth'});
+    el.querySelector('#employee-form-title').textContent=`Mitarbeiterkartei · ${u.name||'Mitarbeiter'}`;renderPhotoEditor(u);tab('create');await renderPersonalakte(akte,ctx,u,{readOnly,canManage:canManageDocs});await renderNfcBox(u);if(canViewBookings)await renderBookingBox(u);window.scrollTo({top:0,behavior:'smooth'});
   });
 
   form.elements.role?.addEventListener('change',()=>{const box=form.querySelector('#admin-permissions-box');if(box)box.classList.toggle('hidden',form.elements.role.value!=='admin');if(form.elements.role.value==='admin'&&![...form.querySelectorAll('[name=adminPermission]')].some(x=>x.checked))form.querySelectorAll('[name=adminPermission]').forEach(x=>x.checked=true)});
