@@ -169,20 +169,24 @@ export async function renderMitarbeiter(el,ctx){
     <div class="employee-file-head"><div class="employee-file-identity"><div id="employee-photo-editor" class="employee-photo-editor"><span class="employee-profile-photo large"><span>MA</span></span><small>Foto nach dem ersten Speichern möglich</small></div><div><span class="eyebrow">Digitale Mitarbeiterkartei</span><h2 id="employee-form-title">Mitarbeiter anlegen</h2><p>Die Bereiche sind fachlich getrennt. Sensible Steuer-, Bank- und Entgeltdaten sind besonders geschützt.</p></div></div><div class="employee-file-actions"><button class="btn primary" type="submit">Mitarbeiter speichern</button><button class="btn secondary" id="cancel-user" type="button">Abbrechen</button></div></div>
     ${section('⌂','Persönliche Daten & Kontakt','Kontaktdaten und Notfallkontakt.',personalBody)}
     ${section('▦','Beschäftigung & Organisation','Zuordnung im Unternehmen und Vertragsrahmen.',employmentBody)}
-    ${section('§','Steuer & Sozialversicherung','Nur Personalabteilung/Admin und der Mitarbeiter selbst können diese Daten lesen.',taxBody,'sensitive-section')}
-    ${section('€','Bankverbindung','Geschützte Zahlungsdaten des Mitarbeiters.',bankBody,'sensitive-section')}
-    ${section('↗','Lohn & Gehalt','Grunddaten zur Vergütung. Eine zeitliche Gehaltsentwicklung kann später ergänzt werden.',salaryBody,'sensitive-section')}
-    ${section('◷','Urlaub & Arbeitszeit','Arbeitszeitmodell, Urlaub und Projektzeiterfassung.',timeBody)}
+    ${section('§','Steuer & Sozialversicherung','Nur Personalabteilung/Admin und der Mitarbeiter selbst können diese Daten lesen.',taxBody,'sensitive-section admin-role-hide')}
+    ${section('€','Bankverbindung','Geschützte Zahlungsdaten des Mitarbeiters.',bankBody,'sensitive-section admin-role-hide')}
+    ${section('↗','Lohn & Gehalt','Grunddaten zur Vergütung. Eine zeitliche Gehaltsentwicklung kann später ergänzt werden.',salaryBody,'sensitive-section admin-role-hide')}
+    ${section('◷','Urlaub & Arbeitszeit','Arbeitszeitmodell, Urlaub und Projektzeiterfassung.',timeBody,'admin-role-hide')}
     ${canManageNfc?section('⌁','NFC-Transponder','Persönlichen NFC-Transponder für die einfache Terminal-Zeiterfassung zuweisen oder sperren.',nfcBody):''}
     ${canViewBookings?section('◴','Buchungen','Arbeitszeitbuchungen des Mitarbeiters kontrollieren. Angezeigt werden auch Projekt, Buchungsart und verwendetes NFC-Terminal.',bookingsBody):''}
-    ${section('⚑','Arbeitssicherheit & Befähigungen','Qualifikationen, Befähigungen und fällige Kontrollen.',safetyBody,'safety-section')}
-    ${section('▤','Schulungen','Bereichsschulungen und individuelle Zusatzschulungen.',trainingBody)}
+    ${section('⚑','Arbeitssicherheit & Befähigungen','Qualifikationen, Befähigungen und fällige Kontrollen.',safetyBody,'safety-section admin-role-hide')}
+    ${section('▤','Schulungen','Bereichsschulungen und individuelle Zusatzschulungen.',trainingBody,'admin-role-hide')}
     ${section('⚙','System & Berechtigungen','Login, Rolle und Kontostatus.',systemBody)}
     <section class="employee-section documents-section"><div class="employee-section-head"><span class="employee-section-icon">▧</span><div><h3>Digitale Personalakte</h3><p>Verträge, Bescheinigungen, Zeugnisse, Zertifikate und weitere Personaldokumente.</p></div></div><div id="personalakte-container"></div></section>
     <div class="employee-savebar"><p id="user-message" class="message"></p><div class="actions"><button class="btn primary" type="submit">Mitarbeiter speichern</button><button class="btn secondary" id="cancel-user-bottom" type="button">Abbrechen</button></div></div>
   </form></section>`;
 
   const show=el.querySelector('#user-show'),create=el.querySelector('#user-create'),form=el.querySelector('#user-form'),akte=el.querySelector('#personalakte-container');
+  function syncAdminRoleSections(){
+    const isAdmin=form.elements.role?.value==='admin';
+    form.querySelectorAll('.admin-role-hide').forEach(section=>section.classList.toggle('hidden',isAdmin));
+  }
   async function renderBookingBox(employee,initialMonth=new Date()){
     const box=el.querySelector('#employee-bookings-box');if(!box)return;
     if(!employee){box.innerHTML='<span class="muted">Die Buchungen können nach dem Öffnen eines Mitarbeiters angezeigt werden.</span>';return;}
@@ -257,7 +261,7 @@ export async function renderMitarbeiter(el,ctx){
   }
   if(!(canView||canEdit||canDelete)&&canCreate){show?.classList.add('hidden');create?.classList.remove('hidden');}
   function tab(t){show.classList.toggle('hidden',t!=='show');create.classList.toggle('hidden',t!=='create');el.querySelectorAll('.choice-card').forEach(x=>x.classList.toggle('active',x.dataset.tab===t))}
-  async function prepareNew(){if(!canCreate){toast('Keine Berechtigung zum Anlegen von Mitarbeitern.');return;}form.reset();form.elements.loginType.disabled=false;form.elements.login.disabled=false;form.elements.role.disabled=false;form.querySelectorAll('[name=adminPermission]').forEach(x=>{x.checked=true;x.disabled=!canManagePermissions});const adminOption=[...form.elements.role.options].find(o=>o.value==='admin');if(adminOption)adminOption.disabled=!canManagePermissions;form.querySelectorAll('[name=workDay]').forEach(x=>x.checked=['1','2','3','4','5'].includes(x.value));setVal(form,'weeklyHours',40);setVal(form,'vacationDays',30);setVal(form,'projectTimeTracking','false');setVal(form,'active','true');el.querySelector('#employee-form-title').textContent='Mitarbeiter anlegen';form.querySelectorAll('input,select,textarea').forEach(x=>x.disabled=false);form.querySelectorAll('button[type=submit]').forEach(x=>x.classList.remove('hidden'));const box=form.querySelector('#admin-permissions-box');if(box)box.classList.add('hidden');renderPhotoEditor(null);await renderPersonalakte(akte,ctx,null,{readOnly:false,canManage:canManageDocs});await renderNfcBox(null);if(canViewBookings)await renderBookingBox(null)}
+  async function prepareNew(){if(!canCreate){toast('Keine Berechtigung zum Anlegen von Mitarbeitern.');return;}form.reset();form.elements.loginType.disabled=false;form.elements.login.disabled=false;form.elements.role.disabled=false;form.querySelectorAll('[name=adminPermission]').forEach(x=>{x.checked=true;x.disabled=!canManagePermissions});const adminOption=[...form.elements.role.options].find(o=>o.value==='admin');if(adminOption)adminOption.disabled=!canManagePermissions;form.querySelectorAll('[name=workDay]').forEach(x=>x.checked=['1','2','3','4','5'].includes(x.value));setVal(form,'weeklyHours',40);setVal(form,'vacationDays',30);setVal(form,'projectTimeTracking','false');setVal(form,'active','true');el.querySelector('#employee-form-title').textContent='Mitarbeiter anlegen';form.querySelectorAll('input,select,textarea').forEach(x=>x.disabled=false);form.querySelectorAll('button[type=submit]').forEach(x=>x.classList.remove('hidden'));const box=form.querySelector('#admin-permissions-box');if(box)box.classList.add('hidden');syncAdminRoleSections();renderPhotoEditor(null);await renderPersonalakte(akte,ctx,null,{readOnly:false,canManage:canManageDocs});await renderNfcBox(null);if(canViewBookings)await renderBookingBox(null)}
   el.querySelectorAll('.choice-card').forEach(b=>b.onclick=async()=>{if(b.dataset.tab==='create')await prepareNew();tab(b.dataset.tab)});
   const cancel=()=>tab('show');el.querySelector('#cancel-user').onclick=cancel;el.querySelector('#cancel-user-bottom').onclick=cancel;
 
@@ -292,14 +296,14 @@ el.querySelectorAll('.edit-user').forEach(b=>b.onclick=async()=>{
     ['birthDate','maritalStatus','marriageDate','street','postalCode','city','privateEmail','phone','mobile','emergencyContactName','emergencyContactPhone','taxId','taxClass','religion','socialSecurityNumber','healthInsuranceId','insuranceType','personGroup','contributionGroup','iban','bic','bankId','accountHolder','compensationType','salaryValidFrom'].forEach(k=>setVal(form,k,p[k]||''));setVal(form,'childAllowance',p.childAllowance??'');setVal(form,'grossSalary',p.grossSalary??'');setVal(form,'hourlyRate',p.hourlyRate??'');boolVal(form,'birthdayList',p.birthdayList===true);
     form.querySelectorAll('[name=bereich]').forEach(x=>x.checked=(u.bereiche||[]).includes(x.value));form.querySelectorAll('[name=extraTraining]').forEach(x=>x.checked=(u.extraTrainings||[]).includes(x.value));
     const loadedPermissions=normalizedAdminPermissions(u);form.querySelectorAll('[name=adminPermission]').forEach(x=>x.checked=loadedPermissions[x.value]!==false);
-    const syncAdminPermissionVisibility=()=>{const box=form.querySelector('#admin-permissions-box');if(box)box.classList.toggle('hidden',form.elements.role.value!=='admin')};syncAdminPermissionVisibility();
+    const syncAdminPermissionVisibility=()=>{const box=form.querySelector('#admin-permissions-box');if(box)box.classList.toggle('hidden',form.elements.role.value!=='admin')};syncAdminPermissionVisibility();syncAdminRoleSections();
     const readOnly=!canEdit;form.querySelectorAll('input,select,textarea').forEach(x=>{if(x.name!=='id')x.disabled=readOnly||(['loginType','login'].includes(x.name));});
     if(!readOnly&&!canManagePermissions){form.querySelectorAll('[name=adminPermission]').forEach(x=>x.disabled=true);if(u.role==='admin')form.elements.role.disabled=true;}
     form.querySelectorAll('button[type=submit]').forEach(x=>x.classList.toggle('hidden',readOnly));
     el.querySelector('#employee-form-title').textContent=`Mitarbeiterkartei · ${u.name||'Mitarbeiter'}`;renderPhotoEditor(u);tab('create');await renderPersonalakte(akte,ctx,u,{readOnly,canManage:canManageDocs});await renderNfcBox(u);if(canViewBookings)await renderBookingBox(u);window.scrollTo({top:0,behavior:'smooth'});
   });
 
-  form.elements.role?.addEventListener('change',()=>{const box=form.querySelector('#admin-permissions-box');if(box)box.classList.toggle('hidden',form.elements.role.value!=='admin');if(form.elements.role.value==='admin'&&![...form.querySelectorAll('[name=adminPermission]')].some(x=>x.checked))form.querySelectorAll('[name=adminPermission]').forEach(x=>x.checked=true)});
+  form.elements.role?.addEventListener('change',()=>{const box=form.querySelector('#admin-permissions-box');if(box)box.classList.toggle('hidden',form.elements.role.value!=='admin');syncAdminRoleSections();if(form.elements.role.value==='admin'&&![...form.querySelectorAll('[name=adminPermission]')].some(x=>x.checked))form.querySelectorAll('[name=adminPermission]').forEach(x=>x.checked=true)});
 
   form.onsubmit=async e=>{
     e.preventDefault();
