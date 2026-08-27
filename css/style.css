@@ -222,3 +222,6 @@
 .employee-bookings-table td{vertical-align:middle}
 .employee-bookings-table td:last-child{min-width:150px}
 @media(max-width:700px){.employee-bookings-toolbar{align-items:flex-start}.employee-bookings-toolbar .actions{width:100%}}
+
+/* V2.8 – reine Adminansicht: persönliche Selbstbedienungsbereiche ausblenden */
+.admin-self-hidden{display:none!important}
