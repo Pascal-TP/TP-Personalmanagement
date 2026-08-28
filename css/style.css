@@ -225,3 +225,34 @@
 
 /* V2.8 – reine Adminansicht: persönliche Selbstbedienungsbereiche ausblenden */
 .admin-self-hidden{display:none!important}
+
+
+/* V2.9 – Wochenplanung für Vorgesetzte */
+.planning-toolbar{align-items:end}
+.planning-week-table .team-day-cell{min-width:150px;vertical-align:top;position:relative;padding:6px}
+.planning-add{display:flex;align-items:center;justify-content:center;width:100%;min-height:74px;border:1px dashed #a9b8ca;border-radius:9px;background:transparent;color:#46617e;font-size:1.55rem;font-weight:600;cursor:pointer}
+.planning-add:hover{background:#f4f7fa;border-color:#718aa5}
+.planning-add.small{position:absolute;right:5px;bottom:5px;width:28px;min-height:28px;height:28px;border-radius:50%;font-size:1rem;background:rgba(255,255,255,.9)}
+.planning-entry{display:block;width:100%;border:0;background:transparent;text-align:left;padding:2px;color:inherit;cursor:pointer}
+.planning-entry strong{display:block;font-size:.9rem;margin-bottom:5px}
+.planning-entry ul{margin:0;padding-left:18px;font-size:.78rem;line-height:1.35}
+.planning-entry li{margin:2px 0}
+.planning-entry small{font-size:.75rem;color:#718096}
+.planning-cell:hover .planning-entry{background:rgba(255,255,255,.45);border-radius:6px}
+.planning-conflict{outline:2px solid #d59a32;outline-offset:-2px}
+.planning-conflict-badge{display:inline-block;font-size:.68rem;font-weight:700;padding:2px 5px;border-radius:999px;background:#fff1cf;color:#7c5412;margin-bottom:5px}
+.planning-plus-legend{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border:1px dashed #8194a8;border-radius:5px;margin-right:4px}
+.planning-conflict-legend{font-weight:600;color:#8a6219}
+.planning-modal{position:fixed;inset:0;z-index:1000;background:rgba(16,27,43,.55);display:flex;align-items:center;justify-content:center;padding:20px}
+.planning-modal.hidden{display:none}
+.planning-modal-dialog{width:min(620px,100%);max-height:calc(100vh - 40px);overflow:auto;background:#fff;border-radius:14px;padding:22px;box-shadow:0 24px 60px rgba(0,0,0,.22)}
+.planning-modal-head{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;margin-bottom:18px}
+.planning-modal-head h3{margin:0 0 4px}
+.planning-modal-head p{margin:0;color:#687588}
+.planning-modal-actions{justify-content:flex-end}
+.planning-conflict-note{padding:10px 12px;border-radius:8px;background:#fff6df;border:1px solid #e4c477;color:#76540d;font-size:.85rem}
+@media(max-width:700px){
+  .planning-modal{padding:10px}
+  .planning-modal-dialog{padding:16px;max-height:calc(100vh - 20px)}
+  .planning-toolbar{align-items:stretch}
+}
