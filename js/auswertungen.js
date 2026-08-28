@@ -1,5 +1,5 @@
 import { db } from "./firebase.js";
-import { collection, getDocs, doc, getDoc, query, where } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+import { collection, getDocs, doc, getDoc, query, where, setDoc, deleteDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 import { setHead } from "./app.js";
 import { esc, toast } from "./utils.js";
 import { hasAdminPermission } from "./permissions.js";
@@ -65,8 +65,55 @@ function teamWeekHtml(users,monday,vacations,absences,filter=''){
   return `<div class="team-week-scroll"><table class="team-week-table"><thead><tr><th class="team-name-cell">Mitarbeiter</th>${days.map(d=>`<th><span>${esc(new Intl.DateTimeFormat('de-DE',{weekday:'short'}).format(d))}</span><strong>${esc(new Intl.DateTimeFormat('de-DE',{day:'2-digit',month:'2-digit'}).format(d))}</strong></th>`).join('')}</tr></thead><tbody>${rows||'<tr><td colspan="8" class="empty">Keine Mitarbeiter gefunden.</td></tr>'}</tbody></table></div><div class="team-attendance-legend"><span><i class="state-vacation"></i>Urlaub / Gleittag</span><span><i class="state-sick"></i>Krank</span><span><i class="state-child-sick"></i>Kind krank</span><span><i class="state-special"></i>Sonderurlaub</span><span><i class="state-release"></i>weitere Abwesenheit</span><span><i class="state-holiday"></i>Feiertag</span><span><i class="state-off"></i>regelmäßig frei</span><span class="muted">Leere Zelle = keine Abwesenheit hinterlegt</span></div>`;
 }
 
+function planningKey(userId,date){return `${userId}|${date}`}
+function planDocId(supervisorId,userId,date){return `${supervisorId}_${userId}_${date}`}
+function planTasks(plan){return Array.isArray(plan?.tasks)?plan.tasks.filter(Boolean).slice(0,3):[]}
+function planningCellHtml(user,key,plan,mark){
+  const tasks=planTasks(plan);
+  if(plan){
+    return `<td class="team-day-cell planning-cell ${mark?'planning-conflict':''}" data-plan-user="${esc(user.id)}" data-plan-date="${esc(key)}">
+      ${mark?`<span class="planning-conflict-badge" title="${esc(mark.title||mark.label)}">${esc(mark.label)}</span>`:''}
+      <button type="button" class="planning-entry" data-plan-user="${esc(user.id)}" data-plan-date="${esc(key)}" title="Planung bearbeiten">
+        <strong>${esc(plan.fromTime||'–')}–${esc(plan.toTime||'–')}</strong>
+        ${tasks.length?`<ul>${tasks.map(t=>`<li>${esc(t)}</li>`).join('')}</ul>`:'<small>Keine Aufgabe hinterlegt</small>'}
+      </button>
+    </td>`;
+  }
+  if(mark){
+    return `<td class="team-day-cell planning-cell state-${mark.cls}">
+      <span class="team-day-badge">${esc(mark.label)}</span>
+      <button type="button" class="planning-add small" data-plan-user="${esc(user.id)}" data-plan-date="${esc(key)}" title="Trotz Abwesenheit/arbeitsfrei planen">+</button>
+    </td>`;
+  }
+  return `<td class="team-day-cell planning-cell"><button type="button" class="planning-add" data-plan-user="${esc(user.id)}" data-plan-date="${esc(key)}" title="Manuelle Planung hinzufügen">+</button></td>`;
+}
+function planningWeekHtml(users,monday,vacations,absences,plans,filter=''){
+  const days=Array.from({length:7},(_,i)=>addDays(monday,i));
+  const q=String(filter||'').trim().toLocaleLowerCase('de');
+  const visible=users.filter(u=>!q||(u.name||u.email||'').toLocaleLowerCase('de').includes(q));
+  const rows=visible.map(u=>`<tr><th class="team-name-cell"><strong>${esc(u.name||u.email||u.id)}</strong><span>${esc(u.position||u.department||'')}</span></th>${days.map(d=>{
+    const key=isoDate(d),mark=teamDayMark(u,key,vacations,absences),plan=plans.get(planningKey(u.id,key));
+    return planningCellHtml(u,key,plan,mark);
+  }).join('')}</tr>`).join('');
+  return `<div class="team-week-scroll"><table class="team-week-table planning-week-table"><thead><tr><th class="team-name-cell">Mitarbeiter</th>${days.map(d=>`<th><span>${esc(new Intl.DateTimeFormat('de-DE',{weekday:'short'}).format(d))}</span><strong>${esc(new Intl.DateTimeFormat('de-DE',{day:'2-digit',month:'2-digit'}).format(d))}</strong></th>`).join('')}</tr></thead><tbody>${rows||'<tr><td colspan="8" class="empty">Keine Mitarbeiter gefunden.</td></tr>'}</tbody></table></div>
+  <div class="team-attendance-legend planning-legend"><span><b class="planning-plus-legend">+</b> Manuelle Einsatzplanung</span><span><i class="state-vacation"></i>Urlaub / Gleittag</span><span><i class="state-sick"></i>Krank</span><span><i class="state-child-sick"></i>Kind krank</span><span><i class="state-special"></i>Sonderurlaub</span><span><i class="state-release"></i>weitere Abwesenheit</span><span><i class="state-holiday"></i>Feiertag</span><span><i class="state-off"></i>regelmäßig frei</span><span class="planning-conflict-legend">⚠ Planung trotz Abwesenheit / freiem Tag</span></div>`;
+}
+function planningPrintHtml(users,monday,vacations,absences,plans,supervisorName){
+  const days=Array.from({length:7},(_,i)=>addDays(monday,i));
+  const week=isoWeek(monday);
+  const rows=users.map(u=>`<tr><th><strong>${esc(u.name||u.email||u.id)}</strong><small>${esc(u.position||u.department||'')}</small></th>${days.map(d=>{
+    const key=isoDate(d),mark=teamDayMark(u,key,vacations,absences),plan=plans.get(planningKey(u.id,key)),tasks=planTasks(plan);
+    return `<td>${mark?`<div class="mark">${esc(mark.label)}</div>`:''}${plan?`<strong>${esc(plan.fromTime||'–')}–${esc(plan.toTime||'–')}</strong>${tasks.length?`<ul>${tasks.map(t=>`<li>${esc(t)}</li>`).join('')}</ul>`:''}`:'<span class="empty-plan">–</span>'}${mark&&plan?'<div class="warn">⚠ Planung vorhanden</div>':''}</td>`;
+  }).join('')}</tr>`).join('');
+  return `<!doctype html><html lang="de"><head><meta charset="utf-8"><title>Wochenplanung KW ${week}</title><style>
+  @page{size:A4 landscape;margin:8mm}
+  *{box-sizing:border-box}body{font-family:Arial,sans-serif;color:#17233a;margin:0;font-size:9px}h1{font-size:18px;margin:0 0 4px}header{display:flex;justify-content:space-between;gap:20px;align-items:flex-end;margin-bottom:10px}.meta{font-size:10px;color:#5b677a}.week{font-weight:700;font-size:12px}
+  table{width:100%;border-collapse:collapse;table-layout:fixed}th,td{border:1px solid #9da7b5;padding:5px;vertical-align:top;break-inside:avoid}thead th{background:#eef2f7;text-align:center;font-size:9px}thead th:first-child{width:17%}tbody th{text-align:left;background:#f7f9fb}tbody th strong{display:block;font-size:10px}tbody th small{display:block;font-weight:400;color:#667085;margin-top:2px}td strong{display:block;font-size:9px;margin-bottom:3px}ul{margin:2px 0 0 12px;padding:0}li{margin:0 0 2px}.mark{font-weight:700;background:#eceff3;padding:2px 3px;margin-bottom:3px}.warn{font-size:8px;font-weight:700;margin-top:3px}.empty-plan{color:#9aa2ad}footer{margin-top:8px;color:#667085;font-size:8px}
+  </style></head><body><header><div><h1>Wochenplanung</h1><div class="meta">TP-Personalmanagement · Vorgesetztenplanung</div></div><div><div class="week">KW ${String(week).padStart(2,'0')} · ${esc(deWeekRange(monday))}</div><div class="meta">Vorgesetzter: ${esc(supervisorName||'–')}</div></div></header><table><thead><tr><th>Mitarbeiter</th>${days.map(d=>`<th>${esc(new Intl.DateTimeFormat('de-DE',{weekday:'long',day:'2-digit',month:'2-digit'}).format(d))}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table><footer>Geplante Arbeitszeiten und Aufgaben. Diese Planung ist keine Arbeitszeitbuchung und verändert weder Stundenkonto noch Zeiterfassung.</footer><script>window.onload=()=>setTimeout(()=>window.print(),150);<\/script></body></html>`;
+}
+
 async function renderSupervisorAttendance(el,ctx){
-  setHead('Auswertungen','Anwesenheits- und Abwesenheitsübersicht für die zugeordneten Mitarbeiter.');
+  setHead('Auswertungen','Anwesenheits-, Abwesenheits- und Wochenplanung für die zugeordneten Mitarbeiter.');
   const [uSnap,vSnap,aSnap]=await Promise.all([
     getDocs(query(collection(db,'users'),where('supervisorId','==',ctx.profile.id))),
     getDocs(query(collection(db,'vacationRequests'),where('supervisorId','==',ctx.profile.id))),
@@ -75,21 +122,40 @@ async function renderSupervisorAttendance(el,ctx){
   const users=uSnap.docs.map(d=>({id:d.id,...d.data()})).filter(u=>u.active!==false).sort((a,b)=>(a.name||'').localeCompare(b.name||'','de'));
   const vacations=vSnap.docs.map(d=>({id:d.id,...d.data()}));
   const absences=aSnap.docs.map(d=>({id:d.id,...d.data()}));
-  let currentMonday=mondayOfWeek(new Date()),activeView='team',filter='';
+  let currentMonday=mondayOfWeek(new Date()),activeView='team',filter='',planningFilter='',plans=new Map();
   const currentYear=new Date().getFullYear();
 
   el.innerHTML=`<div class="kpi-grid three"><div class="kpi"><span>Zugeordnete Mitarbeiter</span><strong>${users.length}</strong><small>aktive Mitarbeiter</small></div><div class="kpi"><span>Heute abwesend</span><strong id="team-away-today">0</strong><small>Urlaub / Krankheit / sonstige Abwesenheit</small></div><div class="kpi"><span>Offene Urlaubsanträge</span><strong>${vacations.filter(v=>v.status==='pending').length}</strong><small>noch zu bearbeiten</small></div></div>
   <article class="card supervisor-attendance-card">
-    <div class="card-head supervisor-attendance-head"><div><h2>Anwesenheitsübersicht</h2><p>Wochenübersicht für das Team oder Jahresansicht für einzelne Mitarbeiter.</p></div><div class="attendance-view-switch"><button type="button" class="btn primary" id="attendance-team-tab">Team-Woche</button><button type="button" class="btn secondary" id="attendance-single-tab">Einzelansicht</button></div></div>
+    <div class="card-head supervisor-attendance-head"><div><h2>Teamübersicht</h2><p>Anwesenheiten prüfen, Wochenplanung erstellen oder Jahresansicht eines Mitarbeiters öffnen.</p></div><div class="attendance-view-switch"><button type="button" class="btn primary" id="attendance-team-tab">Team-Woche</button><button type="button" class="btn secondary" id="attendance-planning-tab">Wochenplanung</button><button type="button" class="btn secondary" id="attendance-single-tab">Einzelansicht</button></div></div>
     <div id="attendance-team-view">
       <div class="attendance-toolbar"><div class="attendance-week-nav"><button type="button" class="btn secondary small" id="week-prev">‹ Vorherige Woche</button><button type="button" class="btn secondary small" id="week-today">Aktuelle Woche</button><button type="button" class="btn secondary small" id="week-next">Nächste Woche ›</button></div><strong id="week-label"></strong><label class="attendance-search"><span>Mitarbeiter suchen</span><input id="team-search" type="search" placeholder="Name eingeben …"></label></div>
       <div id="team-week-result"></div>
+    </div>
+    <div id="attendance-planning-view" class="hidden">
+      <div class="attendance-toolbar planning-toolbar"><div class="attendance-week-nav"><button type="button" class="btn secondary small" id="planning-prev">‹ Vorherige Woche</button><button type="button" class="btn secondary small" id="planning-today">Aktuelle Woche</button><button type="button" class="btn secondary small" id="planning-next">Nächste Woche ›</button></div><strong id="planning-week-label"></strong><label class="attendance-search"><span>Mitarbeiter suchen</span><input id="planning-search" type="search" placeholder="Name eingeben …"></label><button type="button" class="btn primary small" id="planning-print">Drucken / PDF</button></div>
+      <div id="planning-week-result"><div class="loading">Planung wird geladen …</div></div>
     </div>
     <div id="attendance-single-view" class="hidden">
       <form class="form-grid annual-controls" id="supervisor-annual-form"><label class="field"><span>Mitarbeiter</span><select name="userId" required><option value="">– auswählen –</option>${users.map(u=>`<option value="${esc(u.id)}">${esc(u.name||u.email||u.id)}</option>`).join('')}</select></label><label class="field"><span>Jahr</span><input name="year" type="number" min="2020" max="2100" value="${currentYear}" required></label><div class="field actions"><button class="btn primary" type="button" id="supervisor-annual-show">Übersicht anzeigen</button></div></form>
       <div id="supervisor-annual-result"><div class="empty">Mitarbeiter und Jahr auswählen.</div></div>
     </div>
-  </article>`;
+  </article>
+  <div id="planning-modal" class="planning-modal hidden" aria-hidden="true">
+    <div class="planning-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="planning-modal-title">
+      <div class="planning-modal-head"><div><h3 id="planning-modal-title">Einsatzplanung</h3><p id="planning-modal-subtitle"></p></div><button type="button" class="btn secondary small" id="planning-modal-close">Schließen</button></div>
+      <form id="planning-form" class="form-grid">
+        <input type="hidden" name="userId"><input type="hidden" name="date">
+        <label class="field"><span>Arbeitszeit von</span><input type="time" name="fromTime" required></label>
+        <label class="field"><span>Arbeitszeit bis</span><input type="time" name="toTime" required></label>
+        <label class="field full"><span>Aufgabe 1</span><input name="task1" maxlength="120" placeholder="z. B. Wareneingang prüfen"></label>
+        <label class="field full"><span>Aufgabe 2</span><input name="task2" maxlength="120" placeholder="optional"></label>
+        <label class="field full"><span>Aufgabe 3</span><input name="task3" maxlength="120" placeholder="optional"></label>
+        <div id="planning-conflict-note" class="planning-conflict-note full hidden"></div>
+        <div class="field full actions planning-modal-actions"><button type="submit" class="btn primary">Planung speichern</button><button type="button" class="btn danger hidden" id="planning-delete">Planung löschen</button></div>
+      </form>
+    </div>
+  </div>`;
 
   const todayKey=dateKey(new Date());
   const awayToday=new Set();
@@ -97,30 +163,113 @@ async function renderSupervisorAttendance(el,ctx){
   vacations.forEach(v=>{if(v.status==='approved'&&rangeContains(v.from,v.to,todayKey))awayToday.add(v.userId)});
   el.querySelector('#team-away-today').textContent=awayToday.size;
 
-  const teamView=el.querySelector('#attendance-team-view'),singleView=el.querySelector('#attendance-single-view');
-  const teamTab=el.querySelector('#attendance-team-tab'),singleTab=el.querySelector('#attendance-single-tab');
+  const teamView=el.querySelector('#attendance-team-view'),planningView=el.querySelector('#attendance-planning-view'),singleView=el.querySelector('#attendance-single-view');
+  const teamTab=el.querySelector('#attendance-team-tab'),planningTab=el.querySelector('#attendance-planning-tab'),singleTab=el.querySelector('#attendance-single-tab');
   const weekLabel=el.querySelector('#week-label'),weekResult=el.querySelector('#team-week-result');
+  const planningWeekLabel=el.querySelector('#planning-week-label'),planningResult=el.querySelector('#planning-week-result');
+  const modal=el.querySelector('#planning-modal'),planningForm=el.querySelector('#planning-form'),deleteButton=el.querySelector('#planning-delete'),conflictNote=el.querySelector('#planning-conflict-note');
 
   function switchView(view){
     activeView=view;
-    const team=view==='team';
-    teamView.classList.toggle('hidden',!team);singleView.classList.toggle('hidden',team);
-    teamTab.className=`btn ${team?'primary':'secondary'}`;singleTab.className=`btn ${team?'secondary':'primary'}`;
+    teamView.classList.toggle('hidden',view!=='team');
+    planningView.classList.toggle('hidden',view!=='planning');
+    singleView.classList.toggle('hidden',view!=='single');
+    teamTab.className=`btn ${view==='team'?'primary':'secondary'}`;
+    planningTab.className=`btn ${view==='planning'?'primary':'secondary'}`;
+    singleTab.className=`btn ${view==='single'?'primary':'secondary'}`;
+    if(view==='planning')loadPlanningWeek();
   }
   function renderWeek(){
     weekLabel.textContent=deWeekRange(currentMonday);
     weekResult.innerHTML=teamWeekHtml(users,currentMonday,vacations,absences,filter);
   }
-  teamTab.onclick=()=>switchView('team');singleTab.onclick=()=>switchView('single');
+  async function loadPlanningWeek(){
+    planningWeekLabel.textContent=`KW ${String(isoWeek(currentMonday)).padStart(2,'0')} · ${deWeekRange(currentMonday)}`;
+    planningResult.innerHTML='<div class="loading">Planung wird geladen …</div>';
+    const weekStart=isoDate(currentMonday);
+    try{
+      const snap=await getDocs(query(collection(db,'teamWeekPlans'),where('supervisorId','==',ctx.profile.id),where('weekStart','==',weekStart)));
+      plans=new Map(snap.docs.map(d=>{const data={id:d.id,...d.data()};return [planningKey(data.userId,data.date),data]}));
+      renderPlanningWeek();
+    }catch(err){
+      console.error(err);
+      planningResult.innerHTML=`<div class="error-card"><strong>Wochenplanung konnte nicht geladen werden.</strong><p>${esc(err?.message||'Bitte Firestore-Regeln prüfen.')}</p></div>`;
+    }
+  }
+  function renderPlanningWeek(){
+    planningWeekLabel.textContent=`KW ${String(isoWeek(currentMonday)).padStart(2,'0')} · ${deWeekRange(currentMonday)}`;
+    planningResult.innerHTML=planningWeekHtml(users,currentMonday,vacations,absences,plans,planningFilter);
+    planningResult.querySelectorAll('.planning-entry,.planning-add').forEach(button=>button.onclick=e=>{e.stopPropagation();openPlanningModal(button.dataset.planUser,button.dataset.planDate)});
+  }
+  function closePlanningModal(){
+    modal.classList.add('hidden');modal.setAttribute('aria-hidden','true');planningForm.reset();deleteButton.classList.add('hidden');conflictNote.classList.add('hidden');
+  }
+  function openPlanningModal(userId,key){
+    const user=users.find(u=>u.id===userId);if(!user)return;
+    const plan=plans.get(planningKey(userId,key));
+    planningForm.reset();
+    planningForm.elements.userId.value=userId;planningForm.elements.date.value=key;
+    planningForm.elements.fromTime.value=plan?.fromTime||'';
+    planningForm.elements.toTime.value=plan?.toTime||'';
+    const tasks=planTasks(plan);
+    planningForm.elements.task1.value=tasks[0]||'';planningForm.elements.task2.value=tasks[1]||'';planningForm.elements.task3.value=tasks[2]||'';
+    el.querySelector('#planning-modal-subtitle').textContent=`${user.name||user.email||'Mitarbeiter'} · ${new Intl.DateTimeFormat('de-DE',{weekday:'long',day:'2-digit',month:'2-digit',year:'numeric'}).format(new Date(`${key}T12:00:00`))}`;
+    const mark=teamDayMark(user,key,vacations,absences);
+    conflictNote.classList.toggle('hidden',!mark);
+    if(mark)conflictNote.textContent=`Hinweis: Für diesen Tag ist bereits „${mark.label}“ hinterlegt. Eine Planung kann trotzdem gespeichert werden und wird anschließend als Konflikt gekennzeichnet.`;
+    deleteButton.classList.toggle('hidden',!plan);
+    modal.classList.remove('hidden');modal.setAttribute('aria-hidden','false');
+    setTimeout(()=>planningForm.elements.fromTime.focus(),50);
+  }
+
+  teamTab.onclick=()=>switchView('team');planningTab.onclick=()=>switchView('planning');singleTab.onclick=()=>switchView('single');
   el.querySelector('#week-prev').onclick=()=>{currentMonday=addDays(currentMonday,-7);renderWeek()};
   el.querySelector('#week-next').onclick=()=>{currentMonday=addDays(currentMonday,7);renderWeek()};
   el.querySelector('#week-today').onclick=()=>{currentMonday=mondayOfWeek(new Date());renderWeek()};
   el.querySelector('#team-search').oninput=e=>{filter=e.target.value;renderWeek()};
+  el.querySelector('#planning-prev').onclick=()=>{currentMonday=addDays(currentMonday,-7);loadPlanningWeek()};
+  el.querySelector('#planning-next').onclick=()=>{currentMonday=addDays(currentMonday,7);loadPlanningWeek()};
+  el.querySelector('#planning-today').onclick=()=>{currentMonday=mondayOfWeek(new Date());loadPlanningWeek()};
+  el.querySelector('#planning-search').oninput=e=>{planningFilter=e.target.value;renderPlanningWeek()};
+  el.querySelector('#planning-modal-close').onclick=closePlanningModal;
+  modal.addEventListener('click',e=>{if(e.target===modal)closePlanningModal()});
+  planningForm.onsubmit=async e=>{
+    e.preventDefault();
+    const f=e.currentTarget,userId=f.elements.userId.value,key=f.elements.date.value;
+    const user=users.find(u=>u.id===userId);if(!user)return;
+    const fromTime=f.elements.fromTime.value,toTime=f.elements.toTime.value;
+    if(!fromTime||!toTime){toast('Bitte Arbeitszeit von und bis angeben.','error');return}
+    if(fromTime>=toTime){toast('Die Endzeit muss nach der Startzeit liegen.','error');return}
+    const tasks=[f.elements.task1.value.trim(),f.elements.task2.value.trim(),f.elements.task3.value.trim()].filter(Boolean);
+    const id=planDocId(ctx.profile.id,userId,key),existing=plans.get(planningKey(userId,key));
+    const data={supervisorId:ctx.profile.id,userId,userName:user.name||user.email||'',date:key,weekStart:isoDate(mondayOfWeek(new Date(`${key}T12:00:00`))),fromTime,toTime,tasks,updatedAt:serverTimestamp()};
+    if(!existing)data.createdAt=serverTimestamp();
+    try{
+      await setDoc(doc(db,'teamWeekPlans',id),data,{merge:true});
+      toast('Wochenplanung wurde gespeichert.');
+      closePlanningModal();await loadPlanningWeek();
+    }catch(err){console.error(err);toast('Wochenplanung konnte nicht gespeichert werden.','error')}
+  };
+  deleteButton.onclick=async()=>{
+    const userId=planningForm.elements.userId.value,key=planningForm.elements.date.value;
+    if(!confirm('Diese Planung wirklich löschen?'))return;
+    try{
+      await deleteDoc(doc(db,'teamWeekPlans',planDocId(ctx.profile.id,userId,key)));
+      toast('Planung wurde gelöscht.');closePlanningModal();await loadPlanningWeek();
+    }catch(err){console.error(err);toast('Planung konnte nicht gelöscht werden.','error')}
+  };
+  el.querySelector('#planning-print').onclick=()=>{
+    const visibleUsers=users.filter(u=>!planningFilter||(u.name||u.email||'').toLocaleLowerCase('de').includes(planningFilter.trim().toLocaleLowerCase('de')));
+    const printWindow=window.open('','_blank');
+    if(!printWindow){toast('Das Druckfenster wurde vom Browser blockiert.','error');return}
+    try{printWindow.opener=null}catch{}
+    printWindow.document.open();printWindow.document.write(planningPrintHtml(visibleUsers,currentMonday,vacations,absences,plans,ctx.profile.name||ctx.profile.email));printWindow.document.close();
+  };
+
   const form=el.querySelector('#supervisor-annual-form'),result=el.querySelector('#supervisor-annual-result');
   el.querySelector('#supervisor-annual-show').onclick=()=>{const user=users.find(u=>u.id===form.elements.userId.value),year=Number(form.elements.year.value);if(!user||year<2020||year>2100){toast('Bitte Mitarbeiter und gültiges Jahr auswählen.','error');return}result.innerHTML=annualHtml(user,year,vacations,absences)};
   renderWeek();
 }
-
 
 const PDS_HEADERS=['kostenstelle','kostenstelleSek','kostentraeger','kostenart','leistungsart','buchungsperiode','belegnummer','belegdatum','betrag','buchungstext','menge','bucher','datenart','planvariante','notiz','kostentraegerSek'];
 function toDate(value){if(!value)return null;if(value?.toDate)return value.toDate();const d=new Date(value);return Number.isNaN(d.getTime())?null:d}
