@@ -5,6 +5,7 @@ import { setHead } from "./app.js";
 import { AREA_NAMES, esc, fmtDateTime, toast } from "./utils.js";
 import { hasAdminPermission } from "./permissions.js";
 import { progressForTrainingYear, trainingProgressDocId, visibleTrainingsForYear } from "./training-utils.js";
+import { getAssignedUsers } from "./supervisor-utils.js";
 
 const uploadProof=httpsCallable(functions,'uploadPersonnelTrainingProof'),deleteProof=httpsCallable(functions,'deletePersonnelTrainingProof'),proofUrl=httpsCallable(functions,'getPersonnelTrainingProofDownloadUrl'),employeeProofs=httpsCallable(functions,'getPersonnelEmployeeProofDownloads');
 async function allTrainings(){const s=await getDocs(collection(db,'trainings'));return s.docs.map(d=>({id:d.id,...d.data()}))}
@@ -70,7 +71,7 @@ export async function renderSchulungen(el,ctx){
 
   async function relevantUsers(){
     if(ctx.profile.role==='admin'&&!canOverview)throw new Error('Keine Berechtigung für Schulungsübersichten.');
-    if(supervisor){const teamSnap=await getDocs(query(collection(db,'users'),where('supervisorId','==',ctx.profile.id)));return teamSnap.docs.map(d=>({id:d.id,...d.data()})).filter(u=>u.active!==false&&u.id!==ctx.profile.id)}
+    if(supervisor){return (await getAssignedUsers(db,ctx.profile.id)).filter(u=>u.active!==false&&u.id!==ctx.profile.id)}
     const snap=await getDocs(collection(db,'users'));return snap.docs.map(d=>({id:d.id,...d.data()})).filter(u=>u.active!==false&&u.archived!==true&&(u.role==='employee'||u.role==='supervisor'))
   }
 

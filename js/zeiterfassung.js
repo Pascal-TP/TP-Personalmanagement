@@ -15,6 +15,7 @@ import { setHead } from "./app.js";
 import { esc, fmtDate, fmtDateTime, statusPill, toast } from "./utils.js";
 import { hasAdminPermission } from "./permissions.js";
 import { calculateDailyTimeValues, calculateTimeAccountValues, wasStartLimited } from "./time-utils.js";
+import { getAssignedDocs, getAssignedUsers } from "./supervisor-utils.js";
 
 
 function validProjectNumber(value) {
@@ -159,10 +160,11 @@ async function loadOwnRequests(userId) {
 
 async function loadTeamRequests(ctx) {
   if (ctx.profile.role === "employee") return [];
-  const snap = await getDocs(collection(db, "timeCorrectionRequests"));
-  return snap.docs
-    .map(d => ({ id: d.id, ...d.data() }))
-    .filter(r => r.status === "pending" && (ctx.profile.role === "admin" || r.supervisorId === ctx.profile.id))
+  const rows = ctx.profile.role === "admin"
+    ? (await getDocs(collection(db, "timeCorrectionRequests"))).docs.map(d => ({ id:d.id, ...d.data() }))
+    : await getAssignedDocs(db, "timeCorrectionRequests", ctx.profile.id);
+  return rows
+    .filter(r => r.status === "pending")
     .sort((a, b) => {
       const aa = toDate(a.createdAt)?.getTime() || 0;
       const bb = toDate(b.createdAt)?.getTime() || 0;
@@ -242,10 +244,7 @@ export async function renderZeiterfassung(el, ctx) {
           .filter(r => r.recordType === "adjustment");
       } else {
         // Vorgesetzte erhalten ausschließlich ihre organisatorisch zugeordneten Mitarbeiter.
-        const s = await getDocs(
-          query(collection(db, "users"), where("supervisorId", "==", ctx.profile.id))
-        );
-        adjustmentEmployees = s.docs.map(d => ({ id: d.id, ...d.data() }))
+        adjustmentEmployees = (await getAssignedUsers(db, ctx.profile.id))
           .filter(u => u.active !== false && u.id !== ctx.profile.id)
           .sort((a,b) => String(a.name || a.email || "").localeCompare(String(b.name || b.email || ""), "de"));
 
@@ -431,6 +430,7 @@ export async function renderZeiterfassung(el, ctx) {
           userName: employee.name || employee.email || employee.username || employee.id,
           companyId: employee.companyId || null,
           supervisorId: employee.supervisorId || null,
+          supervisorId2: employee.supervisorId2 || null,
           adjustmentDate: data.adjustmentDate,
           adjustmentMinutes: signedMinutes,
           adjustmentReason: String(data.reasonPreset || "Stundenkorrektur"),
@@ -515,6 +515,7 @@ export async function renderZeiterfassung(el, ctx) {
         companyAreaNumber: ctx.profile.companyAreaNumber || "",
         projectTimeTracking: projectTracking,
         supervisorId: ctx.profile.supervisorId || null,
+        supervisorId2: ctx.profile.supervisorId2 || null,
         projectNumber,
         source: "desktop_stamp",
         status: "open",
@@ -584,6 +585,7 @@ export async function renderZeiterfassung(el, ctx) {
       companyAreaNumber: ctx.profile.companyAreaNumber || "",
       projectTimeTracking: projectTracking,
       supervisorId: ctx.profile.supervisorId || null,
+      supervisorId2: ctx.profile.supervisorId2 || null,
       requestedDate: data.requestedDate,
       projectNumber: projectTracking ? String(data.projectNumber) : "",
       requestedStart: data.requestedStart,
@@ -638,6 +640,7 @@ export async function renderZeiterfassung(el, ctx) {
       companyAreaNumber: ctx.profile.companyAreaNumber || "",
       projectTimeTracking: projectTracking,
       supervisorId: ctx.profile.supervisorId || null,
+      supervisorId2: ctx.profile.supervisorId2 || null,
       originalDate: data.requestedDate,
       originalStart: data.originalStart,
       originalEnd: data.originalEnd,
@@ -674,6 +677,7 @@ export async function renderZeiterfassung(el, ctx) {
             companyAreaNumber: req.companyAreaNumber || "",
             projectTimeTracking: req.projectTimeTracking === true,
             supervisorId: req.supervisorId || null,
+            supervisorId2: req.supervisorId2 || null,
             projectNumber: req.projectNumber,
             source: "approved_request",
             status: "closed",

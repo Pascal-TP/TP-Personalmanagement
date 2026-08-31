@@ -3,6 +3,7 @@ import { collection, addDoc, getDocs, query, where, updateDoc, deleteDoc, doc, s
 import { setHead } from "./app.js";
 import { esc, fmtDate, fmtDateTime, statusPill, toast } from "./utils.js";
 import { hasAdminPermission } from "./permissions.js";
+import { getAssignedDocs, supervisorIdsOf } from "./supervisor-utils.js";
 
 const ABSENCE_TYPES=[
   ['sick','Krank'],['child_sick','Kind krank'],['special_leave','Sonderurlaub'],
@@ -36,10 +37,12 @@ export async function renderUrlaub(el,ctx){
   try{const s=await getDocs(query(collection(db,"vacationRequests"),where("userId","==",ctx.profile.id)));own=s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>String(b.from||'').localeCompare(String(a.from||'')))}catch(e){console.error('Eigene Urlaubsanträge konnten nicht geladen werden',e)}
   if(canApprove){
     try{
-      const s=isAdmin
-        ?await getDocs(collection(db,"vacationRequests"))
-        :await getDocs(query(collection(db,"vacationRequests"),where("supervisorId","==",ctx.profile.id)));
-      team=s.docs.map(d=>({id:d.id,...d.data()})).filter(x=>x.userId!==ctx.profile.id);
+      if(isAdmin){
+        const s=await getDocs(collection(db,"vacationRequests"));
+        team=s.docs.map(d=>({id:d.id,...d.data()})).filter(x=>x.userId!==ctx.profile.id);
+      }else{
+        team=(await getAssignedDocs(db,"vacationRequests",ctx.profile.id)).filter(x=>x.userId!==ctx.profile.id);
+      }
     }catch(e){console.error('Urlaubsfreigaben konnten nicht geladen werden',e)}
   }
   try{const s=await getDocs(query(collection(db,'absences'),where('userId','==',ctx.profile.id)));absences=s.docs.map(d=>({id:d.id,...d.data()}))}catch{}
@@ -72,10 +75,10 @@ export async function renderUrlaub(el,ctx){
       ${pendingTeam.length?pendingTeam.map(v=>`<div class="approval-row"><div><strong>${esc(v.userName||v.userId)}</strong><span>${fmtDate(v.from)} – ${fmtDate(v.to)} · ${v.days||0} Tage</span>${v.note?`<small>${esc(v.note)}</small>`:''}</div><div class="actions"><button class="btn small approve" data-id="${v.id}">Genehmigen</button><button class="btn small danger reject" data-id="${v.id}">Ablehnen</button></div></div>`).join(""):(withdrawnTeam.length?'':'<div class="empty">Keine offenen Freigaben.</div>')}
     </div></article>`:''}`;
 
-  const vacForm=el.querySelector('#vac-form');if(vacForm)vacForm.onsubmit=async e=>{e.preventDefault();const f=new FormData(e.currentTarget),d=Object.fromEntries(f.entries());if(d.to<d.from){toast("Der Bis-Termin liegt vor dem Von-Termin.");return}if(!ctx.profile.supervisorId){toast('Für diesen Benutzer ist kein Vorgesetzter hinterlegt. Der Antrag kann derzeit nicht weitergeleitet werden.','error');return}await addDoc(collection(db,"vacationRequests"),{...d,days:workdays(d.from,d.to,ctx.profile.workDays),userId:ctx.profile.id,userName:ctx.profile.name||ctx.profile.email,companyId:ctx.profile.companyId,supervisorId:ctx.profile.supervisorId,status:"pending",createdAt:serverTimestamp()});toast("Urlaubsantrag gesendet.");renderUrlaub(el,ctx)};
+  const vacForm=el.querySelector('#vac-form');if(vacForm)vacForm.onsubmit=async e=>{e.preventDefault();const f=new FormData(e.currentTarget),d=Object.fromEntries(f.entries());if(d.to<d.from){toast("Der Bis-Termin liegt vor dem Von-Termin.");return}const ownSupervisors=supervisorIdsOf(ctx.profile);if(!ownSupervisors.length){toast('Für diesen Benutzer ist kein Vorgesetzter hinterlegt. Der Antrag kann derzeit nicht weitergeleitet werden.','error');return}await addDoc(collection(db,"vacationRequests"),{...d,days:workdays(d.from,d.to,ctx.profile.workDays),userId:ctx.profile.id,userName:ctx.profile.name||ctx.profile.email,companyId:ctx.profile.companyId,supervisorId:ctx.profile.supervisorId||null,supervisorId2:ctx.profile.supervisorId2||null,status:"pending",createdAt:serverTimestamp()});toast("Urlaubsantrag gesendet.");renderUrlaub(el,ctx)};
   el.querySelectorAll(".approve,.reject").forEach(b=>b.onclick=async()=>{await updateDoc(doc(db,"vacationRequests",b.dataset.id),{status:b.classList.contains("approve")?"approved":"rejected",decidedBy:ctx.profile.id,decidedByName:ctx.profile.name||ctx.profile.email||'',decidedAt:serverTimestamp()});toast("Antrag bearbeitet.");renderUrlaub(el,ctx)});
   el.querySelectorAll('.withdraw-vacation').forEach(b=>b.onclick=async()=>{if(!confirm('Diesen Urlaubsantrag wirklich zurückziehen? Der Vorgang bleibt dokumentiert und der Vorgesetzte wird informiert.'))return;await updateDoc(doc(db,'vacationRequests',b.dataset.id),{status:'withdrawn',withdrawnAt:serverTimestamp(),withdrawnBy:ctx.profile.id,withdrawnByName:ctx.profile.name||ctx.profile.email||''});toast('Urlaubsantrag zurückgezogen.');renderUrlaub(el,ctx)});
   el.querySelectorAll('.acknowledge-withdrawal').forEach(b=>b.onclick=async()=>{await updateDoc(doc(db,'vacationRequests',b.dataset.id),{withdrawalAcknowledgedAt:serverTimestamp(),withdrawalAcknowledgedBy:ctx.profile.id,withdrawalAcknowledgedByName:ctx.profile.name||ctx.profile.email||''});toast('Rücknahme zur Kenntnis genommen.');renderUrlaub(el,ctx)});
-  const af=el.querySelector('#absence-form');if(af)af.onsubmit=async e=>{e.preventDefault();const f=e.currentTarget,user=employees.find(u=>u.id===f.elements.userId.value);if(!user)return;if(f.elements.to.value<f.elements.from.value){toast('Der Bis-Termin liegt vor dem Von-Termin.','error');return}const days=workdays(f.elements.from.value,f.elements.to.value,user.workDays);await addDoc(collection(db,'absences'),{userId:user.id,userName:user.name||user.email||user.id,companyId:user.companyId||'',supervisorId:user.supervisorId||null,type:f.elements.type.value,from:f.elements.from.value,to:f.elements.to.value,days,certificateStatus:f.elements.certificateStatus.value,note:f.elements.note.value.trim(),source:'hr_direct',createdBy:ctx.profile.id,createdAt:serverTimestamp()});toast('Abwesenheit gebucht.');renderUrlaub(el,ctx)};
+  const af=el.querySelector('#absence-form');if(af)af.onsubmit=async e=>{e.preventDefault();const f=e.currentTarget,user=employees.find(u=>u.id===f.elements.userId.value);if(!user)return;if(f.elements.to.value<f.elements.from.value){toast('Der Bis-Termin liegt vor dem Von-Termin.','error');return}const days=workdays(f.elements.from.value,f.elements.to.value,user.workDays);await addDoc(collection(db,'absences'),{userId:user.id,userName:user.name||user.email||user.id,companyId:user.companyId||'',supervisorId:user.supervisorId||null,supervisorId2:user.supervisorId2||null,type:f.elements.type.value,from:f.elements.from.value,to:f.elements.to.value,days,certificateStatus:f.elements.certificateStatus.value,note:f.elements.note.value.trim(),source:'hr_direct',createdBy:ctx.profile.id,createdAt:serverTimestamp()});toast('Abwesenheit gebucht.');renderUrlaub(el,ctx)};
   el.querySelectorAll('.delete-absence').forEach(b=>b.onclick=async()=>{if(!confirm('Diese Abwesenheitsbuchung wirklich löschen?'))return;await deleteDoc(doc(db,'absences',b.dataset.id));toast('Abwesenheit gelöscht.');renderUrlaub(el,ctx)});
 }

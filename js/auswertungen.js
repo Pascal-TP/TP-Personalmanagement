@@ -4,6 +4,7 @@ import { setHead } from "./app.js";
 import { esc, toast } from "./utils.js";
 import { hasAdminPermission } from "./permissions.js";
 import { recordGrossMinutes } from "./time-utils.js";
+import { getAssignedUsers, getAssignedDocs, isSupervisorOf } from "./supervisor-utils.js";
 
 const ABSENCE_LABELS={sick:'Krank',child_sick:'Kind krank',special_leave:'Sonderurlaub',vocational_school:'Berufsschule',training:'Weiterbildung',university:'Uni',unpaid_leave:'Unbezahlter Urlaub',release:'Freistellung',parental_leave:'Elternzeit',other:'Sonstige Abwesenheit'};
 function easterSunday(y){const a=y%19,b=Math.floor(y/100),c=y%100,d=Math.floor(b/4),e=b%4,f=Math.floor((b+8)/25),g=Math.floor((b-f+1)/3),h=(19*a+b-d-g+15)%30,i=Math.floor(c/4),k=c%4,l=(32+2*e+2*i-h-k)%7,m=Math.floor((a+11*h+22*l)/451),mo=Math.floor((h+l-7*m+114)/31),day=((h+l-7*m+114)%31)+1;return new Date(y,mo-1,day,12)}
@@ -115,14 +116,12 @@ function planningPrintHtml(users,monday,vacations,absences,plans,supervisorName)
 
 async function renderSupervisorAttendance(el,ctx){
   setHead('Auswertungen','Anwesenheits-, Abwesenheits- und Wochenplanung für die zugeordneten Mitarbeiter.');
-  const [uSnap,vSnap,aSnap]=await Promise.all([
-    getDocs(query(collection(db,'users'),where('supervisorId','==',ctx.profile.id))),
-    getDocs(query(collection(db,'vacationRequests'),where('supervisorId','==',ctx.profile.id))),
-    getDocs(query(collection(db,'absences'),where('supervisorId','==',ctx.profile.id)))
+  const [assignedUsers,vacations,absences]=await Promise.all([
+    getAssignedUsers(db,ctx.profile.id),
+    getAssignedDocs(db,'vacationRequests',ctx.profile.id),
+    getAssignedDocs(db,'absences',ctx.profile.id)
   ]);
-  const users=uSnap.docs.map(d=>({id:d.id,...d.data()})).filter(u=>u.active!==false).sort((a,b)=>(a.name||'').localeCompare(b.name||'','de'));
-  const vacations=vSnap.docs.map(d=>({id:d.id,...d.data()}));
-  const absences=aSnap.docs.map(d=>({id:d.id,...d.data()}));
+  const users=assignedUsers.filter(u=>u.active!==false).sort((a,b)=>(a.name||'').localeCompare(b.name||'','de'));
   let currentMonday=mondayOfWeek(new Date()),activeView='team',filter='',planningFilter='',plans=new Map();
   const currentYear=new Date().getFullYear();
 
@@ -189,8 +188,8 @@ async function renderSupervisorAttendance(el,ctx){
     planningResult.innerHTML='<div class="loading">Planung wird geladen …</div>';
     const weekStart=isoDate(currentMonday);
     try{
-      const snap=await getDocs(query(collection(db,'teamWeekPlans'),where('supervisorId','==',ctx.profile.id),where('weekStart','==',weekStart)));
-      plans=new Map(snap.docs.map(d=>{const data={id:d.id,...d.data()};return [planningKey(data.userId,data.date),data]}));
+      const allPlans=await getAssignedDocs(db,'teamWeekPlans',ctx.profile.id);
+      plans=new Map(allPlans.filter(data=>data.weekStart===weekStart).map(data=>[planningKey(data.userId,data.date),data]));
       renderPlanningWeek();
     }catch(err){
       console.error(err);
@@ -242,9 +241,9 @@ async function renderSupervisorAttendance(el,ctx){
     if(!fromTime||!toTime){toast('Bitte Arbeitszeit von und bis angeben.','error');return}
     if(fromTime>=toTime){toast('Die Endzeit muss nach der Startzeit liegen.','error');return}
     const tasks=[f.elements.task1.value.trim(),f.elements.task2.value.trim(),f.elements.task3.value.trim()].filter(Boolean);
-    const id=planDocId(ctx.profile.id,userId,key),existing=plans.get(planningKey(userId,key));
-    const data={supervisorId:ctx.profile.id,userId,userName:user.name||user.email||'',date:key,weekStart:isoDate(mondayOfWeek(new Date(`${key}T12:00:00`))),fromTime,toTime,tasks,updatedAt:serverTimestamp()};
-    if(!existing)data.createdAt=serverTimestamp();
+    const existing=plans.get(planningKey(userId,key)),id=existing?.id||`${userId}_${key}`;
+    const data={supervisorId:user.supervisorId||ctx.profile.id,supervisorId2:user.supervisorId2||null,userId,userName:user.name||user.email||'',date:key,weekStart:isoDate(mondayOfWeek(new Date(`${key}T12:00:00`))),fromTime,toTime,tasks,updatedBy:ctx.profile.id,updatedByName:ctx.profile.name||ctx.profile.email||'',updatedAt:serverTimestamp()};
+    if(!existing){data.createdBy=ctx.profile.id;data.createdByName=ctx.profile.name||ctx.profile.email||'';data.createdAt=serverTimestamp();}
     try{
       await setDoc(doc(db,'teamWeekPlans',id),data,{merge:true});
       toast('Wochenplanung wurde gespeichert.');
@@ -255,7 +254,7 @@ async function renderSupervisorAttendance(el,ctx){
     const userId=planningForm.elements.userId.value,key=planningForm.elements.date.value;
     if(!confirm('Diese Planung wirklich löschen?'))return;
     try{
-      await deleteDoc(doc(db,'teamWeekPlans',planDocId(ctx.profile.id,userId,key)));
+      const existing=plans.get(planningKey(userId,key));if(!existing?.id)throw new Error('Planung nicht gefunden.');await deleteDoc(doc(db,'teamWeekPlans',existing.id));
       toast('Planung wurde gelöscht.');closePlanningModal();await loadPlanningWeek();
     }catch(err){console.error(err);toast('Planung konnte nicht gelöscht werden.','error')}
   };
@@ -379,9 +378,9 @@ export async function renderAuswertungen(el,ctx){
   const [u,t,v,c,tr,a,pdsDoc,ab,priv]=await Promise.all([getDocs(collection(db,'users')),getDocs(collection(db,'trainings')),getDocs(collection(db,'vacationRequests')),getDocs(collection(db,'companies')),getDocs(collection(db,'timeRecords')),getDocs(collection(db,'businessAreas')),getDoc(doc(db,'pdsSettings','default')),canAnnual?getDocs(collection(db,'absences')):Promise.resolve({docs:[]}),canBirthday?getDocs(collection(db,'employeePrivate')):Promise.resolve({docs:[]})]);
   let users=u.docs.map(d=>({id:d.id,...d.data()}));const absences=ab.docs.map(d=>({id:d.id,...d.data()})),vacations=v.docs.map(d=>({id:d.id,...d.data()})),privateMap=new Map(priv.docs.map(d=>[d.id,{id:d.id,...d.data()}]));const companies=c.docs.map(d=>({id:d.id,...d.data()})),records=tr.docs.map(d=>({id:d.id,...d.data()})),areas=a.docs.map(d=>({id:d.id,...d.data()}));
   const settings={personnelCostPrefix:'60',bookingTextPrefix:'$7$ZeitDritts$',bookingTextMode:'period_week',bookingTextCustom:'',dataType:'i',...(pdsDoc.exists()?pdsDoc.data():{})};
-  if(ctx.profile.role==='supervisor')users=users.filter(x=>x.id===ctx.profile.id||x.supervisorId===ctx.profile.id);
+  if(ctx.profile.role==='supervisor')users=users.filter(x=>x.id===ctx.profile.id||isSupervisorOf(x,ctx.profile.id));
   const canHoursExport=hasAdminPermission(ctx.profile,'hoursExport');
-  const active=users.filter(x=>x.active!==false).length,pending=v.docs.map(d=>d.data()).filter(x=>x.status==='pending'&&(ctx.profile.role==='admin'||x.supervisorId===ctx.profile.id)).length;
+  const active=users.filter(x=>x.active!==false).length,pending=v.docs.map(d=>d.data()).filter(x=>x.status==='pending'&&(ctx.profile.role==='admin'||x.supervisorId===ctx.profile.id||x.supervisorId2===ctx.profile.id)).length;
   const now=new Date(),p=n=>String(n).padStart(2,'0'),periodDefault=`${now.getFullYear()}-${p(now.getMonth()+1)}`;
   el.innerHTML=`<div class="kpi-grid three"><div class="kpi"><span>Aktive Mitarbeiter</span><strong>${active}</strong><small>im sichtbaren Bereich</small></div><div class="kpi"><span>Schulungen</span><strong>${t.size}</strong><small>im System angelegt</small></div><div class="kpi"><span>Offene Urlaubsfreigaben</span><strong>${pending}</strong><small>aktuell zu bearbeiten</small></div></div>
   ${canHoursExport?`<article class="card"><div class="card-head"><div><h2>PDS-Zeiterfassungsexport</h2><p>Projektzeiten automatisch im vorgegebenen 16-spaltigen PDS-Importformat erzeugen.</p></div></div>

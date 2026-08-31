@@ -1,7 +1,7 @@
 import { firebaseConfig, db } from "./firebase.js";
 import { initializeApp, deleteApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
 import { initializeAuth, inMemoryPersistence, createUserWithEmailAndPassword, deleteUser, signOut as secondarySignOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-import { collection, getDocs, doc, serverTimestamp, writeBatch, updateDoc, setDoc, query, where } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+import { collection, getDocs, doc, serverTimestamp, writeBatch, updateDoc, setDoc, addDoc, query, where } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 import { setHead } from "./app.js";
 import { AREA_NAMES, esc, syntheticEmail, ROLE_LABELS, toast, initials } from "./utils.js";
 import { renderPersonalakte } from "./personalakte.js";
@@ -12,10 +12,10 @@ import { sameTrainingSelection, upsertTrainingAssignmentHistory } from "./traini
 import { calculateDailyTimeValues, wasStartLimited } from "./time-utils.js";
 
 const PUBLIC_HISTORY_FIELDS=[
-  "name","companyId","email","username","hasRealEmail","role","adminPermissions","supervisorId","active","startDate","endDate","weeklyHours","vacationDays","earliestStartTime","employeeNumber","businessAreaId","projectTimeTracking","department","position","contractType","probationEndDate","fixedTermEndDate","costCenter","workDays","firstAider","firstAiderValidUntil","fireWarden","fireWardenValidUntil","forkliftPermit","forkliftPermitValidUntil","aerialLiftPermit","aerialLiftPermitValidUntil","drivingLicenseClasses","nextDrivingLicenseCheck","occupationalMedicalNotes","bereiche","extraTrainings","trainingAssignments"
+  "name","companyId","email","username","hasRealEmail","role","adminPermissions","supervisorId","supervisorId2","active","startDate","endDate","weeklyHours","vacationDays","earliestStartTime","employeeNumber","businessAreaId","projectTimeTracking","department","position","contractType","probationEndDate","fixedTermEndDate","costCenter","workDays","firstAider","firstAiderValidUntil","fireWarden","fireWardenValidUntil","forkliftPermit","forkliftPermitValidUntil","aerialLiftPermit","aerialLiftPermitValidUntil","drivingLicenseClasses","nextDrivingLicenseCheck","occupationalMedicalNotes","bereiche","extraTrainings","trainingAssignments"
 ];
 const PRIVATE_HISTORY_FIELDS=[
-  "birthDate","birthdayList","maritalStatus","marriageDate","street","postalCode","city","privateEmail","phone","mobile","emergencyContactName","emergencyContactPhone","taxId","taxClass","childAllowance","religion","socialSecurityNumber","healthInsuranceId","insuranceType","personGroup","contributionGroup","iban","bic","bankId","accountHolder","compensationType","grossSalary","hourlyRate","salaryValidFrom"
+  "birthDate","birthdayList","maritalStatus","marriageDate","street","postalCode","city","privateEmail","phone","mobile","emergencyContactName","emergencyContactPhone","taxId","taxClass","childAllowance","religion","socialSecurityNumber","healthInsuranceId","insuranceType","personGroup","contributionGroup","iban","bic","bankId","accountHolder","grossSalary","hourlyRate","salaryValidFrom"
 ];
 function comparable(value){if(Array.isArray(value))return [...value].map(String).sort();return value??null}
 function sameValue(a,b){return JSON.stringify(comparable(a))===JSON.stringify(comparable(b))}
@@ -96,6 +96,7 @@ export async function renderMitarbeiter(el,ctx){
   const canManagePermissions=hasAdminPermission(ctx.profile,'permissionsManage');
   const canManageNfc=hasAdminPermission(ctx.profile,'terminalManage');
   const canViewBookings=hasAnyAdminPermission(ctx.profile,['timeAdjustment','timeApprove','hoursExport','backup']);
+  const canManageNotes=hasAdminPermission(ctx.profile,'employeeNotes');
   if(!hasAnyAdminPermission(ctx.profile,['employeesView','employeesCreate','employeesEdit','employeesDelete'])){
     el.innerHTML='<div class="error-card">Für diesen Admin-Zugang ist keine Berechtigung zur Mitarbeiterverwaltung freigeschaltet.</div>';
     return;
@@ -125,7 +126,7 @@ export async function renderMitarbeiter(el,ctx){
     <label class="field"><span>Firma</span><select name="companyId" required><option value="">– auswählen –</option>${companies.map(c=>opt(c.id,`${c.name}${c.companyNumber?` · ${c.companyNumber}`:''}`)).join('')}</select></label><label class="field"><span>Mitarbeiternummer</span><input name="employeeNumber" inputmode="numeric" maxlength="5" pattern="[0-9]{5}" placeholder="5-stellig, z. B. 40190" required></label>
     <label class="field"><span>Geschäftsbereich</span><select name="businessAreaId" required><option value="">– auswählen –</option>${businessAreas.map(a=>opt(a.id,`${a.code} · ${a.name}`)).join('')}</select></label><label class="field"><span>Abteilung</span><input name="department"></label>
     <label class="field"><span>Position / Tätigkeit</span><input name="position"></label><label class="field"><span>Kostenstelle</span><input name="costCenter"></label>
-    <label class="field"><span>Vorgesetzter</span><select name="supervisorId"><option value="">Kein Vorgesetzter</option>${supervisors.map(u=>opt(u.id,u.name||u.email)).join('')}</select></label><label class="field"><span>Beschäftigungsart</span><select name="contractType"><option value="">– auswählen –</option><option>Vollzeit</option><option>Teilzeit</option><option>Minijob</option><option>Werkstudent</option><option>Ausbildung</option><option>Befristet</option><option>Sonstiges</option></select></label>
+    <label class="field"><span>1. Vorgesetzter</span><select name="supervisorId"><option value="">Kein Vorgesetzter</option>${supervisors.map(u=>opt(u.id,u.name||u.email)).join('')}</select></label><label class="field"><span>2. Vorgesetzter</span><select name="supervisorId2"><option value="">Kein zweiter Vorgesetzter</option>${supervisors.map(u=>opt(u.id,u.name||u.email)).join('')}</select><small>Optional. Beide Vorgesetzte erhalten dieselben organisatorischen Zugriffsrechte.</small></label><label class="field"><span>Beschäftigungsart</span><select name="contractType"><option value="">– auswählen –</option><option>Vollzeit</option><option>Teilzeit</option><option>Minijob</option><option>Werkstudent</option><option>Ausbildung</option><option>Befristet</option><option>Sonstiges</option></select></label>
     <label class="field"><span>Eintritt</span><input name="startDate" type="date"></label><label class="field"><span>Austritt</span><input name="endDate" type="date"></label><label class="field"><span>Probezeit bis</span><input name="probationEndDate" type="date"></label><label class="field"><span>Befristung bis</span><input name="fixedTermEndDate" type="date"></label>`;
 
   const taxBody=`
@@ -140,7 +141,11 @@ export async function renderMitarbeiter(el,ctx){
     <label class="field full"><span>IBAN</span><input name="iban" autocomplete="off"></label><label class="field"><span>Bank</span><select name="bankId"><option value="">– auswählen –</option>${banks.map(x=>opt(x.id,`${x.name}${x.bic?` · ${x.bic}`:''}`)).join('')}</select></label><label class="field"><span>BIC</span><input name="bic" maxlength="11"></label><label class="field full"><span>Kontoinhaber</span><input name="accountHolder"></label>`;
 
   const salaryBody=`
-    <label class="field"><span>Entgeltart</span><select name="compensationType"><option value="">– auswählen –</option><option value="salary">Monatsgehalt</option><option value="hourly">Stundenlohn</option></select></label><label class="field"><span>Gültig ab</span><input name="salaryValidFrom" type="date"></label><label class="field"><span>Bruttogehalt / Monat (€)</span><input name="grossSalary" type="number" step="0.01" min="0"></label><label class="field"><span>Stundenlohn (€)</span><input name="hourlyRate" type="number" step="0.01" min="0"></label>`;
+    <label class="field"><span>Bruttogehalt / Monat (€)</span><input name="grossSalary" type="number" step="0.01" min="0"></label>
+    <label class="field"><span>Stundenlohn (€)</span><input name="hourlyRate" type="number" step="0.01" min="0"></label>
+    <label class="field"><span>Gültig ab</span><input name="salaryValidFrom" type="date"></label>
+    <div class="field"><span>&nbsp;</span><button type="button" class="btn secondary" id="salary-history-add">Übernehmen</button><small>Monatsgehalt und Stundenlohn können gleichzeitig gepflegt werden. „Übernehmen“ legt einen unveränderlichen Historieneintrag an.</small></div>
+    <div class="field full"><span>Vergütungshistorie</span><div id="salary-history-list" class="history-inline-list"><span class="muted">Mitarbeiter zuerst öffnen.</span></div></div>`;
 
   const timeBody=`
     <label class="field"><span>Wochenstunden</span><input name="weeklyHours" type="number" step="0.25" value="40"></label><label class="field"><span>Urlaubstage/Jahr</span><input name="vacationDays" type="number" step="1" value="30"></label><label class="field"><span>Frühester anrechenbarer Arbeitsbeginn</span><input name="earliestStartTime" type="time"><small>Optional. Ein früherer echter KOMMEN-Stempel bleibt sichtbar, wird aber erst ab dieser Uhrzeit angerechnet.</small></label><label class="field"><span>Zeiterfassung auf Projekte</span><select name="projectTimeTracking"><option value="false">Nein</option><option value="true">Ja</option></select></label>
@@ -149,6 +154,8 @@ export async function renderMitarbeiter(el,ctx){
   const nfcBody=`<div class="field full"><div id="nfc-credential-box" class="nfc-credential-box"><span class="muted">Mitarbeiter zuerst anlegen bzw. öffnen.</span></div></div>`;
 
   const bookingsBody=`<div class="field full"><div id="employee-bookings-box" class="employee-bookings-box"><span class="muted">Mitarbeiter zuerst öffnen.</span></div></div>`;
+
+  const notesBody=`<label class="field full"><span>Notiz</span><textarea name="adminNoteText" placeholder="Freitext zur internen Dokumentation"></textarea></label><label class="field"><span>Datum</span><input name="adminNoteDate" type="date"></label><div class="field"><span>&nbsp;</span><button type="button" class="btn secondary" id="employee-note-add">Übernehmen</button><small>Admins mit der Berechtigung „Mitarbeiternotizen“ sehen alle Einträge. Vorgesetzte sehen ausschließlich ihre eigenen Notizen.</small></div><div class="field full"><span>Notizhistorie</span><div id="employee-notes-list" class="history-inline-list"><span class="muted">Mitarbeiter zuerst öffnen.</span></div></div>`;
 
   const safetyBody=`
     <label class="field safety-toggle"><span>Ersthelfer</span><select name="firstAider"><option value="false">Nein</option><option value="true">Ja</option></select></label><label class="field"><span>gültig / Auffrischung bis</span><input name="firstAiderValidUntil" type="date"></label>
@@ -173,10 +180,11 @@ export async function renderMitarbeiter(el,ctx){
     ${section('▦','Beschäftigung & Organisation','Zuordnung im Unternehmen und Vertragsrahmen.',employmentBody)}
     ${section('§','Steuer & Sozialversicherung','Nur Personalabteilung/Admin und der Mitarbeiter selbst können diese Daten lesen.',taxBody,'sensitive-section admin-role-hide')}
     ${section('€','Bankverbindung','Geschützte Zahlungsdaten des Mitarbeiters.',bankBody,'sensitive-section admin-role-hide')}
-    ${section('↗','Lohn & Gehalt','Grunddaten zur Vergütung. Eine zeitliche Gehaltsentwicklung kann später ergänzt werden.',salaryBody,'sensitive-section admin-role-hide')}
+    ${section('↗','Lohn & Gehalt','Monatsgehalt und Stundenlohn mit datierter Vergütungshistorie.',salaryBody,'sensitive-section admin-role-hide')}
     ${section('◷','Urlaub & Arbeitszeit','Arbeitszeitmodell, Urlaub und Projektzeiterfassung.',timeBody,'admin-role-hide')}
     ${canManageNfc?section('⌁','NFC-Transponder','Persönlichen NFC-Transponder für die einfache Terminal-Zeiterfassung zuweisen oder sperren.',nfcBody):''}
     ${canViewBookings?section('◴','Buchungen','Arbeitszeitbuchungen des Mitarbeiters kontrollieren. Angezeigt werden auch Projekt, Buchungsart und verwendetes NFC-Terminal.',bookingsBody):''}
+    ${canManageNotes?section('✎','Notizen','Interne, rollenbezogene Notizen zum Mitarbeiter.',notesBody):''}
     ${section('⚑','Arbeitssicherheit & Befähigungen','Qualifikationen, Befähigungen und fällige Kontrollen.',safetyBody,'safety-section admin-role-hide')}
     ${section('▤','Schulungen','Bereichsschulungen und individuelle Zusatzschulungen.',trainingBody,'admin-role-hide')}
     ${section('⚙','System & Berechtigungen','Login, Rolle und Kontostatus.',systemBody)}
@@ -283,6 +291,81 @@ export async function renderMitarbeiter(el,ctx){
     }catch(err){console.error(err);toast(err.message||'Mitarbeiter konnte nicht entfernt werden.')}
   });
 
+
+  function formatMoney(value){
+    if(value===null||value===undefined||value==='')return '–';
+    const n=Number(value);
+    return Number.isFinite(n)?new Intl.NumberFormat('de-DE',{style:'currency',currency:'EUR'}).format(n):'–';
+  }
+  function formatHistoryDate(value){
+    if(!value)return '–';
+    if(value?.toDate)return value.toDate().toLocaleString('de-DE');
+    const s=String(value);
+    if(/^\d{4}-\d{2}-\d{2}$/.test(s))return s.split('-').reverse().join('.');
+    const d=new Date(value);
+    return Number.isNaN(d.getTime())?s:d.toLocaleString('de-DE');
+  }
+  async function renderSalaryHistory(employee){
+    const box=el.querySelector('#salary-history-list');if(!box)return;
+    if(!employee?.id){box.innerHTML='<span class="muted">Mitarbeiter zuerst öffnen.</span>';return}
+    box.innerHTML='<span class="muted">Vergütungshistorie wird geladen …</span>';
+    try{
+      const snap=await getDocs(query(collection(db,'salaryHistory'),where('userId','==',employee.id)));
+      const rows=snap.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>String(b.validFrom||'').localeCompare(String(a.validFrom||''))||((b.createdAt?.toMillis?.()||0)-(a.createdAt?.toMillis?.()||0)));
+      box.innerHTML=rows.length?`<div class="table-wrap"><table class="compact-table"><thead><tr><th>Gültig ab</th><th>Monatsgehalt</th><th>Stundenlohn</th><th>Übernommen von</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${esc(formatHistoryDate(r.validFrom))}</td><td>${esc(formatMoney(r.grossSalary))}</td><td>${esc(r.hourlyRate==null?'–':`${formatMoney(r.hourlyRate)} / h`)}</td><td>${esc(r.createdByName||r.createdBy||'–')}<small class="history-meta">${esc(formatHistoryDate(r.createdAt))}</small></td></tr>`).join('')}</tbody></table></div>`:'<span class="muted">Noch keine Vergütungshistorie vorhanden.</span>';
+    }catch(err){console.error(err);box.innerHTML='<span class="error-text">Vergütungshistorie konnte nicht geladen werden.</span>'}
+  }
+  async function renderEmployeeNotes(employee){
+    const box=el.querySelector('#employee-notes-list');if(!box)return;
+    if(!employee?.id){box.innerHTML='<span class="muted">Mitarbeiter zuerst öffnen.</span>';return}
+    box.innerHTML='<span class="muted">Notizen werden geladen …</span>';
+    try{
+      const snap=await getDocs(query(collection(db,'employeeNotes'),where('employeeId','==',employee.id)));
+      const rows=snap.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>String(b.noteDate||'').localeCompare(String(a.noteDate||''))||((b.createdAt?.toMillis?.()||0)-(a.createdAt?.toMillis?.()||0)));
+      box.innerHTML=rows.length?`<div class="note-history-list">${rows.map(r=>`<article class="note-history-entry"><div class="note-history-head"><strong>${esc(formatHistoryDate(r.noteDate))}</strong><span>${esc(r.authorName||'–')} · ${r.authorRole==='supervisor'?'Vorgesetzter':'Personalabteilung / Admin'}</span></div><p>${esc(r.text||'')}</p><small>erfasst ${esc(formatHistoryDate(r.createdAt))}</small></article>`).join('')}</div>`:'<span class="muted">Noch keine Notizen vorhanden.</span>';
+    }catch(err){console.error(err);box.innerHTML='<span class="error-text">Notizen konnten nicht geladen werden.</span>'}
+  }
+  function wireEmployeeHistoryActions(employee){
+    const salaryBtn=el.querySelector('#salary-history-add');
+    if(salaryBtn){
+      salaryBtn.disabled=!canEdit||!employee?.id;
+      salaryBtn.onclick=async()=>{
+        if(!canEdit||!employee?.id)return;
+        const gross=numberOrNull(form.elements.grossSalary.value),hourly=numberOrNull(form.elements.hourlyRate.value),validFrom=form.elements.salaryValidFrom.value;
+        if(gross===null&&hourly===null){toast('Bitte Monatsgehalt und/oder Stundenlohn eingeben.');return}
+        if(!validFrom){toast('Bitte das Datum „Gültig ab“ angeben.');return}
+        try{
+          salaryBtn.disabled=true;
+          const ref=doc(collection(db,'salaryHistory')),batch=writeBatch(db);
+          batch.set(ref,{userId:employee.id,employeeName:employee.name||'',grossSalary:gross,hourlyRate:hourly,validFrom,createdBy:ctx.profile.id,createdByName:ctx.profile.name||ctx.profile.email||'',createdAt:serverTimestamp()});
+          batch.set(doc(db,'employeePrivate',employee.id),{grossSalary:gross,hourlyRate:hourly,salaryValidFrom:validFrom,updatedAt:serverTimestamp()},{merge:true});
+          batch.set(doc(collection(db,'employeeHistory')),historyRecord(ctx,employee.id,employee,'salary_history_add',[{field:'private.compensationHistory',oldValue:null,newValue:{validFrom,grossSalary:gross,hourlyRate:hourly}}]));
+          await batch.commit();
+          const pm=privateMap.get(employee.id)||{};Object.assign(pm,{grossSalary:gross,hourlyRate:hourly,salaryValidFrom:validFrom});privateMap.set(employee.id,pm);
+          toast('Vergütung in die Historie übernommen.');
+          await renderSalaryHistory(employee);
+        }catch(err){console.error(err);toast(err?.message||'Vergütung konnte nicht übernommen werden.')}finally{salaryBtn.disabled=false}
+      };
+    }
+    const noteBtn=el.querySelector('#employee-note-add');
+    if(noteBtn){
+      noteBtn.disabled=!canManageNotes||!employee?.id;
+      noteBtn.onclick=async()=>{
+        if(!canManageNotes||!employee?.id)return;
+        const textValue=form.elements.adminNoteText?.value.trim()||'',noteDate=form.elements.adminNoteDate?.value||'';
+        if(!textValue){toast('Bitte einen Notiztext eingeben.');return}
+        if(!noteDate){toast('Bitte ein Datum für die Notiz angeben.');return}
+        try{
+          noteBtn.disabled=true;
+          await addDoc(collection(db,'employeeNotes'),{employeeId:employee.id,employeeName:employee.name||'',text:textValue,noteDate,authorId:ctx.profile.id,authorName:ctx.profile.name||ctx.profile.email||'',authorRole:'admin',createdAt:serverTimestamp()});
+          form.elements.adminNoteText.value='';
+          toast('Notiz übernommen.');
+          await renderEmployeeNotes(employee);
+        }catch(err){console.error(err);toast(err?.message||'Notiz konnte nicht gespeichert werden.')}finally{noteBtn.disabled=false}
+      };
+    }
+  }
+
 const renderPhotoEditor=(u)=>{
   const box=el.querySelector('#employee-photo-editor');if(!box)return;
   if(!u?.id){box.innerHTML='<span class="employee-profile-photo large"><span>MA</span></span><small>Foto nach dem ersten Speichern möglich</small>';return}
@@ -293,17 +376,17 @@ const renderPhotoEditor=(u)=>{
 };
 
 el.querySelectorAll('.edit-user').forEach(b=>b.onclick=async()=>{
-    const u=users.find(x=>x.id===b.dataset.id),p=privateMap.get(u.id)||{};form.reset();setVal(form,'id',u.id);setVal(form,'name',u.name);setVal(form,'companyId',u.companyId);const usernameMode=u.hasRealEmail===false||String(u.email||'').endsWith('@portal.local');setVal(form,'loginType',usernameMode?'username':'email');setVal(form,'login',usernameMode?(u.username||String(u.email||'').replace(/@portal\.local$/,'')):(u.email||''));form.elements.loginType.disabled=true;form.elements.login.disabled=true;setVal(form,'role',u.role||'employee');setVal(form,'supervisorId',u.supervisorId||'');setVal(form,'active',String(u.active!==false));setVal(form,'startDate',u.startDate||'');setVal(form,'endDate',u.endDate||'');setVal(form,'weeklyHours',u.weeklyHours??40);setVal(form,'vacationDays',u.vacationDays??30);setVal(form,'employeeNumber',u.employeeNumber||'');let areaValue=u.businessAreaId||businessAreas.find(a=>a.code===u.companyAreaNumber)?.id||'';if(!areaValue&&u.companyAreaNumber){const select=form.elements.businessAreaId;select.add(new Option(`${u.companyAreaNumber} · bisheriger Wert`,`legacy:${u.companyAreaNumber}`));areaValue=`legacy:${u.companyAreaNumber}`;}setVal(form,'businessAreaId',areaValue);setVal(form,'projectTimeTracking',String(u.projectTimeTracking===true));setVal(form,'earliestStartTime',u.earliestStartTime||'');
+    const u=users.find(x=>x.id===b.dataset.id),p=privateMap.get(u.id)||{};form.reset();setVal(form,'id',u.id);setVal(form,'name',u.name);setVal(form,'companyId',u.companyId);const usernameMode=u.hasRealEmail===false||String(u.email||'').endsWith('@portal.local');setVal(form,'loginType',usernameMode?'username':'email');setVal(form,'login',usernameMode?(u.username||String(u.email||'').replace(/@portal\.local$/,'')):(u.email||''));form.elements.loginType.disabled=true;form.elements.login.disabled=true;setVal(form,'role',u.role||'employee');setVal(form,'supervisorId',u.supervisorId||'');setVal(form,'supervisorId2',u.supervisorId2||'');setVal(form,'active',String(u.active!==false));setVal(form,'startDate',u.startDate||'');setVal(form,'endDate',u.endDate||'');setVal(form,'weeklyHours',u.weeklyHours??40);setVal(form,'vacationDays',u.vacationDays??30);setVal(form,'employeeNumber',u.employeeNumber||'');let areaValue=u.businessAreaId||businessAreas.find(a=>a.code===u.companyAreaNumber)?.id||'';if(!areaValue&&u.companyAreaNumber){const select=form.elements.businessAreaId;select.add(new Option(`${u.companyAreaNumber} · bisheriger Wert`,`legacy:${u.companyAreaNumber}`));areaValue=`legacy:${u.companyAreaNumber}`;}setVal(form,'businessAreaId',areaValue);setVal(form,'projectTimeTracking',String(u.projectTimeTracking===true));setVal(form,'earliestStartTime',u.earliestStartTime||'');
     ['department','position','contractType','probationEndDate','fixedTermEndDate','costCenter','firstAiderValidUntil','fireWardenValidUntil','forkliftPermitValidUntil','aerialLiftPermitValidUntil','drivingLicenseClasses','nextDrivingLicenseCheck','occupationalMedicalNotes'].forEach(k=>setVal(form,k,u[k]||''));['firstAider','fireWarden','forkliftPermit','aerialLiftPermit'].forEach(k=>boolVal(form,k,u[k]));
     const workDays=Array.isArray(u.workDays)&&u.workDays.length?u.workDays.map(String):['1','2','3','4','5'];form.querySelectorAll('[name=workDay]').forEach(x=>x.checked=workDays.includes(x.value));
-    ['birthDate','maritalStatus','marriageDate','street','postalCode','city','privateEmail','phone','mobile','emergencyContactName','emergencyContactPhone','taxId','taxClass','religion','socialSecurityNumber','healthInsuranceId','insuranceType','personGroup','contributionGroup','iban','bic','bankId','accountHolder','compensationType','salaryValidFrom'].forEach(k=>setVal(form,k,p[k]||''));setVal(form,'childAllowance',p.childAllowance??'');setVal(form,'grossSalary',p.grossSalary??'');setVal(form,'hourlyRate',p.hourlyRate??'');boolVal(form,'birthdayList',p.birthdayList===true);
+    ['birthDate','maritalStatus','marriageDate','street','postalCode','city','privateEmail','phone','mobile','emergencyContactName','emergencyContactPhone','taxId','taxClass','religion','socialSecurityNumber','healthInsuranceId','insuranceType','personGroup','contributionGroup','iban','bic','bankId','accountHolder','salaryValidFrom'].forEach(k=>setVal(form,k,p[k]||''));setVal(form,'childAllowance',p.childAllowance??'');setVal(form,'grossSalary',p.grossSalary??'');setVal(form,'hourlyRate',p.hourlyRate??'');boolVal(form,'birthdayList',p.birthdayList===true);
     form.querySelectorAll('[name=bereich]').forEach(x=>x.checked=(u.bereiche||[]).includes(x.value));form.querySelectorAll('[name=extraTraining]').forEach(x=>x.checked=(u.extraTrainings||[]).includes(x.value));setVal(form,'trainingValidFrom',new Date().toISOString().slice(0,10));
     const loadedPermissions=normalizedAdminPermissions(u);form.querySelectorAll('[name=adminPermission]').forEach(x=>x.checked=loadedPermissions[x.value]!==false);
     const syncAdminPermissionVisibility=()=>{const box=form.querySelector('#admin-permissions-box');if(box)box.classList.toggle('hidden',form.elements.role.value!=='admin')};syncAdminPermissionVisibility();syncAdminRoleSections();
-    const readOnly=!canEdit;form.querySelectorAll('input,select,textarea').forEach(x=>{if(x.name!=='id')x.disabled=readOnly||(['loginType','login'].includes(x.name));});
+    const readOnly=!canEdit;form.querySelectorAll('input,select,textarea').forEach(x=>{if(x.name==='id')return;const noteField=['adminNoteText','adminNoteDate'].includes(x.name);x.disabled=(noteField?!canManageNotes:readOnly)||(['loginType','login'].includes(x.name));});
     if(!readOnly&&!canManagePermissions){form.querySelectorAll('[name=adminPermission]').forEach(x=>x.disabled=true);if(u.role==='admin')form.elements.role.disabled=true;}
     form.querySelectorAll('button[type=submit]').forEach(x=>x.classList.toggle('hidden',readOnly));
-    el.querySelector('#employee-form-title').textContent=`Mitarbeiterkartei · ${u.name||'Mitarbeiter'}`;renderPhotoEditor(u);tab('create');await renderPersonalakte(akte,ctx,u,{readOnly,canManage:canManageDocs});await renderNfcBox(u);if(canViewBookings)await renderBookingBox(u);window.scrollTo({top:0,behavior:'smooth'});
+    el.querySelector('#employee-form-title').textContent=`Mitarbeiterkartei · ${u.name||'Mitarbeiter'}`;renderPhotoEditor(u);setVal(form,'adminNoteDate',new Date().toISOString().slice(0,10));tab('create');await renderPersonalakte(akte,ctx,u,{readOnly,canManage:canManageDocs});await renderNfcBox(u);if(canViewBookings)await renderBookingBox(u);await renderSalaryHistory(u);if(canManageNotes)await renderEmployeeNotes(u);wireEmployeeHistoryActions(u);window.scrollTo({top:0,behavior:'smooth'});
   });
 
   form.elements.role?.addEventListener('change',()=>{const box=form.querySelector('#admin-permissions-box');if(box)box.classList.toggle('hidden',form.elements.role.value!=='admin');syncAdminRoleSections();if(form.elements.role.value==='admin'&&![...form.querySelectorAll('[name=adminPermission]')].some(x=>x.checked))form.querySelectorAll('[name=adminPermission]').forEach(x=>x.checked=true)});
@@ -317,7 +400,7 @@ el.querySelectorAll('.edit-user').forEach(b=>b.onclick=async()=>{
     const previousUser=id?users.find(x=>x.id===id):null;
     if(id&&!canManagePermissions&&previousUser&&(previousUser.role==='admin'||f.elements.role.value==='admin')&&f.elements.role.value!==previousUser.role){toast('Keine Berechtigung zum Ändern von Admin-Rollen.');return}
     if(!id&&f.elements.role.value==='admin'&&!canManagePermissions){toast('Keine Berechtigung zum Anlegen von Admin-Zugängen.');return}
-    const areaSelection=f.elements.businessAreaId.value,selectedArea=businessAreaMap.get(areaSelection),legacyArea=areaSelection.startsWith('legacy:')?areaSelection.slice(7):'';const employeeNumber=f.elements.employeeNumber.value.trim();if(!/^\d{5}$/.test(employeeNumber)){el.querySelector('#user-message').textContent='Die Mitarbeiternummer muss genau fünfstellig numerisch sein.';return;}const companyAreaNumber=selectedArea?.code||legacyArea;if(!/^\d{3}$/.test(companyAreaNumber)){el.querySelector('#user-message').textContent='Bitte einen gültigen dreistelligen Geschäftsbereich auswählen.';return;}const publicData={name:f.elements.name.value.trim(),companyId:f.elements.companyId.value,email,username:loginType==='username'?login.toLowerCase():'',hasRealEmail:loginType==='email',role:f.elements.role.value,adminPermissions:f.elements.role.value==='admin'?(canManagePermissions?Object.fromEntries(ADMIN_PERMISSION_DEFS.map(x=>[x.key,[...f.querySelectorAll('[name=adminPermission]')].find(c=>c.value===x.key)?.checked===true])):(previousUser?.adminPermissions||DEFAULT_ADMIN_PERMISSIONS)):{},supervisorId:f.elements.supervisorId.value||null,active:f.elements.active.value==='true',startDate:f.elements.startDate.value||null,endDate:f.elements.endDate.value||null,weeklyHours:Number(f.elements.weeklyHours.value||40),vacationDays:Number(f.elements.vacationDays.value||30),earliestStartTime:f.elements.earliestStartTime.value||'',employeeNumber,businessAreaId:selectedArea?.id||'',companyAreaNumber,projectTimeTracking:f.elements.projectTimeTracking.value==='true',department:f.elements.department.value.trim(),position:f.elements.position.value.trim(),contractType:f.elements.contractType.value,probationEndDate:f.elements.probationEndDate.value||null,fixedTermEndDate:f.elements.fixedTermEndDate.value||null,costCenter:f.elements.costCenter.value.trim(),workDays:[...f.querySelectorAll('[name=workDay]:checked')].map(x=>x.value),firstAider:f.elements.firstAider.value==='true',firstAiderValidUntil:f.elements.firstAiderValidUntil.value||null,fireWarden:f.elements.fireWarden.value==='true',fireWardenValidUntil:f.elements.fireWardenValidUntil.value||null,forkliftPermit:f.elements.forkliftPermit.value==='true',forkliftPermitValidUntil:f.elements.forkliftPermitValidUntil.value||null,aerialLiftPermit:f.elements.aerialLiftPermit.value==='true',aerialLiftPermitValidUntil:f.elements.aerialLiftPermitValidUntil.value||null,drivingLicenseClasses:f.elements.drivingLicenseClasses.value.trim(),nextDrivingLicenseCheck:f.elements.nextDrivingLicenseCheck.value||null,occupationalMedicalNotes:f.elements.occupationalMedicalNotes.value.trim(),bereiche:[...f.querySelectorAll('[name=bereich]:checked')].map(x=>x.value),extraTrainings:[...f.querySelectorAll('[name=extraTraining]:checked')].map(x=>x.value),updatedAt:serverTimestamp()};
+    const primarySupervisor=f.elements.supervisorId.value||'',secondarySupervisor=f.elements.supervisorId2.value||'';if(secondarySupervisor&&!primarySupervisor){el.querySelector('#user-message').textContent='Bitte zuerst einen 1. Vorgesetzten auswählen.';return;}if(primarySupervisor&&secondarySupervisor&&primarySupervisor===secondarySupervisor){el.querySelector('#user-message').textContent='1. und 2. Vorgesetzter müssen unterschiedliche Personen sein.';return;}if(id&&(primarySupervisor===id||secondarySupervisor===id)){el.querySelector('#user-message').textContent='Ein Mitarbeiter kann nicht sein eigener Vorgesetzter sein.';return;}const areaSelection=f.elements.businessAreaId.value,selectedArea=businessAreaMap.get(areaSelection),legacyArea=areaSelection.startsWith('legacy:')?areaSelection.slice(7):'';const employeeNumber=f.elements.employeeNumber.value.trim();if(!/^\d{5}$/.test(employeeNumber)){el.querySelector('#user-message').textContent='Die Mitarbeiternummer muss genau fünfstellig numerisch sein.';return;}const companyAreaNumber=selectedArea?.code||legacyArea;if(!/^\d{3}$/.test(companyAreaNumber)){el.querySelector('#user-message').textContent='Bitte einen gültigen dreistelligen Geschäftsbereich auswählen.';return;}const publicData={name:f.elements.name.value.trim(),companyId:f.elements.companyId.value,email,username:loginType==='username'?login.toLowerCase():'',hasRealEmail:loginType==='email',role:f.elements.role.value,adminPermissions:f.elements.role.value==='admin'?(canManagePermissions?Object.fromEntries(ADMIN_PERMISSION_DEFS.map(x=>[x.key,[...f.querySelectorAll('[name=adminPermission]')].find(c=>c.value===x.key)?.checked===true])):(previousUser?.adminPermissions||DEFAULT_ADMIN_PERMISSIONS)):{},supervisorId:f.elements.supervisorId.value||null,supervisorId2:f.elements.supervisorId2.value||null,active:f.elements.active.value==='true',startDate:f.elements.startDate.value||null,endDate:f.elements.endDate.value||null,weeklyHours:Number(f.elements.weeklyHours.value||40),vacationDays:Number(f.elements.vacationDays.value||30),earliestStartTime:f.elements.earliestStartTime.value||'',employeeNumber,businessAreaId:selectedArea?.id||'',companyAreaNumber,projectTimeTracking:f.elements.projectTimeTracking.value==='true',department:f.elements.department.value.trim(),position:f.elements.position.value.trim(),contractType:f.elements.contractType.value,probationEndDate:f.elements.probationEndDate.value||null,fixedTermEndDate:f.elements.fixedTermEndDate.value||null,costCenter:f.elements.costCenter.value.trim(),workDays:[...f.querySelectorAll('[name=workDay]:checked')].map(x=>x.value),firstAider:f.elements.firstAider.value==='true',firstAiderValidUntil:f.elements.firstAiderValidUntil.value||null,fireWarden:f.elements.fireWarden.value==='true',fireWardenValidUntil:f.elements.fireWardenValidUntil.value||null,forkliftPermit:f.elements.forkliftPermit.value==='true',forkliftPermitValidUntil:f.elements.forkliftPermitValidUntil.value||null,aerialLiftPermit:f.elements.aerialLiftPermit.value==='true',aerialLiftPermitValidUntil:f.elements.aerialLiftPermitValidUntil.value||null,drivingLicenseClasses:f.elements.drivingLicenseClasses.value.trim(),nextDrivingLicenseCheck:f.elements.nextDrivingLicenseCheck.value||null,occupationalMedicalNotes:f.elements.occupationalMedicalNotes.value.trim(),bereiche:[...f.querySelectorAll('[name=bereich]:checked')].map(x=>x.value),extraTrainings:[...f.querySelectorAll('[name=extraTraining]:checked')].map(x=>x.value),updatedAt:serverTimestamp()};
     const newTrainingAreas=[...f.querySelectorAll('[name=bereich]:checked')].map(x=>x.value),newExtraTrainings=[...f.querySelectorAll('[name=extraTraining]:checked')].map(x=>x.value);publicData.bereiche=newTrainingAreas;publicData.extraTrainings=newExtraTrainings;
     if(id&&previousUser){
       const selectionChanged=!sameTrainingSelection(previousUser.bereiche,previousUser.extraTrainings,newTrainingAreas,newExtraTrainings);
@@ -332,7 +415,7 @@ el.querySelectorAll('.edit-user').forEach(b=>b.onclick=async()=>{
       const validFrom=f.elements.trainingValidFrom.value||f.elements.startDate.value||new Date().toISOString().slice(0,10);
       publicData.trainingAssignments=[{validFrom,bereiche:newTrainingAreas,extraTrainings:newExtraTrainings}];
     }
-    const privateData={birthDate:f.elements.birthDate.value||null,birthdayList:f.elements.birthdayList.checked===true,maritalStatus:f.elements.maritalStatus.value,marriageDate:f.elements.marriageDate.value||null,street:f.elements.street.value.trim(),postalCode:f.elements.postalCode.value.trim(),city:f.elements.city.value.trim(),privateEmail:f.elements.privateEmail.value.trim().toLowerCase(),phone:f.elements.phone.value.trim(),mobile:f.elements.mobile.value.trim(),emergencyContactName:f.elements.emergencyContactName.value.trim(),emergencyContactPhone:f.elements.emergencyContactPhone.value.trim(),taxId:f.elements.taxId.value.trim(),taxClass:f.elements.taxClass.value,childAllowance:numberOrNull(f.elements.childAllowance.value),religion:f.elements.religion.value,socialSecurityNumber:f.elements.socialSecurityNumber.value.trim(),healthInsuranceId:f.elements.healthInsuranceId.value,insuranceType:f.elements.insuranceType.value,personGroup:f.elements.personGroup.value.trim(),contributionGroup:f.elements.contributionGroup.value.trim(),iban:f.elements.iban.value.replace(/\s+/g,'').toUpperCase(),bic:f.elements.bic.value.replace(/\s+/g,'').toUpperCase(),bankId:f.elements.bankId.value,accountHolder:f.elements.accountHolder.value.trim(),compensationType:f.elements.compensationType.value,grossSalary:numberOrNull(f.elements.grossSalary.value),hourlyRate:numberOrNull(f.elements.hourlyRate.value),salaryValidFrom:f.elements.salaryValidFrom.value||null,updatedAt:serverTimestamp()};
+    const privateData={birthDate:f.elements.birthDate.value||null,birthdayList:f.elements.birthdayList.checked===true,maritalStatus:f.elements.maritalStatus.value,marriageDate:f.elements.marriageDate.value||null,street:f.elements.street.value.trim(),postalCode:f.elements.postalCode.value.trim(),city:f.elements.city.value.trim(),privateEmail:f.elements.privateEmail.value.trim().toLowerCase(),phone:f.elements.phone.value.trim(),mobile:f.elements.mobile.value.trim(),emergencyContactName:f.elements.emergencyContactName.value.trim(),emergencyContactPhone:f.elements.emergencyContactPhone.value.trim(),taxId:f.elements.taxId.value.trim(),taxClass:f.elements.taxClass.value,childAllowance:numberOrNull(f.elements.childAllowance.value),religion:f.elements.religion.value,socialSecurityNumber:f.elements.socialSecurityNumber.value.trim(),healthInsuranceId:f.elements.healthInsuranceId.value,insuranceType:f.elements.insuranceType.value,personGroup:f.elements.personGroup.value.trim(),contributionGroup:f.elements.contributionGroup.value.trim(),iban:f.elements.iban.value.replace(/\s+/g,'').toUpperCase(),bic:f.elements.bic.value.replace(/\s+/g,'').toUpperCase(),bankId:f.elements.bankId.value,accountHolder:f.elements.accountHolder.value.trim(),grossSalary:numberOrNull(f.elements.grossSalary.value),hourlyRate:numberOrNull(f.elements.hourlyRate.value),salaryValidFrom:f.elements.salaryValidFrom.value||null,updatedAt:serverTimestamp()};
     try{
       const batch=writeBatch(db);
       if(id){

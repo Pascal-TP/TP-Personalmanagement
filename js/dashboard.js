@@ -5,6 +5,7 @@ import { esc, fmtDate, statusPill } from "./utils.js";
 import { hasAdminPermission } from "./permissions.js";
 import { progressForTrainingYear, visibleTrainingsForYear } from "./training-utils.js";
 import { calculateDailyTimeValues, timeRecordStart } from "./time-utils.js";
+import { getAssignedDocs } from "./supervisor-utils.js";
 
 function toDate(value){
   if(!value) return null;
@@ -188,13 +189,18 @@ export async function renderDashboard(el,ctx){
   try{const s=await getDocs(query(collection(db,"absences"),where("userId","==",p.id)));absences=s.docs.map(d=>({id:d.id,...d.data()}))}catch{}
   try{const s=await getDocs(query(collection(db,"timeRecords"),where("userId","==",p.id)));timeRecords=s.docs.map(d=>({id:d.id,...d.data()}))}catch{}
   if(p.role==="admin"){try{const s=await getDocs(collection(db,"users"));hrUsers=s.docs.map(d=>({id:d.id,...d.data()}))}catch(e){console.error("HR-Fristen konnten nicht geladen werden",e)} if(hasAdminPermission(p,"trainingOverview")){try{const s=await getDocs(collection(db,"trainingProgress"));allTrainingProgress=s.docs.map(d=>({id:d.id,...d.data()}))}catch(e){console.error("Unternehmensweite Schulungsstände konnten nicht geladen werden",e)}} if(hasAdminPermission(p,"personalDataChanges")){try{const s=await getDocs(collection(db,"personalDataChangeRequests"));personalChangeRequests=s.docs.map(d=>({id:d.id,...d.data()})).filter(x=>x.status==="pending")}catch(e){console.error("Stammdaten-Änderungsanträge konnten nicht geladen werden",e)}}}
-  if(p.role==="employee"||canApproveTime){try{const s=await getDocs(collection(db,"timeCorrectionRequests"));timeRequests=s.docs.map(d=>({id:d.id,...d.data()}))}catch{}}
+  if(p.role==="employee"||canApproveTime){try{
+    if(p.role==="supervisor") timeRequests=await getAssignedDocs(db,"timeCorrectionRequests",p.id);
+    else {const s=await getDocs(collection(db,"timeCorrectionRequests"));timeRequests=s.docs.map(d=>({id:d.id,...d.data()}))}
+  }catch{}}
   if(canApproveVacation){
     try{
-      const s=p.role==="admin"
-        ? await getDocs(collection(db,"vacationRequests"))
-        : await getDocs(query(collection(db,"vacationRequests"),where("supervisorId","==",p.id)));
-      teamVacations=s.docs.map(d=>({id:d.id,...d.data()})).filter(v=>v.status==="pending"||(v.status==="withdrawn"&&!v.withdrawalAcknowledgedAt));
+      if(p.role==="admin"){
+        const s=await getDocs(collection(db,"vacationRequests"));
+        teamVacations=s.docs.map(d=>({id:d.id,...d.data()})).filter(v=>v.status==="pending"||(v.status==="withdrawn"&&!v.withdrawalAcknowledgedAt));
+      }else{
+        teamVacations=(await getAssignedDocs(db,"vacationRequests",p.id)).filter(v=>v.status==="pending"||(v.status==="withdrawn"&&!v.withdrawalAcknowledgedAt));
+      }
     }catch(e){console.error("Urlaubsfreigaben konnten nicht geladen werden",e)}
   }
 
@@ -226,7 +232,7 @@ export async function renderDashboard(el,ctx){
   const pendingTeamTime=p.role==="admin"&&canApproveTime
     ? timeRequests.filter(x=>x.status==="pending").length
     : p.role==="supervisor"
-      ? timeRequests.filter(x=>x.status==="pending"&&x.supervisorId===p.id).length
+      ? timeRequests.filter(x=>x.status==="pending"&&(x.supervisorId===p.id||x.supervisorId2===p.id)).length
       : 0;
   const pendingTime=canApproveTime?pendingTeamTime:pendingOwnTime;
   const hours=currentMonthBalance(p,timeRecords,vacations,absences);

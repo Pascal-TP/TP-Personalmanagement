@@ -2,6 +2,8 @@ import { db, functions } from "./firebase.js";
 import {
   collection,
   getDocs,
+  addDoc,
+  serverTimestamp,
   query,
   where,
 } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
@@ -10,6 +12,7 @@ import { setHead } from "./app.js";
 import { esc } from "./utils.js";
 import { getEmployeePhotoUrls } from "./employee-photos.js";
 import { calculateDailyTimeValues, wasStartLimited } from "./time-utils.js";
+import { getAssignedUsers } from "./supervisor-utils.js";
 
 const getSupervisorEmployeeContact = httpsCallable(
   functions,
@@ -177,16 +180,78 @@ async function renderSupervisorBookings(container, employee) {
   renderMonth();
 }
 
+
+function formatHistoryDate(value) {
+  if (!value) return "–";
+  if (value?.toDate) return value.toDate().toLocaleString("de-DE");
+  const s = String(value);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s.split("-").reverse().join(".");
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? s : d.toLocaleString("de-DE");
+}
+function formatMoney(value) {
+  if (value === null || value === undefined || value === "") return "–";
+  const n = Number(value);
+  return Number.isFinite(n)
+    ? new Intl.NumberFormat("de-DE", { style: "currency", currency: "EUR" }).format(n)
+    : "–";
+}
+async function renderSupervisorSalaryHistory(container, employee) {
+  try {
+    const snap = await getDocs(query(collection(db, "salaryHistory"), where("userId", "==", employee.id)));
+    const rows = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+      .sort((a,b) => String(b.validFrom || "").localeCompare(String(a.validFrom || "")));
+    container.innerHTML = rows.length
+      ? `<div class="table-wrap"><table class="compact-table"><thead><tr><th>Gültig ab</th><th>Monatsgehalt</th><th>Stundenlohn</th></tr></thead><tbody>${rows.map(r => `<tr><td>${esc(formatHistoryDate(r.validFrom))}</td><td>${esc(formatMoney(r.grossSalary))}</td><td>${esc(r.hourlyRate == null ? "–" : `${formatMoney(r.hourlyRate)} / h`)}</td></tr>`).join("")}</tbody></table></div>`
+      : '<div class="empty">Noch keine Vergütungshistorie vorhanden.</div>';
+  } catch (err) {
+    console.error(err);
+    container.innerHTML = '<div class="error-card compact">Die Vergütungshistorie konnte nicht geladen werden.</div>';
+  }
+}
+async function renderSupervisorNotes(container, employee, ctx) {
+  try {
+    const snap = await getDocs(query(collection(db, "employeeNotes"), where("employeeId", "==", employee.id), where("authorId", "==", ctx.profile.id)));
+    const rows = snap.docs.map(d => ({ id:d.id, ...d.data() }))
+      .filter(r => r.authorId === ctx.profile.id)
+      .sort((a,b) => String(b.noteDate || "").localeCompare(String(a.noteDate || "")) || ((b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0)));
+    const today = new Date().toISOString().slice(0,10);
+    container.innerHTML = `<div class="form-grid supervisor-note-form"><label class="field full"><span>Notiz</span><textarea id="supervisor-note-text" placeholder="Freitext zur internen Dokumentation"></textarea></label><label class="field"><span>Datum</span><input id="supervisor-note-date" type="date" value="${today}"></label><div class="field"><span>&nbsp;</span><button type="button" class="btn secondary" id="supervisor-note-add">Übernehmen</button><small>Sie sehen ausschließlich Ihre eigenen Notizen zu diesem Mitarbeiter.</small></div></div><div class="note-history-list">${rows.length ? rows.map(r => `<article class="note-history-entry"><div class="note-history-head"><strong>${esc(formatHistoryDate(r.noteDate))}</strong><span>${esc(r.authorName || "Vorgesetzter")}</span></div><p>${esc(r.text || "")}</p><small>erfasst ${esc(formatHistoryDate(r.createdAt))}</small></article>`).join("") : '<div class="empty">Noch keine eigenen Notizen vorhanden.</div>'}</div>`;
+    const btn = container.querySelector("#supervisor-note-add");
+    btn.onclick = async () => {
+      const textValue = container.querySelector("#supervisor-note-text").value.trim();
+      const noteDate = container.querySelector("#supervisor-note-date").value;
+      if (!textValue || !noteDate) return;
+      try {
+        btn.disabled = true;
+        await addDoc(collection(db, "employeeNotes"), {
+          employeeId: employee.id,
+          employeeName: employee.name || "",
+          text: textValue,
+          noteDate,
+          authorId: ctx.profile.id,
+          authorName: ctx.profile.name || ctx.profile.email || "",
+          authorRole: "supervisor",
+          createdAt: serverTimestamp()
+        });
+        await renderSupervisorNotes(container, employee, ctx);
+      } finally {
+        btn.disabled = false;
+      }
+    };
+  } catch (err) {
+    console.error(err);
+    container.innerHTML = '<div class="error-card compact">Notizen konnten nicht geladen werden.</div>';
+  }
+}
+
 export async function renderSupervisorMitarbeiter(el, ctx) {
   setHead(
     "Mitarbeiter",
     "Ihre direkt zugeordneten Mitarbeiter und deren freigegebene Kontaktdaten und Zeitbuchungen.",
   );
-  const snap = await getDocs(
-    query(collection(db, "users"), where("supervisorId", "==", ctx.user.uid)),
-  );
-  const employees = snap.docs
-    .map((d) => ({ id: d.id, ...d.data() }))
+  const assignedUsers = await getAssignedUsers(db, ctx.user.uid);
+  const employees = assignedUsers
     .filter((u) => u.active !== false && u.archived !== true)
     .sort((a, b) => (a.name || "").localeCompare(b.name || "", "de"));
   let photoUrls = {};
@@ -214,11 +279,15 @@ export async function renderSupervisorMitarbeiter(el, ctx) {
             employeeId: employee.id,
           });
           const p = result.data?.contact || {};
-          detail.innerHTML = `<div class="employee-file supervisor-readonly-file"><div class="employee-file-head"><div class="supervisor-profile-head"><span class="employee-profile-photo large">${photoUrls[employee.id] ? `<img src="${esc(photoUrls[employee.id])}" alt="Foto von ${esc(employee.name || "Mitarbeiter")}">` : `<span>${fallback(employee.name)}</span>`}</span><div><span class="eyebrow">Mitarbeiteransicht</span><h2>${esc(employee.name || "Mitarbeiter")}</h2><p>${esc(employee.position || employee.department || "")}</p></div></div></div><section class="employee-section"><div class="employee-section-head"><span class="employee-section-icon">⌂</span><div><h3>Persönliche Daten & Kontakt</h3><p>Freigegebene Kontaktdaten des zugeordneten Mitarbeiters. Nur Lesezugriff.</p></div></div><div class="readonly-contact-grid"><div><span>Geburtsdatum</span><strong>${value(p.birthDate)}</strong></div><div><span>Private E-Mail</span><strong>${value(p.privateEmail)}</strong></div><div class="full"><span>Anschrift</span><strong>${value([p.street, [p.postalCode, p.city].filter(Boolean).join(" ")].filter(Boolean).join(", "))}</strong></div><div><span>Telefon</span><strong>${value(p.phone)}</strong></div><div><span>Mobil</span><strong>${value(p.mobile)}</strong></div><div><span>Notfallkontakt</span><strong>${value(p.emergencyContactName)}</strong></div><div><span>Telefon Notfallkontakt</span><strong>${value(p.emergencyContactPhone)}</strong></div></div></section><section class="employee-section"><div class="employee-section-head"><span class="employee-section-icon">◴</span><div><h3>Buchungen</h3><p>Arbeitszeitbuchungen des zugeordneten Mitarbeiters. Nur Lesezugriff.</p></div></div><div id="supervisor-employee-bookings" class="employee-bookings-box"><div class="loading">Buchungen werden geladen …</div></div></section></div>`;
+          detail.innerHTML = `<div class="employee-file supervisor-readonly-file"><div class="employee-file-head"><div class="supervisor-profile-head"><span class="employee-profile-photo large">${photoUrls[employee.id] ? `<img src="${esc(photoUrls[employee.id])}" alt="Foto von ${esc(employee.name || "Mitarbeiter")}">` : `<span>${fallback(employee.name)}</span>`}</span><div><span class="eyebrow">Mitarbeiteransicht</span><h2>${esc(employee.name || "Mitarbeiter")}</h2><p>${esc(employee.position || employee.department || "")}</p></div></div></div><section class="employee-section"><div class="employee-section-head"><span class="employee-section-icon">⌂</span><div><h3>Persönliche Daten & Kontakt</h3><p>Freigegebene Kontaktdaten des zugeordneten Mitarbeiters. Nur Lesezugriff.</p></div></div><div class="readonly-contact-grid"><div><span>Geburtsdatum</span><strong>${value(p.birthDate)}</strong></div><div><span>Private E-Mail</span><strong>${value(p.privateEmail)}</strong></div><div class="full"><span>Anschrift</span><strong>${value([p.street, [p.postalCode, p.city].filter(Boolean).join(" ")].filter(Boolean).join(", "))}</strong></div><div><span>Telefon</span><strong>${value(p.phone)}</strong></div><div><span>Mobil</span><strong>${value(p.mobile)}</strong></div><div><span>Notfallkontakt</span><strong>${value(p.emergencyContactName)}</strong></div><div><span>Telefon Notfallkontakt</span><strong>${value(p.emergencyContactPhone)}</strong></div></div></section><section class="employee-section"><div class="employee-section-head"><span class="employee-section-icon">↗</span><div><h3>Lohn & Gehalt – Historie</h3><p>Datierte Vergütungsentwicklung des zugeordneten Mitarbeiters. Nur Lesezugriff.</p></div></div><div id="supervisor-salary-history"><div class="loading">Vergütungshistorie wird geladen …</div></div></section><section class="employee-section"><div class="employee-section-head"><span class="employee-section-icon">✎</span><div><h3>Notizen</h3><p>Eigene interne Notizen zu diesem Mitarbeiter. Andere Vorgesetzten- oder Admin-Notizen sind nicht sichtbar.</p></div></div><div id="supervisor-employee-notes"><div class="loading">Notizen werden geladen …</div></div></section><section class="employee-section"><div class="employee-section-head"><span class="employee-section-icon">◴</span><div><h3>Buchungen</h3><p>Arbeitszeitbuchungen des zugeordneten Mitarbeiters. Nur Lesezugriff.</p></div></div><div id="supervisor-employee-bookings" class="employee-bookings-box"><div class="loading">Buchungen werden geladen …</div></div></section></div>`;
           const bookingBox = detail.querySelector(
             "#supervisor-employee-bookings",
           );
-          await renderSupervisorBookings(bookingBox, employee);
+          await Promise.all([
+            renderSupervisorBookings(bookingBox, employee),
+            renderSupervisorSalaryHistory(detail.querySelector("#supervisor-salary-history"), employee),
+            renderSupervisorNotes(detail.querySelector("#supervisor-employee-notes"), employee, ctx)
+          ]);
           detail.scrollIntoView({ behavior: "smooth", block: "start" });
         } catch (err) {
           console.error(err);

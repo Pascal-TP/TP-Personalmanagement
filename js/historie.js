@@ -5,7 +5,7 @@ import { esc, fmtDate, ROLE_LABELS } from "./utils.js";
 import { hasAdminPermission } from "./permissions.js";
 
 const FIELD_LABELS = {
-  name:"Name", companyId:"Firma", email:"E-Mail / Login", username:"Benutzername", hasRealEmail:"Login-Art", role:"Rolle", adminPermissions:"Admin-Berechtigungen", supervisorId:"Vorgesetzter", active:"Status",
+  name:"Name", companyId:"Firma", email:"E-Mail / Login", username:"Benutzername", hasRealEmail:"Login-Art", role:"Rolle", adminPermissions:"Admin-Berechtigungen", supervisorId:"1. Vorgesetzter", supervisorId2:"2. Vorgesetzter", active:"Status",
   startDate:"Eintritt", endDate:"Austritt", weeklyHours:"Wochenstunden", vacationDays:"Urlaubstage/Jahr", employeeNumber:"Mitarbeiternummer", businessAreaId:"Geschäftsbereich", companyAreaNumber:"Geschäftsbereich-Nr.", projectTimeTracking:"Zeiterfassung auf Projekte",
   department:"Abteilung", position:"Position / Tätigkeit", contractType:"Beschäftigungsart", probationEndDate:"Probezeit bis", fixedTermEndDate:"Befristung bis", costCenter:"Kostenstelle", workDays:"Arbeitstage",
   firstAider:"Ersthelfer", firstAiderValidUntil:"Ersthelfer gültig bis", fireWarden:"Brandschutzhelfer", fireWardenValidUntil:"Brandschutzhelfer gültig bis", forkliftPermit:"Staplerschein", forkliftPermitValidUntil:"Staplerschein gültig bis", aerialLiftPermit:"Hubarbeitsbühne", aerialLiftPermitValidUntil:"Hubarbeitsbühne gültig bis", drivingLicenseClasses:"Führerscheinklassen", nextDrivingLicenseCheck:"Nächste Führerscheinkontrolle", occupationalMedicalNotes:"Arbeitsmedizinische Vorsorgen / Hinweise",
@@ -30,7 +30,7 @@ function dateTime(value){
 function displayValue(key,value,companies,userMap,trainingMap,religionMap,areaMap){
   if(value===null||value===undefined||value==="") return "–";
   if(key==="companyId") return companies.get(value)?.name || value;
-  if(key==="supervisorId") return userMap.get(value)?.name || userMap.get(value)?.email || value;
+  if(key==="supervisorId"||key==="supervisorId2") return userMap.get(value)?.name || userMap.get(value)?.email || value;
   if(key==="businessAreaId"){const a=areaMap?.get(value);return a?`${a.code} · ${a.name}`:String(value);}
   if(key==="role") return ROLE_LABELS[value] || value;
   if(key==="adminPermissions"){if(!value||typeof value!=="object")return "Standard (alle Rechte)";const active=Object.entries(value).filter(([,v])=>v===true).length;return `${active} Berechtigungen aktiv`;}
