@@ -292,3 +292,34 @@
   .note-history-head{flex-direction:column;gap:3px}
   .note-history-head span{text-align:left}
 }
+
+
+/* V2.11 – HR-Auswertungen und Dashboard-Hinweise */
+.tga-overtime-card{border-left:4px solid #d59a32}
+.milestone-reminders-card{border-left:4px solid #6b87a8}
+.report-year-controls{align-items:end}
+.report-summary{display:flex;justify-content:space-between;gap:14px;align-items:center;flex-wrap:wrap;margin:14px 0;padding:10px 12px;border:1px solid var(--line);border-radius:9px;background:#f7f9fb}
+.report-summary span{color:var(--muted);font-size:.85rem}
+.report-summary strong{font-size:.9rem}
+.negative-text{color:#b42318}
+.report-chart-title{margin:22px 0 10px;font-size:1rem}
+.sick-chart-scroll{overflow-x:auto;padding-bottom:8px}
+.sick-chart{display:flex;align-items:flex-end;gap:12px;min-height:240px;min-width:max(100%,calc(var(--sick-count) * 72px));padding:20px 12px 0;border-left:1px solid var(--line);border-bottom:1px solid var(--line);background:linear-gradient(to top,rgba(148,163,184,.10) 1px,transparent 1px);background-size:100% 45px}
+.sick-column{width:60px;flex:0 0 60px;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;align-self:stretch}
+.sick-value{font-size:.75rem;font-weight:800;margin-top:auto;margin-bottom:4px}
+.sick-bar{width:30px;min-height:4px;border-radius:6px 6px 0 0;background:var(--primary);opacity:.82}
+.sick-name{width:68px;margin-top:6px;font-size:.68rem;line-height:1.2;text-align:center;overflow:hidden;text-overflow:ellipsis}
+.vacation-balance-sheet{margin-top:18px;border:1px solid var(--line);border-radius:12px;padding:20px;background:#fff;color:#172536}
+@media(max-width:700px){.report-year-controls{align-items:stretch}.report-summary{align-items:flex-start}.sick-chart{min-width:calc(var(--sick-count) * 68px)}}
+
+@media print{
+  body[data-print-report="vacation-balance"] .vacation-balance-sheet,
+  body[data-print-report="vacation-balance"] .vacation-balance-sheet *{visibility:visible!important}
+  body[data-print-report="vacation-balance"] .vacation-balance-sheet{position:absolute;left:0;top:0;width:100%;box-sizing:border-box;border:0;border-radius:0;margin:0;padding:7mm}
+  body[data-print-report="vacation-balance"] .vacation-balance-sheet .table-wrap{overflow:visible}
+  body[data-print-report="vacation-balance"] .vacation-balance-sheet table{width:100%}
+  body[data-print-report="vacation-balance"] .vacation-balance-sheet th,
+  body[data-print-report="vacation-balance"] .vacation-balance-sheet td{font-size:8.5pt;padding:2mm}
+  @page vacationbalance{size:A4 portrait;margin:8mm}
+  .vacation-balance-sheet{page:vacationbalance}
+}
