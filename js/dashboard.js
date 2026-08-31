@@ -3,6 +3,7 @@ import { collection, getDocs, query, where, orderBy, limit } from "https://www.g
 import { setHead } from "./app.js";
 import { esc, fmtDate, statusPill } from "./utils.js";
 import { hasAdminPermission } from "./permissions.js";
+import { progressForTrainingYear, visibleTrainingsForYear } from "./training-utils.js";
 
 function toDate(value){
   if(!value) return null;
@@ -203,15 +204,10 @@ export async function renderDashboard(el,ctx){
     try{const s=await getDocs(collection(db,"vacationRequests"));teamVacations=s.docs.map(d=>({id:d.id,...d.data()})).filter(v=>v.status==="pending"&&(p.role==="admin"||v.supervisorId===p.id))}catch{}
   }
 
-  const assignedTrainings=allTrainingDefinitions.filter(t=>{
-    if(t.active===false) return false;
-    const trainingAreas=Array.isArray(t.bereiche)?t.bereiche:[];
-    const userAreas=Array.isArray(p.bereiche)?p.bereiche:[];
-    const extraTrainings=Array.isArray(p.extraTrainings)?p.extraTrainings:[];
-    return trainingAreas.length===0 || trainingAreas.some(area=>userAreas.includes(area)) || extraTrainings.includes(t.id);
-  });
+  const currentTrainingYear=new Date().getFullYear();
+  const assignedTrainings=visibleTrainingsForYear(allTrainingDefinitions,p,currentTrainingYear);
   const completedTrainingIds=new Set(
-    trainingProgress
+    progressForTrainingYear(trainingProgress,currentTrainingYear)
       .filter(x=>x.status==="abgeschlossen"||x.status==="completed")
       .map(x=>x.trainingId)
       .filter(Boolean)
@@ -221,15 +217,9 @@ export async function renderDashboard(el,ctx){
   if(globalTrainingCountAvailable){
     const relevantUsers=hrUsers.filter(u=>u.active!==false&&u.archived!==true&&(u.role==="employee"||u.role==="supervisor"));
     openTrainings=relevantUsers.reduce((sum,u)=>{
-      const userAreas=Array.isArray(u.bereiche)?u.bereiche:[];
-      const extras=Array.isArray(u.extraTrainings)?u.extraTrainings:[];
-      const assigned=allTrainingDefinitions.filter(t=>{
-        if(t.active===false)return false;
-        const areas=Array.isArray(t.bereiche)?t.bereiche:[];
-        return areas.length===0||areas.some(a=>userAreas.includes(a))||extras.includes(t.id);
-      });
-      const done=new Set(allTrainingProgress
-        .filter(x=>x.userId===u.id&&(x.status==="abgeschlossen"||x.status==="completed"))
+      const assigned=visibleTrainingsForYear(allTrainingDefinitions,u,currentTrainingYear);
+      const done=new Set(progressForTrainingYear(allTrainingProgress.filter(x=>x.userId===u.id),currentTrainingYear)
+        .filter(x=>x.status==="abgeschlossen"||x.status==="completed")
         .map(x=>x.trainingId)
         .filter(Boolean));
       return sum+assigned.filter(t=>!done.has(t.id)).length;
