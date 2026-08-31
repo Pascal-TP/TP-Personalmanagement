@@ -9,7 +9,7 @@ import { ADMIN_PERMISSION_DEFS, DEFAULT_ADMIN_PERMISSIONS, hasAdminPermission, h
 import { randomToken, sha256Hex, nfcSupported, writeEmployeeNfcTag } from "./nfc-utils.js";
 import { getEmployeePhotoUrls, uploadEmployeePhoto, deleteEmployeePhoto } from "./employee-photos.js";
 import { sameTrainingSelection, upsertTrainingAssignmentHistory } from "./training-utils.js";
-import { calculateDailyTimeValues, wasStartLimited } from "./time-utils.js";
+import { calculateDailyTimeValues, calculateTimeAccountValues, wasStartLimited } from "./time-utils.js";
 
 const PUBLIC_HISTORY_FIELDS=[
   "name","companyId","email","username","hasRealEmail","role","adminPermissions","supervisorId","supervisorId2","active","startDate","endDate","weeklyHours","vacationDays","earliestStartTime","employeeNumber","businessAreaId","projectTimeTracking","department","position","contractType","probationEndDate","fixedTermEndDate","costCenter","workDays","firstAider","firstAiderValidUntil","fireWarden","fireWardenValidUntil","forkliftPermit","forkliftPermitValidUntil","aerialLiftPermit","aerialLiftPermitValidUntil","drivingLicenseClasses","nextDrivingLicenseCheck","occupationalMedicalNotes","bereiche","extraTrainings","trainingAssignments"
@@ -200,16 +200,23 @@ export async function renderMitarbeiter(el,ctx){
   async function renderBookingBox(employee,initialMonth=new Date()){
     const box=el.querySelector('#employee-bookings-box');if(!box)return;
     if(!employee){box.innerHTML='<span class="muted">Die Buchungen können nach dem Öffnen eines Mitarbeiters angezeigt werden.</span>';return;}
-    let records=[];
+    let records=[],vacations=[],absences=[];
     try{
-      const snap=await getDocs(query(collection(db,'timeRecords'),where('userId','==',employee.id)));
-      records=snap.docs.map(d=>({id:d.id,...d.data()}));
+      const [timeSnap,vacationSnap,absenceSnap]=await Promise.all([
+        getDocs(query(collection(db,'timeRecords'),where('userId','==',employee.id))),
+        getDocs(query(collection(db,'vacationRequests'),where('userId','==',employee.id))),
+        getDocs(query(collection(db,'absences'),where('userId','==',employee.id)))
+      ]);
+      records=timeSnap.docs.map(d=>({id:d.id,...d.data()}));
+      vacations=vacationSnap.docs.map(d=>({id:d.id,...d.data()}));
+      absences=absenceSnap.docs.map(d=>({id:d.id,...d.data()}));
     }catch(err){
       console.error('Buchungen konnten nicht geladen werden',err);
       box.innerHTML='<div class="error-card compact">Die Buchungen konnten nicht geladen werden. Bitte die Zeit-Berechtigungen dieses Adminzugangs prüfen.</div>';
       return;
     }
     const bookingValues=calculateDailyTimeValues(records,employee.earliestStartTime||'',{includeOpen:true});
+    const accountValues=calculateTimeAccountValues(records,employee,vacations,absences,{includeOpen:true});
     let month=new Date(initialMonth.getFullYear(),initialMonth.getMonth(),1,12);
     const renderMonth=()=>{
       const year=month.getFullYear(),monthNo=month.getMonth()+1;
@@ -231,17 +238,17 @@ export async function renderMitarbeiter(el,ctx){
           <strong>${esc(bookingMonthLabel(month))}</strong>
         </div>
         <div class="table-wrap"><table class="employee-bookings-table">
-          <thead><tr><th>Datum</th><th>Projekt</th><th>KOMMEN</th><th>GEHEN</th><th>Arbeitszeit</th><th>Buchungsart</th><th>Terminal / Hinweis</th></tr></thead>
+          <thead><tr><th>Datum</th><th>Projekt</th><th>KOMMEN</th><th>GEHEN</th><th>Arbeitszeit</th><th>Zeitguthaben</th><th>Buchungsart</th><th>Terminal / Hinweis</th></tr></thead>
           <tbody>${monthRecords.length?monthRecords.map(r=>{
             if(r.recordType==='adjustment'){
               const note=[r.adjustmentReason,r.adjustmentDetails].filter(Boolean).join(' · ');
-              return `<tr class="adjustment-row"><td>${esc(bookingDateKey(r).split('-').reverse().join('.'))}</td><td>${esc(r.projectNumber||'–')}</td><td colspan="2"><strong>Stundenkorrektur</strong></td><td><strong>${esc(bookingMinutesText(r.adjustmentMinutes,{signed:true}))}</strong></td><td>${esc(bookingSourceLabel(r))}</td><td>${esc(note||r.createdByName||'Personalabteilung')}</td></tr>`;
+              return `<tr class="adjustment-row"><td>${esc(bookingDateKey(r).split('-').reverse().join('.'))}</td><td>${esc(r.projectNumber||'–')}</td><td colspan="2"><strong>Stundenkorrektur</strong></td><td><strong>${esc(bookingMinutesText(r.adjustmentMinutes,{signed:true}))}</strong></td><td><strong>${esc(bookingMinutesText((accountValues.get(r.id)||{}).balance||0,{signed:true}))}</strong></td><td>${esc(bookingSourceLabel(r))}</td><td>${esc(note||r.createdByName||'Personalabteilung')}</td></tr>`;
             }
             const calc=bookingValues.get(r.id);const net=calc?calc.net:bookingNetMinutes(r);
             const terminal=[r.terminalName||r.terminalId,r.terminalEndId&&r.terminalEndId!==(r.terminalId||'')?`GEHEN: ${r.terminalEndId}`:''].filter(Boolean).join(' · ');
             const open=!bookingToDate(r.endAt)&&r.status!=='closed';
-            return `<tr><td>${esc(bookingDateKey(r).split('-').reverse().join('.'))}</td><td>${esc(r.projectNumber||'–')}</td><td>${esc(bookingTime(r,'start')||'–')}${wasStartLimited(r,employee.earliestStartTime||'')?`<small class="booking-note start-limit-note">anrechenbar ab ${esc(employee.earliestStartTime)} Uhr</small>`:''}</td><td>${esc(bookingTime(r,'end')||'–')}</td><td>${net===null?(open?'<span class="pill yellow">läuft</span>':'–'):esc(bookingMinutesText(net))}</td><td>${esc(bookingSourceLabel(r))}</td><td>${esc(terminal|| (open?'offene Buchung':'–'))}</td></tr>`;
-          }).join(''):`<tr><td colspan="7" class="empty">Für ${esc(bookingMonthLabel(month))} sind keine Buchungen vorhanden.</td></tr>`}</tbody>
+            return `<tr><td>${esc(bookingDateKey(r).split('-').reverse().join('.'))}</td><td>${esc(r.projectNumber||'–')}</td><td>${esc(bookingTime(r,'start')||'–')}${wasStartLimited(r,employee.earliestStartTime||'')?`<small class="booking-note start-limit-note">anrechenbar ab ${esc(employee.earliestStartTime)} Uhr</small>`:''}</td><td>${esc(bookingTime(r,'end')||'–')}</td><td>${net===null?(open?'<span class="pill yellow">läuft</span>':'–'):esc(bookingMinutesText(net))}</td><td><strong>${esc(bookingMinutesText((accountValues.get(r.id)||{}).balance||0,{signed:true}))}</strong></td><td>${esc(bookingSourceLabel(r))}</td><td>${esc(terminal|| (open?'offene Buchung':'–'))}</td></tr>`;
+          }).join(''):`<tr><td colspan="8" class="empty">Für ${esc(bookingMonthLabel(month))} sind keine Buchungen vorhanden.</td></tr>`}</tbody>
         </table></div>`;
       box.querySelector('#bookings-prev').onclick=()=>{month=new Date(month.getFullYear(),month.getMonth()-1,1,12);renderMonth()};
       box.querySelector('#bookings-current').onclick=()=>{const n=new Date();month=new Date(n.getFullYear(),n.getMonth(),1,12);renderMonth()};
