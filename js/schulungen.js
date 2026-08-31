@@ -11,7 +11,7 @@ async function allTrainings(){const s=await getDocs(collection(db,'trainings'));
 async function progress(userId){const s=await getDocs(query(collection(db,'trainingProgress'),where('userId','==',userId)));return s.docs.map(d=>({id:d.id,...d.data()}))}
 function file64(file){return new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(String(r.result).split(',')[1]);r.onerror=rej;r.readAsDataURL(file)})}
 function status(entry){if(!entry)return'<span class="pill yellow">Offen</span>';if(entry.status==='completed'||entry.status==='abgeschlossen')return'<span class="pill green">Abgeschlossen</span>';return'<span class="pill blue">Begonnen</span>'}
-function yearOptions(selected){const now=new Date().getFullYear(),from=2026,to=Math.max(now+1,selected);let html='';for(let y=to;y>=from;y--)html+=`<option value="${y}" ${y===selected?'selected':''}>${y}</option>`;return html}
+function yearOptions(selected){const now=new Date().getFullYear(),from=2026,to=Math.max(now+10,selected);let html='';for(let y=to;y>=from;y--)html+=`<option value="${y}" ${y===selected?'selected':''}>${y}</option>`;return html}
 
 async function ownView(ctx,year){
   const ts=await allTrainings(),vs=visibleTrainingsForYear(ts,ctx.profile,year),allPs=await progress(ctx.profile.id),ps=progressForTrainingYear(allPs,year),current=year===new Date().getFullYear();
