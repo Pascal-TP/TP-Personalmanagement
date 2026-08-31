@@ -266,3 +266,11 @@
 .training-year-note strong{color:#17233a}
 .info-strip.compact{margin:0;padding:9px 11px;font-size:.8rem}
 @media(max-width:760px){.training-year-select{margin-left:0;width:100%;justify-content:flex-end}.training-nav-row .subnav{flex-basis:100%}}
+
+
+/* V2.9.2 – Zeitstart, Urlaubsrücknahme */
+.start-limit-note{display:block;margin-top:3px;font-size:.72rem;color:var(--muted,#667085);font-weight:600;white-space:nowrap}
+.vacation-history{display:block;margin-top:4px;color:var(--muted,#667085);font-size:.76rem;line-height:1.35}
+.vacation-request-row .actions{flex-wrap:wrap;justify-content:flex-end;gap:8px}
+.withdrawn-vacation-row{border-left:4px solid #98a2b3;padding-left:12px}
+@media(max-width:760px){.vacation-request-row{align-items:flex-start}.vacation-request-row .actions{justify-content:flex-start}}
