@@ -363,6 +363,73 @@ function birthdayListHtml(users,privateMap,companies){
   const content=grouped.length?grouped.map(g=>`<section class="birthday-month"><h3>${g.name}</h3><div class="birthday-lines"><div class="birthday-row birthday-head"><span>Name</span><span>Vorname</span><span>Geburtstag</span><span>Firma</span></div>${g.items.map(r=>`<div class="birthday-row"><strong>${esc(r.lastName)}</strong><span>${esc(r.firstName)}</span><span class="birthday-date">${String(r.day).padStart(2,'0')}.${String(r.month).padStart(2,'0')}.</span><span>${esc(r.company)}</span></div>`).join('')}</div></section>`).join(''):'<div class="birthday-empty">Für die Geburtstagsliste sind derzeit keine Mitarbeiter freigegeben.</div>';
   return `<div class="birthday-sheet print-sheet"><div class="birthday-title"><div><small>TP-Personalmanagement</small><h2>Geburtstagsliste</h2></div><span>Stand ${deDate(new Date())}</span></div><div class="birthday-grid">${content}</div></div>`;
 }
+
+function countUserWorkdaysInYear(from,to,year,user){
+  const start=new Date(`${String(year).padStart(4,'0')}-01-01T12:00:00`);
+  const end=new Date(`${String(year).padStart(4,'0')}-12-31T12:00:00`);
+  const a=new Date(`${from}T12:00:00`),b=new Date(`${to}T12:00:00`);
+  if(Number.isNaN(a.getTime())||Number.isNaN(b.getTime())||b<start||a>end)return 0;
+  const first=a>start?a:start,last=b<end?b:end;
+  const allowed=new Set((user?.workDays?.length?user.workDays:['1','2','3','4','5']).map(String));
+  let n=0;
+  for(const d=new Date(first);d<=last;d.setDate(d.getDate()+1))if(allowed.has(String(d.getDay())))n++;
+  return n;
+}
+function countUserWorkdaysInMonth(from,to,year,month,user){
+  const start=new Date(year,month-1,1,12),end=new Date(year,month,0,12);
+  const a=new Date(`${from}T12:00:00`),b=new Date(`${to}T12:00:00`);
+  if(Number.isNaN(a.getTime())||Number.isNaN(b.getTime())||b<start||a>end)return 0;
+  const first=a>start?a:start,last=b<end?b:end;
+  const allowed=new Set((user?.workDays?.length?user.workDays:['1','2','3','4','5']).map(String));
+  let n=0;
+  for(const d=new Date(first);d<=last;d.setDate(d.getDate()+1))if(allowed.has(String(d.getDay())))n++;
+  return n;
+}
+function companyLabel(companyMap,user){
+  const c=companyMap.get(user.companyId)||{};
+  return c.short||c.name||'–';
+}
+function vacationBalanceRows(users,vacations,companies,year){
+  const companyMap=new Map(companies.map(c=>[c.id,c]));
+  return users.filter(u=>u.active!==false&&u.archived!==true&&(u.role==='employee'||u.role==='supervisor')).map(u=>{
+    const entitlement=Number(u.vacationDays||0);
+    const approved=vacations.filter(v=>v.userId===u.id&&v.status==='approved'&&String(v.type||'Urlaub')==='Urlaub')
+      .reduce((sum,v)=>sum+countUserWorkdaysInYear(v.from,v.to,year,u),0);
+    return {user:u,name:u.name||u.email||u.id,company:companyLabel(companyMap,u),entitlement,approved,remaining:entitlement-approved};
+  }).sort((a,b)=>a.company.localeCompare(b.company,'de')||a.name.localeCompare(b.name,'de'));
+}
+function vacationBalanceHtml(rows,year){
+  const totalRest=rows.reduce((s,r)=>s+r.remaining,0);
+  return `<div class="vacation-balance-sheet print-sheet"><div class="birthday-title"><div><small>TP-Personalmanagement</small><h2>Resturlaub ${year}</h2><p>Urlaubsanspruch abzüglich genehmigter Urlaubstage im ausgewählten Jahr · ohne separaten Vorjahresübertrag.</p></div><span>Stand ${deDate(new Date())}</span></div>
+    <div class="report-summary"><span>${rows.length} Mitarbeiter</span><strong>Resturlaub gesamt: ${totalRest} Tage</strong></div>
+    <div class="table-wrap"><table><thead><tr><th>Mitarbeiter</th><th>Firma</th><th>Anspruch</th><th>Genehmigt</th><th>Resturlaub</th></tr></thead><tbody>
+      ${rows.length?rows.map(r=>`<tr><td><strong>${esc(r.name)}</strong></td><td>${esc(r.company)}</td><td>${r.entitlement}</td><td>${r.approved}</td><td><strong class="${r.remaining<0?'negative-text':''}">${r.remaining}</strong></td></tr>`).join(''):'<tr><td colspan="5" class="empty">Keine Mitarbeiter vorhanden.</td></tr>'}
+    </tbody></table></div></div>`;
+}
+function sicknessRows(users,absences,companies,year){
+  const companyMap=new Map(companies.map(c=>[c.id,c]));
+  return users.filter(u=>u.active!==false&&u.archived!==true&&(u.role==='employee'||u.role==='supervisor')).map(u=>{
+    const userAbsences=absences.filter(a=>a.userId===u.id&&a.type==='sick');
+    const months=Array.from({length:12},(_,i)=>userAbsences.reduce((sum,a)=>sum+countUserWorkdaysInMonth(a.from,a.to,year,i+1,u),0));
+    const days=months.reduce((s,n)=>s+n,0);
+    return {name:u.name||u.email||u.id,company:companyLabel(companyMap,u),days,months};
+  }).sort((a,b)=>b.days-a.days||a.name.localeCompare(b.name,'de'));
+}
+function sicknessHtml(rows,year){
+  const withDays=rows.filter(r=>r.days>0),total=rows.reduce((s,r)=>s+r.days,0);
+  const monthly=Array.from({length:12},(_,i)=>rows.reduce((sum,r)=>sum+Number(r.months?.[i]||0),0));
+  const max=Math.max(1,...monthly),labels=['Jan','Feb','Mär','Apr','Mai','Jun','Jul','Aug','Sep','Okt','Nov','Dez'];
+  const chart=total>0?`<div class="sick-chart-scroll"><div class="sick-chart" style="--sick-count:12">${monthly.map((days,i)=>{
+    const h=Math.max(days>0?4:0,Math.round((days/max)*180));
+    return `<div class="sick-column"><div class="sick-value">${days}</div><div class="sick-bar" style="height:${h}px" title="${esc(labels[i])} ${year} · ${days} Krankheitstage"></div><div class="sick-name">${labels[i]}</div></div>`;
+  }).join('')}</div></div>`:'<div class="empty">Für dieses Jahr sind keine Krankheitstage erfasst.</div>';
+  return `<div class="sickness-report"><div class="report-summary"><span>${withDays.length} Mitarbeiter mit Krankheitstagen</span><strong>${total} Krankheitstage gesamt</strong></div>
+    <div class="table-wrap"><table><thead><tr><th>Mitarbeiter</th><th>Firma</th><th>Krankheitstage ${year}</th></tr></thead><tbody>
+      ${rows.length?rows.map(r=>`<tr><td><strong>${esc(r.name)}</strong></td><td>${esc(r.company)}</td><td>${r.days}</td></tr>`).join(''):'<tr><td colspan="3" class="empty">Keine Mitarbeiter vorhanden.</td></tr>'}
+    </tbody></table></div>
+    <h3 class="report-chart-title">Krankheitstage nach Monaten · ${year}</h3>${chart}</div>`;
+}
+
 function printReport(type){
   document.body.dataset.printReport=type;
   const cleanup=()=>{delete document.body.dataset.printReport;window.removeEventListener('afterprint',cleanup)};
@@ -375,7 +442,8 @@ export async function renderAuswertungen(el,ctx){
   setHead('Auswertungen','Übergreifende Übersicht und fertiger PDS-Zeiterfassungsexport.');
   const canAnnual=ctx.profile.role==='admin'&&(hasAdminPermission(ctx.profile,'absenceManage')||hasAdminPermission(ctx.profile,'hoursExport'));
   const canBirthday=ctx.profile.role==='admin'&&hasAdminPermission(ctx.profile,'employeesView');
-  const [u,t,v,c,tr,a,pdsDoc,ab,priv]=await Promise.all([getDocs(collection(db,'users')),getDocs(collection(db,'trainings')),getDocs(collection(db,'vacationRequests')),getDocs(collection(db,'companies')),getDocs(collection(db,'timeRecords')),getDocs(collection(db,'businessAreas')),getDoc(doc(db,'pdsSettings','default')),canAnnual?getDocs(collection(db,'absences')):Promise.resolve({docs:[]}),canBirthday?getDocs(collection(db,'employeePrivate')):Promise.resolve({docs:[]})]);
+  const canHrReports=ctx.profile.role==='admin'&&hasAdminPermission(ctx.profile,'hoursExport');
+  const [u,t,v,c,tr,a,pdsDoc,ab,priv]=await Promise.all([getDocs(collection(db,'users')),getDocs(collection(db,'trainings')),getDocs(collection(db,'vacationRequests')),getDocs(collection(db,'companies')),getDocs(collection(db,'timeRecords')),getDocs(collection(db,'businessAreas')),getDoc(doc(db,'pdsSettings','default')),(canAnnual||canHrReports)?getDocs(collection(db,'absences')):Promise.resolve({docs:[]}),canBirthday?getDocs(collection(db,'employeePrivate')):Promise.resolve({docs:[]})]);
   let users=u.docs.map(d=>({id:d.id,...d.data()}));const absences=ab.docs.map(d=>({id:d.id,...d.data()})),vacations=v.docs.map(d=>({id:d.id,...d.data()})),privateMap=new Map(priv.docs.map(d=>[d.id,{id:d.id,...d.data()}]));const companies=c.docs.map(d=>({id:d.id,...d.data()})),records=tr.docs.map(d=>({id:d.id,...d.data()})),areas=a.docs.map(d=>({id:d.id,...d.data()}));
   const settings={personnelCostPrefix:'60',bookingTextPrefix:'$7$ZeitDritts$',bookingTextMode:'period_week',bookingTextCustom:'',dataType:'i',...(pdsDoc.exists()?pdsDoc.data():{})};
   if(ctx.profile.role==='supervisor')users=users.filter(x=>x.id===ctx.profile.id||isSupervisorOf(x,ctx.profile.id));
@@ -388,9 +456,20 @@ export async function renderAuswertungen(el,ctx){
     <form id="pds-export-form" class="form-grid"><label class="field"><span>Buchungsperiode</span><input name="period" type="month" value="${periodDefault}" required></label><div class="field"><span>Aktueller Buchungstext</span><div class="readonly-box" id="pds-booking-text"></div></div><div class="field full actions"><button class="btn secondary" type="button" id="pds-preview">PDS-Vorschau erzeugen</button><button class="btn primary" type="button" id="pds-download">CSV für PDS herunterladen</button></div></form>
     <div id="pds-export-result" class="table-wrap"></div></article>`:''}
   ${canAnnual?`<article class="card annual-report-card"><div class="card-head"><div><h2>Jahresübersicht Anwesenheit</h2><p>Mitarbeiter und Jahr auswählen, Jahresübersicht anzeigen und drucken bzw. als PDF speichern.</p></div></div><form id="annual-form" class="form-grid annual-controls"><label class="field"><span>Mitarbeiter</span><select name="userId" required><option value="">– auswählen –</option>${users.filter(x=>x.active!==false).sort((a,b)=>(a.name||'').localeCompare(b.name||'','de')).map(x=>`<option value="${esc(x.id)}">${esc(x.name||x.email||x.id)}</option>`).join('')}</select></label><label class="field"><span>Jahr</span><input name="year" type="number" min="2020" max="2100" value="${now.getFullYear()}" required></label><div class="field actions annual-actions"><button type="button" class="btn primary" id="annual-show">Übersicht anzeigen</button><button type="button" class="btn secondary" id="annual-print" disabled>Drucken / PDF</button><span class="annual-print-hint">Hinweis: Skalierung auf 73 % einstellen und „Hintergrundgrafiken“ aktivieren.</span></div></form><div id="annual-result"></div></article>`:''}
+  ${canHrReports?`<article class="card vacation-balance-card"><div class="card-head"><div><h2>Resturlaubsliste</h2><p>Resturlaub aller aktiven Mitarbeiter für ein ausgewähltes Jahr anzeigen und drucken. Ein separater Vorjahresübertrag wird derzeit nicht geführt.</p></div></div>
+    <form id="vacation-balance-form" class="form-grid report-year-controls"><label class="field"><span>Jahr</span><input name="year" type="number" min="2020" max="2100" value="${now.getFullYear()}" required></label><div class="field actions"><button type="button" class="btn primary" id="vacation-balance-show">Liste anzeigen</button><button type="button" class="btn secondary" id="vacation-balance-print" disabled>Drucken / PDF</button></div></form><div id="vacation-balance-result"></div></article>
+  <article class="card sickness-report-card"><div class="card-head"><div><h2>Krankheitstage</h2><p>Jahresauswertung als Mitarbeiterliste und Säulendiagramm.</p></div></div>
+    <form id="sickness-form" class="form-grid report-year-controls"><label class="field"><span>Jahr</span><input name="year" type="number" min="2020" max="2100" value="${now.getFullYear()}" required></label><div class="field actions"><button type="button" class="btn primary" id="sickness-show">Auswertung anzeigen</button></div></form><div id="sickness-result"></div></article>`:''}
   ${canBirthday?`<article class="card birthday-report-card"><div class="card-head"><div><h2>Geburtstagsliste</h2><p>Nach Monaten sortierte Liste aller Mitarbeiter, die der Aufnahme in die Geburtstagsliste zugestimmt haben.</p></div></div><div class="actions birthday-actions"><button type="button" class="btn primary" id="birthday-show">Liste anzeigen</button><button type="button" class="btn secondary" id="birthday-print" disabled>Drucken / PDF</button></div><div id="birthday-result"></div></article>`:''}
   <article class="card"><div class="card-head"><div><h2>Weitere Auswertungen</h2><p>Dieser Bereich bleibt modular erweiterbar.</p></div></div><div class="info-strip">Weitere Kennzahlen wie Schulungsquoten, Personalbewegungen und firmenbezogene Auswertungen können hier später ergänzt werden.</div></article>`;
   if(canAnnual){const af=el.querySelector('#annual-form'),ar=el.querySelector('#annual-result'),pb=el.querySelector('#annual-print');el.querySelector('#annual-show').onclick=()=>{const user=users.find(x=>x.id===af.elements.userId.value),year=Number(af.elements.year.value);if(!user||year<2020||year>2100){toast('Bitte Mitarbeiter und gültiges Jahr auswählen.','error');return}ar.innerHTML=annualHtml(user,year,vacations,absences);pb.disabled=false};pb.onclick=()=>printReport('annual')}
+  if(canHrReports){
+    const vf=el.querySelector('#vacation-balance-form'),vr=el.querySelector('#vacation-balance-result'),vp=el.querySelector('#vacation-balance-print');
+    el.querySelector('#vacation-balance-show').onclick=()=>{const year=Number(vf.elements.year.value);if(year<2020||year>2100){toast('Bitte ein gültiges Jahr auswählen.','error');return}vr.innerHTML=vacationBalanceHtml(vacationBalanceRows(users,vacations,companies,year),year);vp.disabled=false};
+    vp.onclick=()=>printReport('vacation-balance');
+    const sf=el.querySelector('#sickness-form'),sr=el.querySelector('#sickness-result');
+    el.querySelector('#sickness-show').onclick=()=>{const year=Number(sf.elements.year.value);if(year<2020||year>2100){toast('Bitte ein gültiges Jahr auswählen.','error');return}sr.innerHTML=sicknessHtml(sicknessRows(users,absences,companies,year),year)};
+  }
   if(canBirthday){const br=el.querySelector('#birthday-result'),bp=el.querySelector('#birthday-print');el.querySelector('#birthday-show').onclick=()=>{br.innerHTML=birthdayListHtml(users,privateMap,companies);bp.disabled=false};bp.onclick=()=>printReport('birthday')}
   if(!canHoursExport)return;
   const form=el.querySelector('#pds-export-form'),result=el.querySelector('#pds-export-result'),booking=el.querySelector('#pds-booking-text');

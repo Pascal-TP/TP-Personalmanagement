@@ -1,11 +1,43 @@
-import { db } from "./firebase.js";
+import { db, auth, functions } from "./firebase.js";
 import { collection, getDocs, query, where, orderBy, limit } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+import { httpsCallable } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-functions.js";
 import { setHead } from "./app.js";
 import { esc, fmtDate, statusPill } from "./utils.js";
 import { hasAdminPermission } from "./permissions.js";
 import { progressForTrainingYear, visibleTrainingsForYear } from "./training-utils.js";
-import { calculateDailyTimeValues, timeRecordStart } from "./time-utils.js";
+import { calculateDailyTimeValues, calculateTimeAccountBalance, timeRecordStart } from "./time-utils.js";
 import { getAssignedDocs } from "./supervisor-utils.js";
+
+
+const getTeamMilestones=httpsCallable(functions,'getPersonnelTeamMilestones');
+
+function formatSignedHours(minutes){
+  const value=Math.round(Number(minutes)||0),sign=value>0?'+':value<0?'−':'',abs=Math.abs(value);
+  return `${sign}${Math.floor(abs/60)}:${String(abs%60).padStart(2,'0')} h`;
+}
+
+function renderTgaOvertimeAlert(rows,monthName){
+  if(!rows.length)return '';
+  return `<article class="card tga-overtime-card">
+    <div class="card-head"><div><h2>TGA · Zeitguthaben über 80 Stunden</h2><p>${esc(monthName)} · aktueller Stand. Der Anteil oberhalb von 80:00 h ist als Auszahlungsmenge ausgewiesen.</p></div><span class="reminder-count urgent">${rows.length} Mitarbeiter</span></div>
+    <div class="table-wrap"><table><thead><tr><th>Mitarbeiter</th><th>Zeitguthaben</th><th>über 80 h</th></tr></thead><tbody>
+      ${rows.map(r=>`<tr><td><strong>${esc(r.name)}</strong>${r.employeeNumber?`<div class="small muted">MA ${esc(r.employeeNumber)}</div>`:''}</td><td><strong>${formatSignedHours(r.balanceMinutes)}</strong></td><td><span class="pill yellow">${formatSignedHours(r.excessMinutes)}</span></td></tr>`).join('')}
+    </tbody></table></div>
+  </article>`;
+}
+
+function renderMilestoneReminders(items=[]){
+  if(!items.length)return '';
+  return `<article class="card milestone-reminders-card">
+    <div class="card-head"><div><h2>Geburtstage & Jubiläen</h2><p>Geburtstage 7 Tage im Voraus · Betriebsjubiläen 30 Tage im Voraus</p></div><span class="reminder-count">${items.length} Hinweis${items.length===1?'':'e'}</span></div>
+    <div class="hr-reminder-list">${items.map(r=>`
+      <div class="hr-reminder-row">
+        <span class="hr-reminder-icon">${r.type==='birthday'?'G':'J'}</span>
+        <div class="hr-reminder-main"><strong>${esc(r.type==='birthday'?'Geburtstag':`${r.years}. Betriebsjubiläum`)}</strong><span>${esc(r.name||'Mitarbeiter')}${r.department?` · ${esc(r.department)}`:''}</span></div>
+        <div class="hr-reminder-date"><strong>${fmtDate(r.date)}</strong>${statusPill(r.days===0?'heute':`in ${r.days} Tag${r.days===1?'':'en'}`,r.days<=7?'yellow':'blue')}</div>
+      </div>`).join('')}</div>
+  </article>`;
+}
 
 function toDate(value){
   if(!value) return null;
@@ -181,14 +213,48 @@ export async function renderDashboard(el,ctx){
   const p=ctx.profile;
   const canApproveVacation=p.role==="supervisor"||hasAdminPermission(p,"vacationApprove");
   const canApproveTime=p.role==="supervisor"||hasAdminPermission(p,"timeApprove");
-  let news=[],trainingProgress=[],allTrainingProgress=[],allTrainingDefinitions=[],vacations=[],absences=[],timeRequests=[],timeRecords=[],teamVacations=[],hrUsers=[],personalChangeRequests=[];
+  let news=[],trainingProgress=[],allTrainingProgress=[],allTrainingDefinitions=[],vacations=[],absences=[],timeRequests=[],timeRecords=[],teamVacations=[],hrUsers=[],personalChangeRequests=[],milestones=[],tgaOvertimeRows=[];
   try{const s=await getDocs(query(collection(db,"news"),orderBy("createdAt","desc"),limit(6)));news=s.docs.map(d=>({id:d.id,...d.data()})).filter(n=>n.active!==false&&(n.companyId==="all"||!n.companyId||n.companyId===p.companyId)&&(n.audience==="all"||!n.audience||n.audience===p.role))}catch{}
   try{const s=await getDocs(query(collection(db,"trainingProgress"),where("userId","==",p.id)));trainingProgress=s.docs.map(d=>d.data())}catch{}
   try{const s=await getDocs(collection(db,"trainings"));allTrainingDefinitions=s.docs.map(d=>({id:d.id,...d.data()}))}catch{}
   try{const s=await getDocs(query(collection(db,"vacationRequests"),where("userId","==",p.id)));vacations=s.docs.map(d=>({id:d.id,...d.data()}))}catch{}
   try{const s=await getDocs(query(collection(db,"absences"),where("userId","==",p.id)));absences=s.docs.map(d=>({id:d.id,...d.data()}))}catch{}
   try{const s=await getDocs(query(collection(db,"timeRecords"),where("userId","==",p.id)));timeRecords=s.docs.map(d=>({id:d.id,...d.data()}))}catch{}
-  if(p.role==="admin"){try{const s=await getDocs(collection(db,"users"));hrUsers=s.docs.map(d=>({id:d.id,...d.data()}))}catch(e){console.error("HR-Fristen konnten nicht geladen werden",e)} if(hasAdminPermission(p,"trainingOverview")){try{const s=await getDocs(collection(db,"trainingProgress"));allTrainingProgress=s.docs.map(d=>({id:d.id,...d.data()}))}catch(e){console.error("Unternehmensweite Schulungsstände konnten nicht geladen werden",e)}} if(hasAdminPermission(p,"personalDataChanges")){try{const s=await getDocs(collection(db,"personalDataChangeRequests"));personalChangeRequests=s.docs.map(d=>({id:d.id,...d.data()})).filter(x=>x.status==="pending")}catch(e){console.error("Stammdaten-Änderungsanträge konnten nicht geladen werden",e)}}}
+  if(p.role==="admin"||p.role==="supervisor"){try{
+    const token=await auth.currentUser?.getIdToken();
+    if(token){const res=await getTeamMilestones({idToken:token});milestones=Array.isArray(res.data?.items)?res.data.items:[]}
+  }catch(e){console.error("Geburtstags-/Jubiläumserinnerungen konnten nicht geladen werden",e)}}
+  if(p.role==="admin"){
+    try{const s=await getDocs(collection(db,"users"));hrUsers=s.docs.map(d=>({id:d.id,...d.data()}))}catch(e){console.error("HR-Fristen konnten nicht geladen werden",e)}
+    if(hasAdminPermission(p,"trainingOverview")){try{const s=await getDocs(collection(db,"trainingProgress"));allTrainingProgress=s.docs.map(d=>({id:d.id,...d.data()}))}catch(e){console.error("Unternehmensweite Schulungsstände konnten nicht geladen werden",e)}}
+    if(hasAdminPermission(p,"personalDataChanges")){try{const s=await getDocs(collection(db,"personalDataChangeRequests"));personalChangeRequests=s.docs.map(d=>({id:d.id,...d.data()})).filter(x=>x.status==="pending")}catch(e){console.error("Stammdaten-Änderungsanträge konnten nicht geladen werden",e)}}
+    if(hasAdminPermission(p,"hoursExport")){try{
+      const [cs,trs,vs,as]=await Promise.all([
+        getDocs(collection(db,"companies")),getDocs(collection(db,"timeRecords")),
+        getDocs(collection(db,"vacationRequests")),getDocs(collection(db,"absences"))
+      ]);
+      const companies=cs.docs.map(d=>({id:d.id,...d.data()}));
+      const tga=companies.find(c=>String(c.name||'').trim().toLocaleLowerCase('de').includes('tga systemtechnik'));
+      if(tga){
+        const allRecords=trs.docs.map(d=>({id:d.id,...d.data()}));
+        const allVacations=vs.docs.map(d=>({id:d.id,...d.data()}));
+        const allAbsences=as.docs.map(d=>({id:d.id,...d.data()}));
+        tgaOvertimeRows=hrUsers
+          .filter(u=>u.active!==false&&u.archived!==true&&u.companyId===tga.id&&(u.role==="employee"||u.role==="supervisor"))
+          .map(u=>{
+            const balanceMinutes=calculateTimeAccountBalance(
+              allRecords.filter(r=>r.userId===u.id),u,
+              allVacations.filter(v=>v.userId===u.id),
+              allAbsences.filter(a=>a.userId===u.id),
+              {includeOpen:true,now:new Date()}
+            );
+            return {id:u.id,name:u.name||u.email||u.id,employeeNumber:u.employeeNumber||'',balanceMinutes,excessMinutes:balanceMinutes-80*60};
+          })
+          .filter(x=>x.balanceMinutes>80*60)
+          .sort((a,b)=>b.balanceMinutes-a.balanceMinutes||a.name.localeCompare(b.name,'de'));
+      }
+    }catch(e){console.error("TGA-Überstundenhinweis konnte nicht geladen werden",e)}}
+  }
   if(p.role==="employee"||canApproveTime){try{
     if(p.role==="supervisor") timeRequests=await getAssignedDocs(db,"timeCorrectionRequests",p.id);
     else {const s=await getDocs(collection(db,"timeCorrectionRequests"));timeRequests=s.docs.map(d=>({id:d.id,...d.data()}))}
@@ -244,6 +310,8 @@ export async function renderDashboard(el,ctx){
   const timeAction=canApproveTime&&pendingTeamTime>0;
   const adminHint=hasAdminPermission(p,"newsManage")?`<div class="info-strip">Die Personalabteilung kann über <strong>News & Hinweise</strong> interne Meldungen und E-Mail-Vorlagen verwalten.</div>`:"";
   const hrReminderHtml=p.role==="admin"?renderHrReminders(buildHrReminders(hrUsers)):"";
+  const milestoneHtml=(p.role==="admin"||p.role==="supervisor")?renderMilestoneReminders(milestones):"";
+  const tgaOvertimeHtml=p.role==="admin"&&hasAdminPermission(p,"hoursExport")?renderTgaOvertimeAlert(tgaOvertimeRows,monthName):"";
   const changeRequestHint=p.role==="admin"&&hasAdminPermission(p,"personalDataChanges")&&personalChangeRequests.length?`<div class="info-strip"><strong>${personalChangeRequests.length}</strong> offene${personalChangeRequests.length===1?'r':''} Stammdaten-Änderungsantrag${personalChangeRequests.length===1?'':'e'} unter <strong>Änderungsanträge</strong>.</div>`:"";
 
   el.innerHTML=`
@@ -252,7 +320,7 @@ export async function renderDashboard(el,ctx){
       <div class="kpi ${vacationAction?"needs-action":""}"><span>Urlaubsanträge</span><strong>${p.role==="admin"&&!canApproveVacation?"–":vacationCount}</strong><small>${p.role==="admin"?(canApproveVacation?(vacationAction?"offen im Unternehmen":"keine offenen Anträge"):"Urlaubsübersicht nicht freigeschaltet"):(canApproveVacation?(vacationAction?"zur Freigabe":"keine offene Freigabe"):"aktuell in Bearbeitung")}</small></div>
       <div class="kpi ${timeAction?"needs-action":""}"><span>Zeiterfassungsanträge</span><strong>${p.role==="admin"&&!canApproveTime?"–":pendingTime}</strong><small>${p.role==="admin"?(canApproveTime?(timeAction?"offen im Unternehmen":"keine offenen Anträge"):"Zeitfreigaben nicht freigeschaltet"):(canApproveTime?(timeAction?"zur Freigabe":"keine offene Freigabe"):"eigene offene Anträge")}</small></div>
       ${p.role!=="admin"?`<div class="kpi hours-kpi"><span>Soll / Ist · ${esc(monthName)}</span><strong>${hm(hours.targetMinutes)} / ${hm(hours.actualMinutes)}</strong><small class="hours-balance ${saldoClass}">Monatssaldo: ${hm(hours.balanceMinutes,{signed:true})}</small></div>`:""}
-    </div>${changeRequestHint}${adminHint}${hrReminderHtml}
+    </div>${changeRequestHint}${adminHint}${tgaOvertimeHtml}${milestoneHtml}${hrReminderHtml}
     <div class="two-col">
       <article class="card"><div class="card-head"><div><h2>News & Hinweise</h2><p>Aktuelle Informationen der Personalabteilung</p></div></div>
         <div class="news-list">${news.length?news.map(n=>`<div class="news-card ${n.priority==='important'?'important':''}"><div class="news-icon">${n.priority==='important'?'!':'i'}</div><div><h3>${esc(n.title||'Hinweis')}</h3><div class="rich-content">${n.html||esc(n.text||'')}</div><span>${n.validTo?`gültig bis ${fmtDate(n.validTo)}`:'interne Mitteilung'}</span></div></div>`).join(""):`<div class="empty">Aktuell liegen keine Hinweise vor.</div>`}</div>
