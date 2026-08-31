@@ -274,3 +274,21 @@
 .vacation-request-row .actions{flex-wrap:wrap;justify-content:flex-end;gap:8px}
 .withdrawn-vacation-row{border-left:4px solid #98a2b3;padding-left:12px}
 @media(max-width:760px){.vacation-request-row{align-items:flex-start}.vacation-request-row .actions{justify-content:flex-start}}
+
+
+/* V2.10 – Vergütungshistorie und rollenbezogene Mitarbeitnotizen */
+.history-inline-list{width:100%}
+.history-inline-list .table-wrap{margin-top:4px}
+.compact-table th,.compact-table td{padding:9px 10px;vertical-align:top}
+.history-meta{display:block;margin-top:3px;color:var(--muted,#6b7280);font-weight:400}
+.note-history-list{display:flex;flex-direction:column;gap:10px;margin-top:10px}
+.note-history-entry{border:1px solid rgba(148,163,184,.35);border-radius:12px;padding:12px 14px;background:rgba(248,250,252,.72)}
+.note-history-entry p{margin:8px 0;white-space:pre-wrap;line-height:1.45}
+.note-history-entry>small{color:var(--muted,#6b7280)}
+.note-history-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}
+.note-history-head span{font-size:.84rem;color:var(--muted,#6b7280);text-align:right}
+.supervisor-note-form{margin-bottom:10px}
+@media(max-width:760px){
+  .note-history-head{flex-direction:column;gap:3px}
+  .note-history-head span{text-align:left}
+}
