@@ -256,3 +256,13 @@
   .planning-modal-dialog{padding:16px;max-height:calc(100vh - 20px)}
   .planning-toolbar{align-items:stretch}
 }
+
+/* V2.9.1 – Schulungsjahre und zeitgesteuerte Schulungszuordnung */
+.training-nav-row{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:16px}
+.training-nav-row .subnav{margin-bottom:0;flex:1 1 720px}
+.training-year-select{display:flex;align-items:center;gap:8px;white-space:nowrap;margin-left:auto;font-size:.82rem;font-weight:700;color:#526174}
+.training-year-select select{min-width:100px;border:1px solid #cbd5e1;border-radius:8px;background:#fff;padding:8px 10px;color:#17233a;font:inherit}
+.training-year-note{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:10px 13px;margin-bottom:14px;border:1px solid #dbe3ec;border-radius:9px;background:#f7f9fb;color:#536174;font-size:.84rem}
+.training-year-note strong{color:#17233a}
+.info-strip.compact{margin:0;padding:9px 11px;font-size:.8rem}
+@media(max-width:760px){.training-year-select{margin-left:0;width:100%;justify-content:flex-end}.training-nav-row .subnav{flex-basis:100%}}
