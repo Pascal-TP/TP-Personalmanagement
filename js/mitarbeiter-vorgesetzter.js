@@ -9,6 +9,7 @@ import { httpsCallable } from "https://www.gstatic.com/firebasejs/11.6.1/firebas
 import { setHead } from "./app.js";
 import { esc } from "./utils.js";
 import { getEmployeePhotoUrls } from "./employee-photos.js";
+import { calculateDailyTimeValues, wasStartLimited } from "./time-utils.js";
 
 const getSupervisorEmployeeContact = httpsCallable(
   functions,
@@ -89,6 +90,8 @@ async function renderSupervisorBookings(container, employee) {
     return;
   }
 
+  const bookingValues = calculateDailyTimeValues(records, employee.earliestStartTime || "", { includeOpen: true });
+
   let month = new Date();
   month = new Date(month.getFullYear(), month.getMonth(), 1, 12);
 
@@ -127,7 +130,8 @@ async function renderSupervisorBookings(container, employee) {
                         .join(" · ");
                       return `<tr class="adjustment-row"><td>${esc(bookingDateKey(r).split("-").reverse().join("."))}</td><td>${esc(r.projectNumber || "–")}</td><td colspan="2"><strong>Stundenkorrektur</strong></td><td><strong>${esc(bookingMinutesText(r.adjustmentMinutes, { signed: true }))}</strong></td><td>${esc(bookingSourceLabel(r))}</td><td>${esc(note || r.createdByName || "–")}</td></tr>`;
                     }
-                    const net = bookingNetMinutes(r);
+                    const calc = bookingValues.get(r.id);
+                    const net = calc ? calc.net : bookingNetMinutes(r);
                     const open =
                       !bookingToDate(r.endAt) && r.status !== "closed";
                     const terminal = [
@@ -142,7 +146,7 @@ async function renderSupervisorBookings(container, employee) {
                     return `<tr>
               <td>${esc(bookingDateKey(r).split("-").reverse().join("."))}</td>
               <td>${esc(r.projectNumber || "–")}</td>
-              <td>${esc(bookingTime(r, "start") || "–")}</td>
+              <td>${esc(bookingTime(r, "start") || "–")}${wasStartLimited(r,employee.earliestStartTime||"")?`<small class="booking-note start-limit-note">anrechenbar ab ${esc(employee.earliestStartTime)} Uhr</small>`:""}</td>
               <td>${esc(bookingTime(r, "end") || "–")}</td>
               <td>${net === null ? (open ? '<span class="pill yellow">läuft</span>' : "–") : esc(bookingMinutesText(net))}</td>
               <td>${esc(bookingSourceLabel(r))}</td>

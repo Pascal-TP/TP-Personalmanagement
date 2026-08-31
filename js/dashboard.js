@@ -4,6 +4,7 @@ import { setHead } from "./app.js";
 import { esc, fmtDate, statusPill } from "./utils.js";
 import { hasAdminPermission } from "./permissions.js";
 import { progressForTrainingYear, visibleTrainingsForYear } from "./training-utils.js";
+import { calculateDailyTimeValues, timeRecordStart } from "./time-utils.js";
 
 function toDate(value){
   if(!value) return null;
@@ -91,26 +92,14 @@ function currentMonthBalance(profile,timeRecords,vacations,absences=[]){
   const absenceDays=absences.reduce((sum,a)=>sum+overlapWorkdays(a.from,a.to,calcStart,today),0);
   const targetMinutes=Math.max(0,Math.round((weekdays-approvedLeaveDays-absenceDays)*dailyTargetMinutes));
 
-  let adjustmentMinutes=0;
-  const grossByDay=new Map();
-  timeRecords.forEach(r=>{
-    const start=recordStart(r);
-    if(!start) return;
+  const relevantRecords=timeRecords.filter(r=>{
+    const start=r.recordType==="adjustment"?(r.adjustmentDate?new Date(`${r.adjustmentDate}T12:00:00`):toDate(r.createdAt)):timeRecordStart(r);
+    if(!start||Number.isNaN(start.getTime()))return false;
     const day=new Date(start.getFullYear(),start.getMonth(),start.getDate(),12);
-    if(day<calcStart||day>today) return;
-    if(r.recordType==="adjustment"){ adjustmentMinutes+=Number(r.adjustmentMinutes)||0; return; }
-    let end=recordEnd(r);
-    if(!end&&r.status!=="closed") end=now;
-    if(!end||end<start) return;
-    const gross=Math.max(0,Math.round((end-start)/60000));
-    const key=localDateKey(start);
-    grossByDay.set(key,(grossByDay.get(key)||0)+gross);
+    return day>=calcStart&&day<=today;
   });
-  const workedMinutes=[...grossByDay.values()].reduce((sum,gross)=>{
-    const pause=gross>540?45:gross>360?30:0;
-    return sum+Math.max(0,gross-pause);
-  },0);
-  const actualMinutes=Math.round(workedMinutes+adjustmentMinutes);
+  const timeValues=calculateDailyTimeValues(relevantRecords,profile.earliestStartTime||"",{includeOpen:true,now});
+  const actualMinutes=Math.round(relevantRecords.reduce((sum,r)=>sum+(timeValues.get(r.id)?.net||0),0));
 
   return {targetMinutes,actualMinutes,balanceMinutes:actualMinutes-targetMinutes};
 }
@@ -201,7 +190,12 @@ export async function renderDashboard(el,ctx){
   if(p.role==="admin"){try{const s=await getDocs(collection(db,"users"));hrUsers=s.docs.map(d=>({id:d.id,...d.data()}))}catch(e){console.error("HR-Fristen konnten nicht geladen werden",e)} if(hasAdminPermission(p,"trainingOverview")){try{const s=await getDocs(collection(db,"trainingProgress"));allTrainingProgress=s.docs.map(d=>({id:d.id,...d.data()}))}catch(e){console.error("Unternehmensweite Schulungsstände konnten nicht geladen werden",e)}} if(hasAdminPermission(p,"personalDataChanges")){try{const s=await getDocs(collection(db,"personalDataChangeRequests"));personalChangeRequests=s.docs.map(d=>({id:d.id,...d.data()})).filter(x=>x.status==="pending")}catch(e){console.error("Stammdaten-Änderungsanträge konnten nicht geladen werden",e)}}}
   if(p.role==="employee"||canApproveTime){try{const s=await getDocs(collection(db,"timeCorrectionRequests"));timeRequests=s.docs.map(d=>({id:d.id,...d.data()}))}catch{}}
   if(canApproveVacation){
-    try{const s=await getDocs(collection(db,"vacationRequests"));teamVacations=s.docs.map(d=>({id:d.id,...d.data()})).filter(v=>v.status==="pending"&&(p.role==="admin"||v.supervisorId===p.id))}catch{}
+    try{
+      const s=p.role==="admin"
+        ? await getDocs(collection(db,"vacationRequests"))
+        : await getDocs(query(collection(db,"vacationRequests"),where("supervisorId","==",p.id)));
+      teamVacations=s.docs.map(d=>({id:d.id,...d.data()})).filter(v=>v.status==="pending"||(v.status==="withdrawn"&&!v.withdrawalAcknowledgedAt));
+    }catch(e){console.error("Urlaubsfreigaben konnten nicht geladen werden",e)}
   }
 
   const currentTrainingYear=new Date().getFullYear();

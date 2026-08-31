@@ -14,6 +14,7 @@ import {
 import { setHead } from "./app.js";
 import { esc, fmtDate, fmtDateTime, statusPill, toast } from "./utils.js";
 import { hasAdminPermission } from "./permissions.js";
+import { calculateDailyTimeValues, wasStartLimited } from "./time-utils.js";
 
 
 function validProjectNumber(value) {
@@ -102,31 +103,6 @@ function calcRecord(record) {
   return { gross, pause, net: Math.max(0, gross - pause) };
 }
 
-
-function allocatedDayValues(records) {
-  const result = new Map();
-  const groups = new Map();
-  records.filter(r => r.recordType !== "adjustment" && !isOpen(r)).forEach(r => {
-    const c = calcRecord(r);
-    const key = recordDateKey(r);
-    if (!key || c.gross <= 0) return;
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push({ record: r, gross: c.gross });
-  });
-  for (const items of groups.values()) {
-    const totalGross = items.reduce((sum, x) => sum + x.gross, 0);
-    const dayPause = totalGross > 540 ? 45 : totalGross > 360 ? 30 : 0;
-    let allocated = 0;
-    items.forEach((item, index) => {
-      const pause = index === items.length - 1
-        ? dayPause - allocated
-        : Math.round(dayPause * (item.gross / totalGross));
-      allocated += pause;
-      result.set(item.record.id, { gross: item.gross, pause, net: Math.max(0, item.gross - pause) });
-    });
-  }
-  return result;
-}
 
 function isOpen(record) {
   return !!recordStartDate(record) && !recordEndDate(record) && record.status !== "closed";
@@ -297,7 +273,7 @@ export async function renderZeiterfassung(el, ctx) {
   }
 
   const openRecord = entries.find(isOpen) || null;
-  const allocatedValues = allocatedDayValues(entries);
+  const allocatedValues = calculateDailyTimeValues(entries, ctx.profile.earliestStartTime || "", {includeOpen:true});
   const pendingRecordIds = new Set(
     ownRequests.filter(r => r.status === "pending" && r.requestType === "correction").map(r => r.recordId)
   );
@@ -367,8 +343,9 @@ export async function renderZeiterfassung(el, ctx) {
 
     <article class="card ${isAdmin?"admin-self-hidden":""}">
       <div class="card-head"><div><h2>Meine Buchungen</h2><p>Gespeicherte Arbeitszeiten und Stundenkorrekturen. Arbeitszeiten können ausschließlich über einen Korrekturantrag geändert werden.</p></div></div>
+      ${ctx.profile.earliestStartTime ? `<div class="info-strip"><strong>Vorgegebener Arbeitsbeginn:</strong> Arbeitszeit wird frühestens ab <strong>${esc(ctx.profile.earliestStartTime)} Uhr</strong> angerechnet. Ein früherer echter KOMMEN-Zeitstempel bleibt zur Dokumentation sichtbar.</div>` : ""}
       <div class="table-wrap"><table>
-        <thead><tr><th>Datum</th><th>Projekt</th><th>Beginn</th><th>Ende</th><th>Pause</th><th>Arbeitszeit</th><th>Status</th><th>Aktion</th></tr></thead>
+        <thead><tr><th>Datum</th><th>Projekt</th><th>Beginn</th><th>Ende</th><th>Pause</th><th>Arbeitszeit</th><th>Ist-h-gesamt</th><th>Status</th><th>Aktion</th></tr></thead>
         <tbody>
           ${entries.length ? entries.map(r => {
             if (r.recordType === "adjustment") {
@@ -378,6 +355,7 @@ export async function renderZeiterfassung(el, ctx) {
                 <td><strong>${esc(projectText(r.projectNumber))}</strong></td>
                 <td colspan="3"><strong>Stundenkorrektur</strong><small class="booking-note">${esc(reason || "Korrekturbuchung")}</small></td>
                 <td><strong class="adjustment-value ${Number(r.adjustmentMinutes) >= 0 ? "positive" : "negative"}">${signedHm(r.adjustmentMinutes)}</strong></td>
+                <td><strong>${signedHm((allocatedValues.get(r.id)||{}).cumulative||0)}</strong></td>
                 <td>${statusPill("Admin-Buchung", "blue")}</td>
                 <td><span class="muted-small">${esc(r.createdByName || "Personalabteilung")}</span></td>
               </tr>`;
@@ -388,14 +366,15 @@ export async function renderZeiterfassung(el, ctx) {
             return `<tr>
               <td>${fmtDate(recordDateKey(r))}</td>
               <td><strong>${esc(projectText(r.projectNumber))}</strong></td>
-              <td>${esc(recordTime(r, "start") || "–")}</td>
+              <td>${esc(recordTime(r, "start") || "–")}${wasStartLimited(r,ctx.profile.earliestStartTime||"")?`<small class="booking-note start-limit-note">anrechenbar ab ${esc(ctx.profile.earliestStartTime)} Uhr</small>`:""}</td>
               <td>${esc(recordTime(r, "end") || "–")}</td>
-              <td>${open ? "–" : hm(c.pause)}</td>
-              <td>${open ? "–" : `<strong>${hm(c.net)}</strong>`}</td>
+              <td>${c.pause ? `<strong>${c.pause} Min.</strong>` : "–"}</td>
+              <td>${open ? `<strong>${hm(c.net)}</strong><small class="booking-note">laufender Wert</small>` : `<strong>${hm(c.net)}</strong>`}</td>
+              <td><strong>${signedHm(c.cumulative||0)}</strong></td>
               <td>${open ? statusPill("läuft", "blue") : statusPill("erfasst", "green")}</td>
               <td>${open ? `<span class="muted-small">erst nach Gehen</span>` : pending ? statusPill("Korrektur beantragt", "yellow") : `<button class="btn small secondary correction-btn" type="button" data-id="${r.id}">Korrektur beantragen</button>`}</td>
             </tr>`;
-          }).join("") : `<tr><td colspan="8" class="empty">Noch keine Buchungen vorhanden.</td></tr>`}
+          }).join("") : `<tr><td colspan="9" class="empty">Noch keine Buchungen vorhanden.</td></tr>`}
         </tbody>
       </table></div>
     </article>

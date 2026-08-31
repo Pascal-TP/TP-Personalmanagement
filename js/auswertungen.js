@@ -3,15 +3,16 @@ import { collection, getDocs, doc, getDoc, query, where, setDoc, deleteDoc, serv
 import { setHead } from "./app.js";
 import { esc, toast } from "./utils.js";
 import { hasAdminPermission } from "./permissions.js";
+import { recordGrossMinutes } from "./time-utils.js";
 
-const ABSENCE_LABELS={sick:'Krank',child_sick:'Kind krank',special_leave:'Sonderurlaub',unpaid_leave:'Unbezahlter Urlaub',release:'Freistellung',parental_leave:'Elternzeit',other:'Sonstige Abwesenheit'};
+const ABSENCE_LABELS={sick:'Krank',child_sick:'Kind krank',special_leave:'Sonderurlaub',vocational_school:'Berufsschule',training:'Weiterbildung',university:'Uni',unpaid_leave:'Unbezahlter Urlaub',release:'Freistellung',parental_leave:'Elternzeit',other:'Sonstige Abwesenheit'};
 function easterSunday(y){const a=y%19,b=Math.floor(y/100),c=y%100,d=Math.floor(b/4),e=b%4,f=Math.floor((b+8)/25),g=Math.floor((b-f+1)/3),h=(19*a+b-d-g+15)%30,i=Math.floor(c/4),k=c%4,l=(32+2*e+2*i-h-k)%7,m=Math.floor((a+11*h+22*l)/451),mo=Math.floor((h+l-7*m+114)/31),day=((h+l-7*m+114)%31)+1;return new Date(y,mo-1,day,12)}
 function addDays(d,n){const x=new Date(d);x.setDate(x.getDate()+n);return x}
 function germanNationalHolidays(y){const fixed=[[0,1,'Neujahr'],[4,1,'Tag der Arbeit'],[9,3,'Tag der Deutschen Einheit'],[11,25,'1. Weihnachtstag'],[11,26,'2. Weihnachtstag']],e=easterSunday(y),mov=[[-2,'Karfreitag'],[1,'Ostermontag'],[39,'Christi Himmelfahrt'],[50,'Pfingstmontag']];const map=new Map();fixed.forEach(([m,d,n])=>map.set(dateKey(new Date(y,m,d,12)),n));mov.forEach(([o,n])=>map.set(dateKey(addDays(e,o)),n));return map}
 function daySet(from,to){const out=[];let d=new Date(`${from}T12:00:00`),e=new Date(`${to}T12:00:00`);for(;d<=e;d.setDate(d.getDate()+1))out.push(dateKey(d));return out}
 function annualHtml(user,year,vacations,absences){const workDays=new Set((user.workDays?.length?user.workDays:['1','2','3','4','5']).map(String)),holidays=germanNationalHolidays(year),marks=new Map();holidays.forEach((n,k)=>marks.set(k,{code:'F',cls:'holiday',title:n}));for(let m=0;m<12;m++){const last=new Date(year,m+1,0).getDate();for(let d=1;d<=last;d++){const dt=new Date(year,m,d,12),k=dateKey(dt);if(!workDays.has(String(dt.getDay()))&&!marks.has(k))marks.set(k,{code:'–',cls:'off',title:'Regelmäßig arbeitsfrei'})}}
   vacations.filter(v=>v.userId===user.id&&v.status==='approved').forEach(v=>daySet(v.from,v.to).forEach(k=>{if(k.startsWith(String(year))&&!marks.get(k)?.cls?.includes('holiday'))marks.set(k,{code:v.type==='Freizeitausgleich'?'G':v.type==='Sonderurlaub'?'SU':'U',cls:'vacation',title:v.type||'Urlaub'})}));
-  absences.filter(a=>a.userId===user.id).forEach(a=>daySet(a.from,a.to).forEach(k=>{if(k.startsWith(String(year)))marks.set(k,{code:a.type==='sick'?'K':a.type==='child_sick'?'KK':a.type==='special_leave'?'SU':a.type==='unpaid_leave'?'UU':a.type==='release'?'FR':a.type==='parental_leave'?'EZ':'A',cls:'absence',title:ABSENCE_LABELS[a.type]||'Abwesenheit'})}));
+  absences.filter(a=>a.userId===user.id).forEach(a=>daySet(a.from,a.to).forEach(k=>{if(k.startsWith(String(year)))marks.set(k,{code:a.type==='sick'?'K':a.type==='child_sick'?'KK':a.type==='special_leave'?'SU':a.type==='unpaid_leave'?'UU':a.type==='release'?'FR':a.type==='parental_leave'?'EZ':a.type==='vocational_school'?'BS':a.type==='training'?'WB':a.type==='university'?'UNI':'A',cls:'absence',title:ABSENCE_LABELS[a.type]||'Abwesenheit'})}));
   const months=['Jan','Feb','Mär','Apr','Mai','Jun','Jul','Aug','Sep','Okt','Nov','Dez'];let rows='';for(let d=1;d<=31;d++){rows+=`<tr><th>${String(d).padStart(2,'0')}</th>`;for(let m=0;m<12;m++){const valid=d<=new Date(year,m+1,0).getDate();if(!valid){rows+='<td class="na"></td>';continue}const k=dateKey(new Date(year,m,d,12)),x=marks.get(k);rows+=`<td class="${x?.cls||''}" title="${esc(x?.title||'')}">${esc(x?.code||'')}</td>`}rows+='</tr>'}
   const vac=user.vacationDays||30,approved=vacations.filter(v=>v.userId===user.id&&v.status==='approved'&&String(v.from||'').startsWith(String(year))).reduce((s,v)=>s+Number(v.days||0),0),sick=absences.filter(a=>a.userId===user.id&&a.type==='sick'&&String(a.from||'').startsWith(String(year))).reduce((s,a)=>s+Number(a.days||0),0);
   return `<div class="annual-sheet"><div class="annual-title"><div><small>TP-Personalmanagement</small><h2>Jahresübersicht Anwesenheit ${year}</h2><strong>${esc(user.name||user.email||'')}</strong></div><span>Stand ${deDate(new Date())}</span></div><div class="annual-calendar-wrap"><table class="annual-calendar"><thead><tr><th>Tag</th>${months.map(x=>`<th>${x}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table></div><div class="annual-bottom"><div class="annual-stats"><div><span>Urlaubsanspruch</span><strong>${vac}</strong></div><div><span>Genehmigter Urlaub</span><strong>${approved}</strong></div><div><span>Rest (ohne Übertrag)</span><strong>${Math.max(0,vac-approved)}</strong></div><div><span>Krankheitstage</span><strong>${sick}</strong></div></div><div class="annual-legend"><span><i class="vacation"></i>U = Urlaub / G = Gleittag</span><span><i class="absence"></i>K = krank / weitere Abwesenheit</span><span><i class="holiday"></i>F = bundesweiter Feiertag</span><span><i class="off"></i>– = regelmäßig arbeitsfrei</span></div></div><p class="annual-note">Feiertage: bundesweit geltende Feiertage. Regionale Feiertage werden in V2.2 noch nicht automatisch ergänzt.</p></div>`}
@@ -274,7 +275,7 @@ async function renderSupervisorAttendance(el,ctx){
 const PDS_HEADERS=['kostenstelle','kostenstelleSek','kostentraeger','kostenart','leistungsart','buchungsperiode','belegnummer','belegdatum','betrag','buchungstext','menge','bucher','datenart','planvariante','notiz','kostentraegerSek'];
 function toDate(value){if(!value)return null;if(value?.toDate)return value.toDate();const d=new Date(value);return Number.isNaN(d.getTime())?null:d}
 function dateKey(d){const p=v=>String(v).padStart(2,"0");return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`}
-function grossMinutes(r){const a=toDate(r.startAt),b=toDate(r.endAt);return a&&b&&b>a?Math.round((b-a)/60000):0}
+function grossMinutes(r,earliestStartTime=""){return recordGrossMinutes(r,earliestStartTime,{includeOpen:false})}
 function csvCell(v){const s=String(v??"");return /[;"\n]/.test(s)?`"${s.replace(/"/g,'""')}"`:s}
 function download(name,text){const blob=new Blob(["\ufeff"+text],{type:"text/csv;charset=utf-8"});const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}
 function isoWeek(d){const x=new Date(Date.UTC(d.getFullYear(),d.getMonth(),d.getDate()));const day=x.getUTCDay()||7;x.setUTCDate(x.getUTCDate()+4-day);const yearStart=new Date(Date.UTC(x.getUTCFullYear(),0,1));return Math.ceil((((x-yearStart)/86400000)+1)/7)}
@@ -282,10 +283,10 @@ function deDate(d){return new Intl.DateTimeFormat('de-DE',{day:'2-digit',month:'
 function monthBounds(period){const m=/^(\d{4})-(\d{2})$/.exec(period||'');if(!m)return null;const y=Number(m[1]),mo=Number(m[2]);const from=`${m[1]}-${m[2]}-01`;const last=new Date(y,mo,0);return {year:y,month:mo,from,to:dateKey(last),label:`${m[1]}/${m[2]}`}}
 function buildBookingText(settings,period,createdAt){const prefix=String(settings.bookingTextPrefix??'$7$ZeitDritts$');if(settings.bookingTextMode==='free')return `${prefix}${String(settings.bookingTextCustom||'')}`;return `${prefix}Periode${period.label}KW${String(isoWeek(createdAt)).padStart(2,'0')}`}
 
-function allocateNetProjectMinutes(records,from,to){
-  const byDay=new Map();
+function allocateNetProjectMinutes(records,users,from,to){
+  const byDay=new Map(),userMap=new Map(users.map(u=>[u.id,u]));
   records.filter(r=>r.recordType!=="adjustment"&&r.status==="closed"&&/^\d{6}$/.test(String(r.projectNumber||""))).forEach(r=>{
-    const start=toDate(r.startAt);if(!start)return;const dk=dateKey(start);if(dk<from||dk>to)return;const g=grossMinutes(r);if(g<=0)return;
+    const start=toDate(r.startAt);if(!start)return;const dk=dateKey(start);if(dk<from||dk>to)return;const g=grossMinutes(r,userMap.get(r.userId)?.earliestStartTime||"");if(g<=0)return;
     const key=`${r.userId}|${dk}`;if(!byDay.has(key))byDay.set(key,[]);byDay.get(key).push({...r,_gross:g});
   });
   const out=[];
@@ -308,7 +309,7 @@ function allocateNetProjectMinutes(records,from,to){
 
 function buildPdsExport(records,users,companies,areas,settings,period,createdAt){
   const userMap=new Map(users.map(u=>[u.id,u])),companyMap=new Map(companies.map(c=>[c.id,c])),areaMap=new Map(areas.map(a=>[a.id,a]));
-  const allocated=allocateNetProjectMinutes(records,period.from,period.to),groups=new Map(),errors=[];
+  const allocated=allocateNetProjectMinutes(records,users,period.from,period.to),groups=new Map(),errors=[];
   allocated.forEach(r=>{
     const u=userMap.get(r.userId)||{},c=companyMap.get(r.companyId||u.companyId)||{};
     const recordCompany=String(r.companyNumber||'').trim(),currentCompany=String(c.companyNumber||'').trim();
