@@ -14,7 +14,7 @@ import {
 import { setHead } from "./app.js";
 import { esc, fmtDate, fmtDateTime, statusPill, toast } from "./utils.js";
 import { hasAdminPermission } from "./permissions.js";
-import { calculateDailyTimeValues, wasStartLimited } from "./time-utils.js";
+import { calculateDailyTimeValues, calculateTimeAccountValues, wasStartLimited } from "./time-utils.js";
 
 
 function validProjectNumber(value) {
@@ -218,12 +218,16 @@ export async function renderZeiterfassung(el, ctx) {
   let entries = [];
   let ownRequests = [];
   let teamRequests = [];
+  let ownVacations = [];
+  let ownAbsences = [];
   let adjustmentEmployees = [];
   let recentAdjustments = [];
   const canBookAdjustments = ctx.profile.role === "supervisor" || hasAdminPermission(ctx.profile, "timeAdjustment");
   const canApproveTime = ctx.profile.role === "supervisor" || hasAdminPermission(ctx.profile, "timeApprove");
   try { entries = await loadOwnRecords(ctx.profile.id); } catch (e) { console.error("Zeitdaten konnten nicht geladen werden", e); }
   try { ownRequests = await loadOwnRequests(ctx.profile.id); } catch (e) { console.error("Zeitanträge konnten nicht geladen werden", e); }
+  try { const s = await getDocs(query(collection(db, "vacationRequests"), where("userId", "==", ctx.profile.id))); ownVacations = s.docs.map(d => ({ id:d.id, ...d.data() })); } catch (e) { console.error("Urlaubsdaten für Stundenkonto konnten nicht geladen werden", e); }
+  try { const s = await getDocs(query(collection(db, "absences"), where("userId", "==", ctx.profile.id))); ownAbsences = s.docs.map(d => ({ id:d.id, ...d.data() })); } catch (e) { console.error("Abwesenheiten für Stundenkonto konnten nicht geladen werden", e); }
   if (canApproveTime) { try { teamRequests = await loadTeamRequests(ctx); } catch (e) { console.error("Team-Zeitanträge konnten nicht geladen werden", e); } }
   if (canBookAdjustments) {
     try {
@@ -274,6 +278,7 @@ export async function renderZeiterfassung(el, ctx) {
 
   const openRecord = entries.find(isOpen) || null;
   const allocatedValues = calculateDailyTimeValues(entries, ctx.profile.earliestStartTime || "", {includeOpen:true});
+  const accountValues = calculateTimeAccountValues(entries, ctx.profile, ownVacations, ownAbsences, {includeOpen:true});
   const pendingRecordIds = new Set(
     ownRequests.filter(r => r.status === "pending" && r.requestType === "correction").map(r => r.recordId)
   );
@@ -342,10 +347,10 @@ export async function renderZeiterfassung(el, ctx) {
     </article>` : ""}
 
     <article class="card ${isAdmin?"admin-self-hidden":""}">
-      <div class="card-head"><div><h2>Meine Buchungen</h2><p>Gespeicherte Arbeitszeiten und Stundenkorrekturen. Arbeitszeiten können ausschließlich über einen Korrekturantrag geändert werden.</p></div></div>
+      <div class="card-head"><div><h2>Meine Buchungen</h2><p>Gespeicherte Arbeitszeiten und Stundenkorrekturen. „Zeitguthaben“ zeigt den minutengenauen Stand des Stundenkontos nach der jeweiligen Buchung.</p></div></div>
       ${ctx.profile.earliestStartTime ? `<div class="info-strip"><strong>Vorgegebener Arbeitsbeginn:</strong> Arbeitszeit wird frühestens ab <strong>${esc(ctx.profile.earliestStartTime)} Uhr</strong> angerechnet. Ein früherer echter KOMMEN-Zeitstempel bleibt zur Dokumentation sichtbar.</div>` : ""}
       <div class="table-wrap"><table>
-        <thead><tr><th>Datum</th><th>Projekt</th><th>Beginn</th><th>Ende</th><th>Pause</th><th>Arbeitszeit</th><th>Ist-h-gesamt</th><th>Status</th><th>Aktion</th></tr></thead>
+        <thead><tr><th>Datum</th><th>Projekt</th><th>Beginn</th><th>Ende</th><th>Pause</th><th>Arbeitszeit</th><th>Zeitguthaben</th><th>Status</th><th>Aktion</th></tr></thead>
         <tbody>
           ${entries.length ? entries.map(r => {
             if (r.recordType === "adjustment") {
@@ -355,7 +360,7 @@ export async function renderZeiterfassung(el, ctx) {
                 <td><strong>${esc(projectText(r.projectNumber))}</strong></td>
                 <td colspan="3"><strong>Stundenkorrektur</strong><small class="booking-note">${esc(reason || "Korrekturbuchung")}</small></td>
                 <td><strong class="adjustment-value ${Number(r.adjustmentMinutes) >= 0 ? "positive" : "negative"}">${signedHm(r.adjustmentMinutes)}</strong></td>
-                <td><strong>${signedHm((allocatedValues.get(r.id)||{}).cumulative||0)}</strong></td>
+                <td><strong>${signedHm((accountValues.get(r.id)||{}).balance||0)}</strong></td>
                 <td>${statusPill("Admin-Buchung", "blue")}</td>
                 <td><span class="muted-small">${esc(r.createdByName || "Personalabteilung")}</span></td>
               </tr>`;
@@ -370,7 +375,7 @@ export async function renderZeiterfassung(el, ctx) {
               <td>${esc(recordTime(r, "end") || "–")}</td>
               <td>${c.pause ? `<strong>${c.pause} Min.</strong>` : "–"}</td>
               <td>${open ? `<strong>${hm(c.net)}</strong><small class="booking-note">laufender Wert</small>` : `<strong>${hm(c.net)}</strong>`}</td>
-              <td><strong>${signedHm(c.cumulative||0)}</strong></td>
+              <td><strong>${signedHm((accountValues.get(r.id)||{}).balance||0)}</strong></td>
               <td>${open ? statusPill("läuft", "blue") : statusPill("erfasst", "green")}</td>
               <td>${open ? `<span class="muted-small">erst nach Gehen</span>` : pending ? statusPill("Korrektur beantragt", "yellow") : `<button class="btn small secondary correction-btn" type="button" data-id="${r.id}">Korrektur beantragen</button>`}</td>
             </tr>`;

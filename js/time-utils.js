@@ -122,3 +122,70 @@ export function wasStartLimited(record,earliestStartTime=''){
   const actual=timeRecordStart(record),effective=effectiveRecordStart(record,earliestStartTime);
   return !!(actual&&effective&&effective.getTime()>actual.getTime());
 }
+
+
+function parseDateKey(value){
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(String(value||'')))return null;
+  const d=new Date(`${value}T12:00:00`);
+  return Number.isNaN(d.getTime())?null:d;
+}
+
+function dateRangeKeys(from,to){
+  const a=parseDateKey(from),b=parseDateKey(to),out=[];
+  if(!a||!b||a>b)return out;
+  for(const d=new Date(a);d<=b;d.setDate(d.getDate()+1))out.push(timeDateKey(d));
+  return out;
+}
+
+function coveredDateSet(items,{approvedOnly=false}={}){
+  const set=new Set();
+  (items||[]).forEach(item=>{
+    if(approvedOnly&&item?.status!=='approved')return;
+    dateRangeKeys(item?.from,item?.to).forEach(key=>set.add(key));
+  });
+  return set;
+}
+
+// V2.9.2.1 – laufendes Zeitguthaben / Minusstundenkonto.
+// Das Konto startet mit dem ersten vorhandenen Zeit- oder Korrekturdatensatz und
+// läuft danach minutengenau weiter. Pro Arbeitstag wird das Tagessoll einmal
+// abgezogen; genehmigter Urlaub und gebuchte Abwesenheiten reduzieren das Soll
+// des betreffenden Tages auf 0. Stundenkorrekturen wirken direkt auf das Konto.
+export function calculateTimeAccountValues(records,profile={},vacations=[],absences=[],{includeOpen=true,now=new Date()}={}){
+  const result=new Map();
+  const items=(records||[]).filter(r=>timeRecordDateKey(r));
+  if(!items.length)return result;
+
+  const dailyValues=calculateDailyTimeValues(items,profile?.earliestStartTime||'',{includeOpen,now});
+  const byDay=new Map();
+  items.forEach(r=>{
+    const key=timeRecordDateKey(r);
+    if(!byDay.has(key))byDay.set(key,[]);
+    byDay.get(key).push(r);
+  });
+
+  const keys=[...byDay.keys()].sort();
+  let firstKey=keys[0],lastKey=keys[keys.length-1];
+  if(profile?.startDate&&/^\d{4}-\d{2}-\d{2}$/.test(String(profile.startDate))&&profile.startDate>firstKey)firstKey=profile.startDate;
+
+  const workDays=new Set((Array.isArray(profile?.workDays)&&profile.workDays.length?profile.workDays:['1','2','3','4','5']).map(String));
+  const workDayCount=Math.max(1,workDays.size);
+  const weeklyHours=Number(profile?.weeklyHours??40);
+  const dailyTargetMinutes=Math.round(((Number.isFinite(weeklyHours)?weeklyHours:40)*60)/workDayCount);
+  const leaveDays=coveredDateSet(vacations,{approvedOnly:true});
+  const absenceDays=coveredDateSet(absences);
+
+  let balance=0;
+  for(const key of dateRangeKeys(firstKey,lastKey)){
+    const day=parseDateKey(key);
+    const scheduled=day&&workDays.has(String(day.getDay()));
+    if(scheduled&&!leaveDays.has(key)&&!absenceDays.has(key))balance-=dailyTargetMinutes;
+
+    const dayItems=[...(byDay.get(key)||[])].sort((a,b)=>recordSortValue(a)-recordSortValue(b));
+    for(const r of dayItems){
+      balance+=Math.round(Number(dailyValues.get(r.id)?.net)||0);
+      result.set(r.id,{balance,targetMinutes:scheduled&&!leaveDays.has(key)&&!absenceDays.has(key)?dailyTargetMinutes:0});
+    }
+  }
+  return result;
+}
