@@ -140,6 +140,7 @@ function dateRangeKeys(from,to){
 function coveredDateSet(items,{approvedOnly=false}={}){
   const set=new Set();
   (items||[]).forEach(item=>{
+    if(item?.status==='withdrawn')return;
     if(approvedOnly&&item?.status!=='approved')return;
     dateRangeKeys(item?.from,item?.to).forEach(key=>set.add(key));
   });

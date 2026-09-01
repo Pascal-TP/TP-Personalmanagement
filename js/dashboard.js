@@ -218,7 +218,7 @@ export async function renderDashboard(el,ctx){
   try{const s=await getDocs(query(collection(db,"trainingProgress"),where("userId","==",p.id)));trainingProgress=s.docs.map(d=>d.data())}catch{}
   try{const s=await getDocs(collection(db,"trainings"));allTrainingDefinitions=s.docs.map(d=>({id:d.id,...d.data()}))}catch{}
   try{const s=await getDocs(query(collection(db,"vacationRequests"),where("userId","==",p.id)));vacations=s.docs.map(d=>({id:d.id,...d.data()}))}catch{}
-  try{const s=await getDocs(query(collection(db,"absences"),where("userId","==",p.id)));absences=s.docs.map(d=>({id:d.id,...d.data()}))}catch{}
+  try{const s=await getDocs(query(collection(db,"absences"),where("userId","==",p.id)));absences=s.docs.map(d=>({id:d.id,...d.data()})).filter(a=>a.status!=='withdrawn')}catch{}
   try{const s=await getDocs(query(collection(db,"timeRecords"),where("userId","==",p.id)));timeRecords=s.docs.map(d=>({id:d.id,...d.data()}))}catch{}
   if(p.role==="admin"||p.role==="supervisor"){try{
     const token=await auth.currentUser?.getIdToken();
@@ -238,7 +238,7 @@ export async function renderDashboard(el,ctx){
       if(tga){
         const allRecords=trs.docs.map(d=>({id:d.id,...d.data()}));
         const allVacations=vs.docs.map(d=>({id:d.id,...d.data()}));
-        const allAbsences=as.docs.map(d=>({id:d.id,...d.data()}));
+        const allAbsences=as.docs.map(d=>({id:d.id,...d.data()})).filter(a=>a.status!=='withdrawn');
         tgaOvertimeRows=hrUsers
           .filter(u=>u.active!==false&&u.archived!==true&&u.companyId===tga.id&&(u.role==="employee"||u.role==="supervisor"))
           .map(u=>{

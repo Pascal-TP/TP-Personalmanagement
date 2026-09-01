@@ -7,16 +7,16 @@ import { recordGrossMinutes } from "./time-utils.js";
 import { vacationYearBalance, vacationCarryoverDocId } from "./vacation-utils.js";
 import { getAssignedUsers, getAssignedDocs, isSupervisorOf } from "./supervisor-utils.js";
 
-const ABSENCE_LABELS={sick:'Krank',child_sick:'Kind krank',special_leave:'Sonderurlaub',vocational_school:'Berufsschule',training:'Weiterbildung',university:'Uni',unpaid_leave:'Unbezahlter Urlaub',release:'Freistellung',parental_leave:'Elternzeit',other:'Sonstige Abwesenheit'};
+const ABSENCE_LABELS={vacation:'Urlaub',sick:'Krank',child_sick:'Kind krank',special_leave:'Sonderurlaub',vocational_school:'Berufsschule',training:'Weiterbildung',university:'Uni',unpaid_leave:'Unbezahlter Urlaub',release:'Freistellung',parental_leave:'Elternzeit',other:'Sonstige Abwesenheit'};
 function easterSunday(y){const a=y%19,b=Math.floor(y/100),c=y%100,d=Math.floor(b/4),e=b%4,f=Math.floor((b+8)/25),g=Math.floor((b-f+1)/3),h=(19*a+b-d-g+15)%30,i=Math.floor(c/4),k=c%4,l=(32+2*e+2*i-h-k)%7,m=Math.floor((a+11*h+22*l)/451),mo=Math.floor((h+l-7*m+114)/31),day=((h+l-7*m+114)%31)+1;return new Date(y,mo-1,day,12)}
 function addDays(d,n){const x=new Date(d);x.setDate(x.getDate()+n);return x}
 function germanNationalHolidays(y){const fixed=[[0,1,'Neujahr'],[4,1,'Tag der Arbeit'],[9,3,'Tag der Deutschen Einheit'],[11,25,'1. Weihnachtstag'],[11,26,'2. Weihnachtstag']],e=easterSunday(y),mov=[[-2,'Karfreitag'],[1,'Ostermontag'],[39,'Christi Himmelfahrt'],[50,'Pfingstmontag']];const map=new Map();fixed.forEach(([m,d,n])=>map.set(dateKey(new Date(y,m,d,12)),n));mov.forEach(([o,n])=>map.set(dateKey(addDays(e,o)),n));return map}
 function daySet(from,to){const out=[];let d=new Date(`${from}T12:00:00`),e=new Date(`${to}T12:00:00`);for(;d<=e;d.setDate(d.getDate()+1))out.push(dateKey(d));return out}
 function annualHtml(user,year,vacations,absences,carryoverSettings=[]){const workDays=new Set((user.workDays?.length?user.workDays:['1','2','3','4','5']).map(String)),holidays=germanNationalHolidays(year),marks=new Map();holidays.forEach((n,k)=>marks.set(k,{code:'F',cls:'holiday',title:n}));for(let m=0;m<12;m++){const last=new Date(year,m+1,0).getDate();for(let d=1;d<=last;d++){const dt=new Date(year,m,d,12),k=dateKey(dt);if(!workDays.has(String(dt.getDay()))&&!marks.has(k))marks.set(k,{code:'–',cls:'off',title:'Regelmäßig arbeitsfrei'})}}
   vacations.filter(v=>v.userId===user.id&&v.status==='approved').forEach(v=>daySet(v.from,v.to).forEach(k=>{if(k.startsWith(String(year))&&!marks.get(k)?.cls?.includes('holiday'))marks.set(k,{code:v.type==='Freizeitausgleich'?'G':v.type==='Sonderurlaub'?'SU':'U',cls:'vacation',title:v.type||'Urlaub'})}));
-  absences.filter(a=>a.userId===user.id).forEach(a=>daySet(a.from,a.to).forEach(k=>{if(k.startsWith(String(year)))marks.set(k,{code:a.type==='sick'?'K':a.type==='child_sick'?'KK':a.type==='special_leave'?'SU':a.type==='unpaid_leave'?'UU':a.type==='release'?'FR':a.type==='parental_leave'?'EZ':a.type==='vocational_school'?'BS':a.type==='training'?'WB':a.type==='university'?'UNI':'A',cls:'absence',title:ABSENCE_LABELS[a.type]||'Abwesenheit'})}));
+  absences.filter(a=>a.userId===user.id&&a.status!=='withdrawn').forEach(a=>daySet(a.from,a.to).forEach(k=>{if(k.startsWith(String(year)))marks.set(k,{code:a.type==='vacation'?'U':a.type==='sick'?'K':a.type==='child_sick'?'KK':a.type==='special_leave'?'SU':a.type==='unpaid_leave'?'UU':a.type==='release'?'FR':a.type==='parental_leave'?'EZ':a.type==='vocational_school'?'BS':a.type==='training'?'WB':a.type==='university'?'UNI':'A',cls:a.type==='vacation'?'vacation':'absence',title:ABSENCE_LABELS[a.type]||'Abwesenheit'})}));
   const months=['Jan','Feb','Mär','Apr','Mai','Jun','Jul','Aug','Sep','Okt','Nov','Dez'];let rows='';for(let d=1;d<=31;d++){rows+=`<tr><th>${String(d).padStart(2,'0')}</th>`;for(let m=0;m<12;m++){const valid=d<=new Date(year,m+1,0).getDate();if(!valid){rows+='<td class="na"></td>';continue}const k=dateKey(new Date(year,m,d,12)),x=marks.get(k);rows+=`<td class="${x?.cls||''}" title="${esc(x?.title||'')}">${esc(x?.code||'')}</td>`}rows+='</tr>'}
-  const vb=vacationYearBalance(user,vacations,carryoverSettings,year),vac=vb.entitlement,approved=vb.totalApproved,sick=absences.filter(a=>a.userId===user.id&&a.type==='sick'&&String(a.from||'').startsWith(String(year))).reduce((s,a)=>s+Number(a.days||0),0);
+  const vb=vacationYearBalance(user,vacations,carryoverSettings,year,{absences}),vac=vb.entitlement,approved=vb.totalApproved,sick=absences.filter(a=>a.userId===user.id&&a.type==='sick'&&a.status!=='withdrawn'&&String(a.from||'').startsWith(String(year))).reduce((s,a)=>s+Number(a.days||0),0);
   return `<div class="annual-sheet"><div class="annual-title"><div><small>TP-Personalmanagement</small><h2>Jahresübersicht Anwesenheit ${year}</h2><strong>${esc(user.name||user.email||'')}</strong></div><span>Stand ${deDate(new Date())}</span></div><div class="annual-calendar-wrap"><table class="annual-calendar"><thead><tr><th>Tag</th>${months.map(x=>`<th>${x}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table></div><div class="annual-bottom"><div class="annual-stats"><div><span>Urlaubsanspruch</span><strong>${vac}</strong></div><div><span>Übertrag Vorjahr</span><strong>${vb.carryover}</strong></div><div><span>Genehmigter Urlaub</span><strong>${approved}</strong></div><div><span>Verfügbarer Rest</span><strong>${vb.totalRemaining}</strong></div><div><span>Krankheitstage</span><strong>${sick}</strong></div></div><div class="annual-legend"><span><i class="vacation"></i>U = Urlaub / G = Gleittag</span><span><i class="absence"></i>K = krank / weitere Abwesenheit</span><span><i class="holiday"></i>F = bundesweiter Feiertag</span><span><i class="off"></i>– = regelmäßig arbeitsfrei</span></div></div><p class="annual-note">Feiertage: bundesweit geltende Feiertage. Regionale Feiertage werden in V2.2 noch nicht automatisch ergänzt.</p></div>`}
 
 
@@ -38,6 +38,7 @@ function absenceMark(type){
     unpaid_leave:{label:'Unbez. Urlaub',code:'UU',cls:'unpaid'},
     release:{label:'Freistellung',code:'FR',cls:'release'},
     parental_leave:{label:'Elternzeit',code:'EZ',cls:'parental'},
+    vacation:{label:'Urlaub',code:'U',cls:'vacation'},
     other:{label:'Abwesend',code:'A',cls:'other'}
   };
   return map[type]||map.other;
@@ -49,7 +50,7 @@ function vacationMark(v){
   return {label:'Urlaub',code:'U',cls:'vacation'};
 }
 function teamDayMark(user,key,vacations,absences){
-  const abs=absences.find(a=>a.userId===user.id&&rangeContains(a.from,a.to,key));
+  const abs=absences.find(a=>a.userId===user.id&&a.status!=='withdrawn'&&rangeContains(a.from,a.to,key));
   if(abs)return absenceMark(abs.type);
   const vac=vacations.find(v=>v.userId===user.id&&v.status==='approved'&&rangeContains(v.from,v.to,key));
   if(vac)return vacationMark(vac);
@@ -160,7 +161,7 @@ async function renderSupervisorAttendance(el,ctx){
 
   const todayKey=dateKey(new Date());
   const awayToday=new Set();
-  absences.forEach(a=>{if(rangeContains(a.from,a.to,todayKey))awayToday.add(a.userId)});
+  absences.filter(a=>a.status!=='withdrawn').forEach(a=>{if(rangeContains(a.from,a.to,todayKey))awayToday.add(a.userId)});
   vacations.forEach(v=>{if(v.status==='approved'&&rangeContains(v.from,v.to,todayKey))awayToday.add(v.userId)});
   el.querySelector('#team-away-today').textContent=awayToday.size;
 
@@ -390,10 +391,10 @@ function companyLabel(companyMap,user){
   const c=companyMap.get(user.companyId)||{};
   return c.short||c.name||'–';
 }
-function vacationBalanceRows(users,vacations,companies,year,carryoverSettings){
+function vacationBalanceRows(users,vacations,absences,companies,year,carryoverSettings){
   const companyMap=new Map(companies.map(c=>[c.id,c]));
   return users.filter(u=>u.active!==false&&u.archived!==true&&(u.role==='employee'||u.role==='supervisor')).map(u=>{
-    const b=vacationYearBalance(u,vacations,carryoverSettings,year);
+    const b=vacationYearBalance(u,vacations,carryoverSettings,year,{absences});
     return {user:u,name:u.name||u.email||u.id,company:companyLabel(companyMap,u),...b};
   }).sort((a,b)=>a.company.localeCompare(b.company,'de')||a.name.localeCompare(b.name,'de'));
 }
@@ -408,7 +409,7 @@ function vacationBalanceHtml(rows,year){
 function sicknessRows(users,absences,companies,year){
   const companyMap=new Map(companies.map(c=>[c.id,c]));
   return users.filter(u=>u.active!==false&&u.archived!==true&&(u.role==='employee'||u.role==='supervisor')).map(u=>{
-    const userAbsences=absences.filter(a=>a.userId===u.id&&a.type==='sick');
+    const userAbsences=absences.filter(a=>a.userId===u.id&&a.type==='sick'&&a.status!=='withdrawn');
     const months=Array.from({length:12},(_,i)=>userAbsences.reduce((sum,a)=>sum+countUserWorkdaysInMonth(a.from,a.to,year,i+1,u),0));
     const days=months.reduce((s,n)=>s+n,0);
     return {name:u.name||u.email||u.id,company:companyLabel(companyMap,u),days,months};
@@ -465,7 +466,7 @@ export async function renderAuswertungen(el,ctx){
   if(canHrReports){
     const vf=el.querySelector('#vacation-balance-form'),vr=el.querySelector('#vacation-balance-result'),vp=el.querySelector('#vacation-balance-print');
     const ca=el.querySelector('#vacation-carryover-admin');
-    const renderVacationBalance=()=>{const year=Number(vf.elements.year.value);if(year<2026||year>2100){toast('Die Resturlaubsregelung gilt ab 2026. Bitte ein gültiges Jahr auswählen.','error');return}const rows=vacationBalanceRows(users,vacations,companies,year,carryoverSettings);vr.innerHTML=vacationBalanceHtml(rows,year);ca.innerHTML=`<div class="table-wrap"><table><thead><tr><th>Mitarbeiter</th><th>Berechneter Übertrag</th><th>Fristverlängerung bis</th><th>Begründung Führungskraft</th><th></th></tr></thead><tbody>${rows.map(r=>`<tr><td><strong>${esc(r.name)}</strong></td><td>${r.carryover} Tage</td><td><input type="date" class="carryover-extension" data-user="${esc(r.user.id)}" value="${esc(r.extensionUntil||'')}" min="${year}-04-01"></td><td><input class="carryover-reason" data-user="${esc(r.user.id)}" value="${esc(r.extensionReason||'')}" placeholder="Begründung der Führungskraft"></td><td><button type="button" class="btn secondary small save-carryover" data-user="${esc(r.user.id)}">Speichern</button></td></tr>`).join('')}</tbody></table></div>`;ca.querySelectorAll('.save-carryover').forEach(btn=>btn.onclick=async()=>{const uid=btn.dataset.user,extensionUntil=ca.querySelector(`.carryover-extension[data-user="${uid}"]`).value,extensionReason=ca.querySelector(`.carryover-reason[data-user="${uid}"]`).value.trim();if((extensionUntil&&!extensionReason)||(!extensionUntil&&extensionReason)){toast('Für eine Fristverlängerung müssen Datum und Begründung gemeinsam angegeben werden.','error');return}if(extensionUntil&&extensionUntil<=`${year}-03-31`){toast('Die verlängerte Frist muss nach dem 31.03. liegen.','error');return}const id=vacationCarryoverDocId(uid,year);await setDoc(doc(db,'vacationCarryoverSettings',id),{userId:uid,year,extensionUntil:extensionUntil||null,extensionReason:extensionReason||'',approvedBy:ctx.profile.id,approvedByName:ctx.profile.name||ctx.profile.email||'',approvedAt:serverTimestamp()},{merge:true});const i=carryoverSettings.findIndex(x=>x.id===id),value={id,userId:uid,year,extensionUntil:extensionUntil||null,extensionReason:extensionReason||''};if(i>=0)carryoverSettings[i]={...carryoverSettings[i],...value};else carryoverSettings.push(value);toast(extensionUntil?'Fristverlängerung gespeichert und durch die Personalabteilung bestätigt.':'Fristverlängerung entfernt.');renderVacationBalance()});vp.disabled=false};
+    const renderVacationBalance=()=>{const year=Number(vf.elements.year.value);if(year<2026||year>2100){toast('Die Resturlaubsregelung gilt ab 2026. Bitte ein gültiges Jahr auswählen.','error');return}const rows=vacationBalanceRows(users,vacations,absences,companies,year,carryoverSettings);vr.innerHTML=vacationBalanceHtml(rows,year);ca.innerHTML=`<div class="table-wrap"><table><thead><tr><th>Mitarbeiter</th><th>Berechneter Übertrag</th><th>Fristverlängerung bis</th><th>Begründung Führungskraft</th><th></th></tr></thead><tbody>${rows.map(r=>`<tr><td><strong>${esc(r.name)}</strong></td><td>${r.carryover} Tage</td><td><input type="date" class="carryover-extension" data-user="${esc(r.user.id)}" value="${esc(r.extensionUntil||'')}" min="${year}-04-01"></td><td><input class="carryover-reason" data-user="${esc(r.user.id)}" value="${esc(r.extensionReason||'')}" placeholder="Begründung der Führungskraft"></td><td><button type="button" class="btn secondary small save-carryover" data-user="${esc(r.user.id)}">Speichern</button></td></tr>`).join('')}</tbody></table></div>`;ca.querySelectorAll('.save-carryover').forEach(btn=>btn.onclick=async()=>{const uid=btn.dataset.user,extensionUntil=ca.querySelector(`.carryover-extension[data-user="${uid}"]`).value,extensionReason=ca.querySelector(`.carryover-reason[data-user="${uid}"]`).value.trim();if((extensionUntil&&!extensionReason)||(!extensionUntil&&extensionReason)){toast('Für eine Fristverlängerung müssen Datum und Begründung gemeinsam angegeben werden.','error');return}if(extensionUntil&&extensionUntil<=`${year}-03-31`){toast('Die verlängerte Frist muss nach dem 31.03. liegen.','error');return}const id=vacationCarryoverDocId(uid,year);await setDoc(doc(db,'vacationCarryoverSettings',id),{userId:uid,year,extensionUntil:extensionUntil||null,extensionReason:extensionReason||'',approvedBy:ctx.profile.id,approvedByName:ctx.profile.name||ctx.profile.email||'',approvedAt:serverTimestamp()},{merge:true});const i=carryoverSettings.findIndex(x=>x.id===id),value={id,userId:uid,year,extensionUntil:extensionUntil||null,extensionReason:extensionReason||''};if(i>=0)carryoverSettings[i]={...carryoverSettings[i],...value};else carryoverSettings.push(value);toast(extensionUntil?'Fristverlängerung gespeichert und durch die Personalabteilung bestätigt.':'Fristverlängerung entfernt.');renderVacationBalance()});vp.disabled=false};
     el.querySelector('#vacation-balance-show').onclick=renderVacationBalance;
     vp.onclick=()=>printReport('vacation-balance');
     const sf=el.querySelector('#sickness-form'),sr=el.querySelector('#sickness-result');
