@@ -18,6 +18,7 @@ import { renderStammdaten } from "./stammdaten.js";
 import { renderDatensicherung } from "./datensicherung.js";
 import { renderAenderungsantraege } from "./aenderungsantraege.js";
 import { hasAdminPermission, hasAnyAdminPermission } from "./permissions.js";
+import { LANGUAGES, getStoredLanguage, resolveLanguage, setLanguage, startI18nObserver, t, translateDom } from "./i18n.js";
 
 export const ctx = { user:null, profile:null, company:null, view:"dashboard" };
 const content=document.getElementById("content"), nav=document.getElementById("main-nav");
@@ -54,15 +55,26 @@ export async function navigate(view){
   ctx.view=view; renderNav(); const item=views[view]||views.dashboard; content.innerHTML=`<div class="loading">Bereich wird geladen …</div>`;
   try{await item.render(content,ctx)}catch(e){console.error(e);content.innerHTML=`<div class="error-card"><strong>Der Bereich konnte nicht geladen werden.</strong><p>${e.message}</p></div>`}
 }
-function renderNav(){const role=ctx.profile?.role||"employee";nav.innerHTML=Object.entries(views).filter(([,v])=>{if(!v.roles.includes(role))return false;if(role!=="admin")return true;if(v.adminPermission&&!hasAdminPermission(ctx.profile,v.adminPermission))return false;if(v.adminAny&&!hasAnyAdminPermission(ctx.profile,v.adminAny))return false;return true}).map(([k,v])=>`<button class="nav-btn ${ctx.view===k?'active':''}" data-view="${k}"><span class="icon">${v.icon}</span><span>${v.label}</span></button>`).join("");nav.querySelectorAll("button").forEach(b=>b.onclick=()=>navigate(b.dataset.view))}
+function renderNav(){const role=ctx.profile?.role||"employee";nav.innerHTML=Object.entries(views).filter(([,v])=>{if(!v.roles.includes(role))return false;if(role!=="admin")return true;if(v.adminPermission&&!hasAdminPermission(ctx.profile,v.adminPermission))return false;if(v.adminAny&&!hasAnyAdminPermission(ctx.profile,v.adminAny))return false;return true}).map(([k,v])=>`<button class="nav-btn ${ctx.view===k?'active':''}" data-view="${k}"><span class="icon">${v.icon}</span><span>${t(v.label)}</span></button>`).join("");nav.querySelectorAll("button").forEach(b=>b.onclick=()=>navigate(b.dataset.view))}
 function updateChrome(){
   const p=ctx.profile,c=ctx.company;document.getElementById("company-name").textContent=c?.name||"TP-Personalmanagement";
   const logo=document.querySelector("#company-logo img");logo.src=c?.logoUrl||c?.logoDataUrl||"assets/tp-logo.png";
-  document.getElementById("role-heading").textContent=roleHeading(p.role);document.getElementById("user-name").textContent=p.name||p.email||"Mitarbeiter";
-  const displayName=p.name||p.email||"Mitarbeiter", displayRole=ROLE_LABELS[p.role]||p.role;
+  document.getElementById("role-heading").textContent=t(roleHeading(p.role));document.getElementById("user-name").textContent=p.name||p.email||"Mitarbeiter";
+  const displayName=p.name||p.email||t("Mitarbeiter"), displayRole=t(ROLE_LABELS[p.role]||p.role);
   document.getElementById("user-role").textContent=displayRole;document.getElementById("user-avatar").textContent=initials(p.name||p.email);
   document.getElementById("mobile-user-name").textContent=displayName;document.getElementById("mobile-user-role").textContent=displayRole;
 }
+
+function initLanguageSelectors(){
+  document.querySelectorAll('[data-language-select]').forEach(select=>{
+    select.innerHTML=Object.entries(LANGUAGES).map(([code,label])=>`<option value="${code}">${label}</option>`).join('');
+    select.value=getStoredLanguage()||'de';
+    select.onchange=async()=>{setLanguage(select.value,{store:true});if(ctx.profile){updateChrome();renderNav();await navigate(ctx.view||'dashboard')}else translateDom(document.body)};
+  });
+  setLanguage(getStoredLanguage()||'de',{notify:false});
+  startI18nObserver();
+}
+initLanguageSelectors();
 
 document.getElementById("login-form").addEventListener("submit",async e=>{e.preventDefault();const msg=document.getElementById("login-message");msg.textContent="Anmeldung läuft …";try{await signInWithEmailAndPassword(auth,normalizeLogin(document.getElementById("login-identifier").value),document.getElementById("login-password").value);msg.textContent=""}catch(err){console.error(err);msg.textContent="Anmeldung nicht möglich. Bitte Zugangsdaten prüfen."}});
 document.getElementById("forgot-password-btn").onclick=async()=>{const raw=document.getElementById("login-identifier").value.trim();if(!raw){toast("Bitte zuerst die E-Mail-Adresse eintragen.");return}if(!raw.includes("@")){toast("Bei Benutzernamen erfolgt der Passwort-Reset derzeit über die Personalabteilung.");return}try{await sendPasswordResetEmail(auth,raw);toast("Passwort-Link wurde angefordert.")}catch(e){console.error(e);toast("Passwort-Link konnte nicht angefordert werden.")}};
@@ -91,4 +103,4 @@ document.getElementById("user-chip").onkeydown=e=>{if((e.key==="Enter"||e.key===
 document.addEventListener("click",e=>{if(!e.target.closest(".user-menu-wrap"))closeMobileUserMenu()});
 window.addEventListener("resize",()=>{if(!window.matchMedia("(max-width: 700px)").matches)closeMobileUserMenu()});
 
-onAuthStateChanged(auth,async user=>{ctx.user=user;if(!user){ctx.profile=null;closeMobileUserMenu();loginPage.classList.remove("hidden");shell.classList.add("hidden");return}try{await refreshProfile();updateChrome();renderNav();loginPage.classList.add("hidden");shell.classList.remove("hidden");ctx.view="dashboard";await navigate("dashboard")}catch(e){console.error(e);await signOut(auth);document.getElementById("login-message").textContent=e.message}});
+onAuthStateChanged(auth,async user=>{ctx.user=user;if(!user){ctx.profile=null;closeMobileUserMenu();loginPage.classList.remove("hidden");shell.classList.add("hidden");return}try{await refreshProfile();setLanguage(resolveLanguage(ctx.profile),{notify:false});updateChrome();renderNav();loginPage.classList.add("hidden");shell.classList.remove("hidden");ctx.view="dashboard";await navigate("dashboard")}catch(e){console.error(e);await signOut(auth);document.getElementById("login-message").textContent=e.message}});
