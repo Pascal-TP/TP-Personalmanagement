@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>TP-Personalmanagement V2.11.1</title>
+  <title>TP-Personalmanagement V2.12</title>
   <link rel="icon" href="favicon.ico">
   <link rel="stylesheet" href="css/style.css">
 </head>
@@ -14,8 +14,9 @@
     <div class="login-card">
       <div class="login-brand">
         <img src="assets/tp-logo.png" alt="TP Logo">
-        <div><strong>TP-Personalmanagement</strong><span>Version 2.11.1</span></div>
+        <div><strong>TP-Personalmanagement</strong><span>Version 2.12</span></div>
       </div>
+      <div class="login-language-row"><label><span>Sprache</span><select id="login-language-select" data-language-select></select></label></div>
       <h1>Anmelden</h1>
       <p class="muted">Bitte mit E-Mail-Adresse oder Benutzername und Passwort anmelden.</p>
       <form id="login-form" class="stack-form">
@@ -39,7 +40,7 @@
       <div class="sidebar-footer">
         <button id="change-password-btn" class="sidebar-action">Passwort ändern</button>
         <button id="logout-btn" class="sidebar-action">Abmelden</button>
-        <div class="tool-release" title="Installierte Version">TP-Personalmanagement · Release V2.11.1</div>
+        <div class="tool-release" title="Installierte Version">TP-Personalmanagement · Release V2.12</div>
       </div>
     </aside>
 
@@ -47,6 +48,7 @@
       <header class="topbar">
         <div><h1 id="page-title">Dashboard</h1><p id="page-subtitle">Willkommen im TP-Personalmanagement.</p></div>
         <div class="topbar-actions">
+          <label class="language-switch"><span>🌐</span><select id="app-language-select" data-language-select aria-label="Sprache"></select></label>
           <button id="help-btn" class="topbar-help-btn" type="button" title="Bedienungsanleitung öffnen" aria-label="Bedienungsanleitung öffnen"><span aria-hidden="true">?</span> Hilfe</button>
           <div class="user-menu-wrap">
           <div id="user-chip" class="user-chip" role="button" tabindex="0" aria-haspopup="true" aria-expanded="false" aria-controls="mobile-user-menu">
