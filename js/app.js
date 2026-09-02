@@ -54,6 +54,8 @@ export async function navigate(view){
   ctx.view=view; renderNav(); const item=views[view]||views.dashboard; content.innerHTML=`<div class="loading">Bereich wird geladen …</div>`;
   try{await item.render(content,ctx)}catch(e){console.error(e);content.innerHTML=`<div class="error-card"><strong>Der Bereich konnte nicht geladen werden.</strong><p>${e.message}</p></div>`}
 }
+window.tpNavigate=navigate;
+window.addEventListener("tp:navigate",e=>{const view=e?.detail?.view;if(view&&views[view])navigate(view)});
 function renderNav(){const role=ctx.profile?.role||"employee";nav.innerHTML=Object.entries(views).filter(([,v])=>{if(!v.roles.includes(role))return false;if(role!=="admin")return true;if(v.adminPermission&&!hasAdminPermission(ctx.profile,v.adminPermission))return false;if(v.adminAny&&!hasAnyAdminPermission(ctx.profile,v.adminAny))return false;return true}).map(([k,v])=>`<button class="nav-btn ${ctx.view===k?'active':''}" data-view="${k}"><span class="icon">${v.icon}</span><span>${v.label}</span></button>`).join("");nav.querySelectorAll("button").forEach(b=>b.onclick=()=>navigate(b.dataset.view))}
 function updateChrome(){
   const p=ctx.profile,c=ctx.company;document.getElementById("company-name").textContent=c?.name||"TP-Personalmanagement";

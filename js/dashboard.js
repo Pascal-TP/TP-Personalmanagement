@@ -1,8 +1,8 @@
 import { db, auth, functions } from "./firebase.js";
-import { collection, getDocs, query, where, orderBy, limit } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+import { collection, getDocs, query, where, orderBy, limit, doc, updateDoc, arrayUnion, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 import { httpsCallable } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-functions.js";
 import { setHead } from "./app.js";
-import { esc, fmtDate, statusPill } from "./utils.js";
+import { esc, fmtDate, statusPill, toast } from "./utils.js";
 import { hasAdminPermission } from "./permissions.js";
 import { progressForTrainingYear, visibleTrainingsForYear } from "./training-utils.js";
 import { calculateDailyTimeValues, calculateTimeAccountBalance, timeRecordStart } from "./time-utils.js";
@@ -11,6 +11,26 @@ import { getAssignedDocs } from "./supervisor-utils.js";
 
 const getTeamMilestones=httpsCallable(functions,'getPersonnelTeamMilestones');
 
+
+function dispatchDashboardNavigation(view){
+  window.dispatchEvent(new CustomEvent("tp:navigate",{detail:{view}}));
+}
+
+function complianceAlertText(alert={}){
+  const name=esc(alert.employeeName||"Mitarbeiter");
+  const date=fmtDate(alert.workDate);
+  if(alert.type==="over_10_hours"){
+    const mins=Math.max(0,Math.round(Number(alert.workMinutes)||0));
+    const hours=`${Math.floor(mins/60)}:${String(mins%60).padStart(2,"0")} h`;
+    return `<strong>Achtung: Arbeitszeit über 10 Stunden</strong><p>${name} hatte am ${date} eine erfasste Arbeitszeit von <strong>${hours}</strong>. Nach § 3 Arbeitszeitgesetz (ArbZG) darf die werktägliche Arbeitszeit grundsätzlich acht Stunden nicht überschreiten und nur unter den dort genannten Ausgleichsvoraussetzungen auf bis zu zehn Stunden verlängert werden. Eine Arbeitszeit von mehr als zehn Stunden überschreitet damit grundsätzlich die gesetzliche Höchstgrenze, sofern keine zulässige Ausnahme greift. Bitte prüfen Sie den Vorgang und weisen Sie auf die Einhaltung der Arbeitszeitvorgaben hin.</p>`;
+  }
+  return `<strong>Achtung: Arbeitszeitende nicht gebucht</strong><p>${name} hat am ${date} vergessen, das Arbeitszeitende zu buchen. Das System hat die offene Buchung automatisch zum Tagesende um 24:00 Uhr geschlossen. Bitte prüfen Sie den Vorgang; falls die tatsächliche Endzeit abweicht, ist eine Korrektur zu veranlassen.</p>`;
+}
+
+function renderComplianceAlerts(items=[]){
+  if(!items.length)return "";
+  return `<article class="card compliance-alert-card"><div class="card-head"><div><h2>Arbeitszeit-Hinweise</h2><p>Diese Hinweise müssen von jedem zugeordneten Vorgesetzten persönlich zur Kenntnis genommen werden.</p></div><span class="reminder-count urgent">${items.length} offen</span></div><div class="compliance-alert-list">${items.map(a=>`<div class="compliance-alert-row"><div class="compliance-alert-main">${complianceAlertText(a)}<span class="compliance-alert-meta">Hinweis-ID: ${esc(a.id)}</span></div><button class="btn small primary compliance-ack-btn" type="button" data-id="${esc(a.id)}">Zur Kenntnis genommen</button></div>`).join("")}</div></article>`;
+}
 function formatSignedHours(minutes){
   const value=Math.round(Number(minutes)||0),sign=value>0?'+':value<0?'−':'',abs=Math.abs(value);
   return `${sign}${Math.floor(abs/60)}:${String(abs%60).padStart(2,'0')} h`;
@@ -213,7 +233,7 @@ export async function renderDashboard(el,ctx){
   const p=ctx.profile;
   const canApproveVacation=p.role==="supervisor"||hasAdminPermission(p,"vacationApprove");
   const canApproveTime=p.role==="supervisor"||hasAdminPermission(p,"timeApprove");
-  let news=[],trainingProgress=[],allTrainingProgress=[],allTrainingDefinitions=[],vacations=[],absences=[],timeRequests=[],timeRecords=[],teamVacations=[],hrUsers=[],personalChangeRequests=[],milestones=[],tgaOvertimeRows=[];
+  let news=[],trainingProgress=[],allTrainingProgress=[],allTrainingDefinitions=[],vacations=[],absences=[],timeRequests=[],timeRecords=[],teamVacations=[],hrUsers=[],personalChangeRequests=[],milestones=[],tgaOvertimeRows=[],complianceAlerts=[];
   try{const s=await getDocs(query(collection(db,"news"),orderBy("createdAt","desc"),limit(6)));news=s.docs.map(d=>({id:d.id,...d.data()})).filter(n=>n.active!==false&&(n.companyId==="all"||!n.companyId||n.companyId===p.companyId)&&(n.audience==="all"||!n.audience||n.audience===p.role))}catch{}
   try{const s=await getDocs(query(collection(db,"trainingProgress"),where("userId","==",p.id)));trainingProgress=s.docs.map(d=>d.data())}catch{}
   try{const s=await getDocs(collection(db,"trainings"));allTrainingDefinitions=s.docs.map(d=>({id:d.id,...d.data()}))}catch{}
@@ -224,6 +244,12 @@ export async function renderDashboard(el,ctx){
     const token=await auth.currentUser?.getIdToken();
     if(token){const res=await getTeamMilestones({idToken:token});milestones=Array.isArray(res.data?.items)?res.data.items:[]}
   }catch(e){console.error("Geburtstags-/Jubiläumserinnerungen konnten nicht geladen werden",e)}}
+  if(p.role==="supervisor"){try{
+    const s=await getDocs(query(collection(db,"timeComplianceAlerts"),where("supervisorIds","array-contains",p.id)));
+    complianceAlerts=s.docs.map(d=>({id:d.id,...d.data()}));
+  }catch(e){console.error("Arbeitszeit-Hinweise konnten nicht geladen werden",e)}
+    complianceAlerts=complianceAlerts.filter(a=>a.status!=="resolved"&&!(Array.isArray(a.acknowledgedBy)&&a.acknowledgedBy.includes(p.id))).sort((a,b)=>String(b.workDate||"").localeCompare(String(a.workDate||"")));
+  }
   if(p.role==="admin"){
     try{const s=await getDocs(collection(db,"users"));hrUsers=s.docs.map(d=>({id:d.id,...d.data()}))}catch(e){console.error("HR-Fristen konnten nicht geladen werden",e)}
     if(hasAdminPermission(p,"trainingOverview")){try{const s=await getDocs(collection(db,"trainingProgress"));allTrainingProgress=s.docs.map(d=>({id:d.id,...d.data()}))}catch(e){console.error("Unternehmensweite Schulungsstände konnten nicht geladen werden",e)}}
@@ -256,9 +282,10 @@ export async function renderDashboard(el,ctx){
     }catch(e){console.error("TGA-Überstundenhinweis konnte nicht geladen werden",e)}}
   }
   if(p.role==="employee"||canApproveTime){try{
-    if(p.role==="supervisor") timeRequests=await getAssignedDocs(db,"timeCorrectionRequests",p.id);
+    if(p.role==="employee"){const s=await getDocs(query(collection(db,"timeCorrectionRequests"),where("userId","==",p.id)));timeRequests=s.docs.map(d=>({id:d.id,...d.data()}))}
+    else if(p.role==="supervisor") timeRequests=await getAssignedDocs(db,"timeCorrectionRequests",p.id);
     else {const s=await getDocs(collection(db,"timeCorrectionRequests"));timeRequests=s.docs.map(d=>({id:d.id,...d.data()}))}
-  }catch{}}
+  }catch(e){console.error("Zeiterfassungsanträge konnten nicht geladen werden",e)}}
   if(canApproveVacation){
     try{
       if(p.role==="admin"){
@@ -316,11 +343,11 @@ export async function renderDashboard(el,ctx){
 
   el.innerHTML=`
     <div class="kpi-grid">
-      <div class="kpi ${trainingAction?"needs-action":""}"><span>Offene Schulungen</span><strong>${p.role==="admin"&&!globalTrainingCountAvailable?"–":openTrainings}</strong><small>${p.role==="admin"?(globalTrainingCountAvailable?(trainingAction?"offene Zuordnungen im Unternehmen":"keine offenen Zuordnungen"):"Schulungsübersicht nicht freigeschaltet"):(trainingAction?"Bearbeitung erforderlich":"keine offene Aufgabe")}</small></div>
-      <div class="kpi ${vacationAction?"needs-action":""}"><span>Urlaubsanträge</span><strong>${p.role==="admin"&&!canApproveVacation?"–":vacationCount}</strong><small>${p.role==="admin"?(canApproveVacation?(vacationAction?"offen im Unternehmen":"keine offenen Anträge"):"Urlaubsübersicht nicht freigeschaltet"):(canApproveVacation?(vacationAction?"zur Freigabe":"keine offene Freigabe"):"aktuell in Bearbeitung")}</small></div>
-      <div class="kpi ${timeAction?"needs-action":""}"><span>Zeiterfassungsanträge</span><strong>${p.role==="admin"&&!canApproveTime?"–":pendingTime}</strong><small>${p.role==="admin"?(canApproveTime?(timeAction?"offen im Unternehmen":"keine offenen Anträge"):"Zeitfreigaben nicht freigeschaltet"):(canApproveTime?(timeAction?"zur Freigabe":"keine offene Freigabe"):"eigene offene Anträge")}</small></div>
-      ${p.role!=="admin"?`<div class="kpi hours-kpi"><span>Soll / Ist · ${esc(monthName)}</span><strong>${hm(hours.targetMinutes)} / ${hm(hours.actualMinutes)}</strong><small class="hours-balance ${saldoClass}">Monatssaldo: ${hm(hours.balanceMinutes,{signed:true})}</small></div>`:""}
-    </div>${changeRequestHint}${adminHint}${tgaOvertimeHtml}${milestoneHtml}${hrReminderHtml}
+      <div class="kpi is-clickable ${trainingAction?"needs-action":""}" data-nav="trainings" role="button" tabindex="0"><span>Offene Schulungen</span><strong>${p.role==="admin"&&!globalTrainingCountAvailable?"–":openTrainings}</strong><small>${p.role==="admin"?(globalTrainingCountAvailable?(trainingAction?"offene Zuordnungen im Unternehmen":"keine offenen Zuordnungen"):"Schulungsübersicht nicht freigeschaltet"):(trainingAction?"Bearbeitung erforderlich":"keine offene Aufgabe")}</small></div>
+      <div class="kpi is-clickable ${vacationAction?"needs-action":""}" data-nav="vacation" role="button" tabindex="0"><span>Urlaubsanträge</span><strong>${p.role==="admin"&&!canApproveVacation?"–":vacationCount}</strong><small>${p.role==="admin"?(canApproveVacation?(vacationAction?"offen im Unternehmen":"keine offenen Anträge"):"Urlaubsübersicht nicht freigeschaltet"):(canApproveVacation?(vacationAction?"zur Freigabe":"keine offene Freigabe"):"aktuell in Bearbeitung")}</small></div>
+      <div class="kpi is-clickable ${timeAction?"needs-action":""}" data-nav="time" role="button" tabindex="0"><span>Zeiterfassungsanträge</span><strong>${p.role==="admin"&&!canApproveTime?"–":pendingTime}</strong><small>${p.role==="admin"?(canApproveTime?(timeAction?"offen im Unternehmen":"keine offenen Anträge"):"Zeitfreigaben nicht freigeschaltet"):(canApproveTime?(timeAction?"zur Freigabe":"keine offene Freigabe"):"eigene offene Anträge")}</small></div>
+      ${p.role!=="admin"?`<div class="kpi hours-kpi is-clickable" data-nav="time" role="button" tabindex="0"><span>Soll / Ist · ${esc(monthName)}</span><strong>${hm(hours.targetMinutes)} / ${hm(hours.actualMinutes)}</strong><small class="hours-balance ${saldoClass}">Monatssaldo: ${hm(hours.balanceMinutes,{signed:true})}</small></div>`:""}
+    </div>${changeRequestHint}${adminHint}${renderComplianceAlerts(complianceAlerts)}${tgaOvertimeHtml}${milestoneHtml}${hrReminderHtml}
     <div class="two-col">
       <article class="card"><div class="card-head"><div><h2>News & Hinweise</h2><p>Aktuelle Informationen der Personalabteilung</p></div></div>
         <div class="news-list">${news.length?news.map(n=>`<div class="news-card ${n.priority==='important'?'important':''}"><div class="news-icon">${n.priority==='important'?'!':'i'}</div><div><h3>${esc(n.title||'Hinweis')}</h3><div class="rich-content">${n.html||esc(n.text||'')}</div><span>${n.validTo?`gültig bis ${fmtDate(n.validTo)}`:'interne Mitteilung'}</span></div></div>`).join(""):`<div class="empty">Aktuell liegen keine Hinweise vor.</div>`}</div>
@@ -334,4 +361,20 @@ export async function renderDashboard(el,ctx){
         </div>
       </article>
     </div>`;
+
+  el.querySelectorAll(".kpi[data-nav]").forEach(card=>{
+    const go=()=>dispatchDashboardNavigation(card.dataset.nav);
+    card.addEventListener("click",go);
+    card.addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();go()}});
+  });
+  el.querySelectorAll(".compliance-ack-btn").forEach(btn=>btn.onclick=async()=>{
+    btn.disabled=true;
+    try{
+      await updateDoc(doc(db,"timeComplianceAlerts",btn.dataset.id),{acknowledgedBy:arrayUnion(p.id),updatedAt:serverTimestamp()});
+      toast("Hinweis wurde als zur Kenntnis genommen bestätigt.");
+      renderDashboard(el,ctx);
+    }catch(e){
+      console.error(e);btn.disabled=false;toast("Der Hinweis konnte nicht bestätigt werden.");
+    }
+  });
 }
