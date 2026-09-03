@@ -72,8 +72,16 @@ export async function parsePdsPersonalPdf(file){
   result.birthDate=deDate(firstMatch(all,/Geburtsdatum\s+(\d{2}\.\d{2}\.\d{4})/i));
   {const g=fold(firstMatch(all,/Geschlecht\s+([^\n]+)/i).split(/\s{2,}/)[0].trim());result.gender=g.includes('mannlich')?'männlich':g.includes('weiblich')?'weiblich':g.includes('divers')?'divers':g.includes('keine angabe')?'keine Angabe':'';}
   result.taxId=firstMatch(all,/Steueridentifikationsnummer\s+([0-9 ]{10,14})/i).replace(/\s/g,'');
-  result.healthInsuranceNumber=firstMatch(all,/Krankenversicherungsnummer\s+([A-Z0-9]{6,20})/i).replace(/\s/g,'');
-  result.socialSecurityNumber=firstMatch(all,/Rentenversicherungsnummer\s+([A-Z0-9]{10,14})/i).replace(/\s/g,'');
+  // Krankenversicherungsnummer nur aus derselben OCR-Zeile lesen.
+  // Ist das PDS-Feld leer, darf die direkt folgende Bezeichnung "Rentenversicherungsnummer"
+  // nicht versehentlich als Wert interpretiert werden.
+  {
+    const kvLine=lines.find(l=>/Krankenversicherungsnummer/i.test(l));
+    const kvRaw=kvLine?kvLine.replace(/^.*?Krankenversicherungsnummer\s*/i,'').trim():'';
+    const kvMatch=kvRaw.match(/^([A-Z0-9]{6,20})$/i);
+    result.healthInsuranceNumber=kvMatch?kvMatch[1].replace(/\s/g,''):'';
+  }
+  result.socialSecurityNumber=firstMatch(all,/Rentenversicherungsnummer[ \t]+([A-Z0-9]{10,14})/i).replace(/\s/g,'');
   result.birthName=firstMatch(all,/Geburtsname\s+([^\n]+)/i).split(/\s{2,}/)[0].trim();
   result.birthPlace=firstMatch(all,/Geburtsort\s+([^\n]+)/i).split(/\s{2,}/)[0].trim();
   result.birthNationality=cleanPdsPrefix(firstMatch(all,/Geburtsnationalit[aä]t\s+([^\n]+)/i).split(/\s{2,}/)[0].trim());
