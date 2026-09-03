@@ -31,9 +31,15 @@ function pickEmailNear(raw,label){
   const p=fold(raw).indexOf(fold(label));if(p<0)return '';
   const chunk=raw.slice(p,p+350);return firstMatch(chunk,/([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})/i);
 }
-function pickPhoneNear(raw,label){
-  const p=fold(raw).indexOf(fold(label));if(p<0)return '';
-  const chunk=raw.slice(p,p+300);const matches=[...chunk.matchAll(/(?:\+49|0)\s*[1-9][0-9\s/()-]{6,}/g)].map(m=>m[0].trim());return matches[0]||'';
+function pickPhoneNearLines(lines,label){
+  const idx=lines.findIndex(l=>fold(l).includes(fold(label)));if(idx<0)return '';
+  for(const line of lines.slice(idx,idx+6)){
+    const cleaned=String(line||'').trim();
+    if(/^\d{2}\.\d{2}\.\d{4}$/.test(cleaned))continue;
+    const m=cleaned.match(/(?:^|\s)((?:\+49|0)\s*[1-9][0-9\s/()-]{6,})(?:$|\s)/);
+    if(m)return m[1].replace(/\s+/g,' ').trim();
+  }
+  return '';
 }
 
 async function pdfText(file){
@@ -61,32 +67,41 @@ export async function parsePdsPersonalPdf(file){
   if(fold(all).length<300||!fold(all).includes('personalstammblatt'))throw new Error('Die PDF enthält keine ausreichend auslesbare Textebene. Bitte das PDS-PDF zuerst per OCR umwandeln.');
   const result={sourcePages:pages.length};
   result.employeeNumber=firstMatch(all,/Mitarbeiter\s+(\d{5})/i);
-  const personLine=lines.find(l=>/^\s*Person\s+/i.test(l));result.pdsPerson=personLine?personLine.replace(/^\s*Person\s+/i,'').replace(/\s+Besch[aä]ftigungsstatus.*$/i,'').trim():'';result.name=normalizeNameFromPds(result.pdsPerson);
-  result.birthDate=deDate(lineValue(lines,'Geburtsdatum'));
+  const personLine=lines.find(l=>/^\s*Person\s+/i.test(l));result.pdsPerson=personLine?personLine.replace(/^\s*Person\s+/i,'').replace(/\s+Besch[aä]ftigungsstatus.*$/i,'').trim():'';
+  result.name=normalizeNameFromPds(result.pdsPerson);
+  result.birthDate=deDate(firstMatch(all,/Geburtsdatum\s+(\d{2}\.\d{2}\.\d{4})/i));
+  {const g=fold(firstMatch(all,/Geschlecht\s+([^\n]+)/i).split(/\s{2,}/)[0].trim());result.gender=g.includes('mannlich')?'männlich':g.includes('weiblich')?'weiblich':g.includes('divers')?'divers':g.includes('keine angabe')?'keine Angabe':'';}
   result.taxId=firstMatch(all,/Steueridentifikationsnummer\s+([0-9 ]{10,14})/i).replace(/\s/g,'');
+  result.healthInsuranceNumber=firstMatch(all,/Krankenversicherungsnummer\s+([A-Z0-9]{6,20})/i).replace(/\s/g,'');
   result.socialSecurityNumber=firstMatch(all,/Rentenversicherungsnummer\s+([A-Z0-9]{10,14})/i).replace(/\s/g,'');
+  result.birthName=firstMatch(all,/Geburtsname\s+([^\n]+)/i).split(/\s{2,}/)[0].trim();
+  result.birthPlace=firstMatch(all,/Geburtsort\s+([^\n]+)/i).split(/\s{2,}/)[0].trim();
+  result.birthNationality=cleanPdsPrefix(firstMatch(all,/Geburtsnationalit[aä]t\s+([^\n]+)/i).split(/\s{2,}/)[0].trim());
+  result.salutation=firstMatch(all,/Anrede\s+(Herr|Frau|Divers|Keine Angabe)\b/i);
+  const titleLine=lines.find(l=>/\bAnrede\b/i.test(l)&&/\bTitel\b/i.test(l));
+  if(titleLine){const mt=titleLine.match(/\bTitel\s+(.+)$/i);result.title=mt?mt[1].trim():''}
+  result.firstName=firstMatch(all,/Vorname\s+([^\n]+)/i).split(/\s{2,}/)[0].trim();
+  result.lastName=firstMatch(all,/Nachname\s+([^\n]+)/i).split(/\s{2,}/)[0].trim();
+  if(result.firstName&&result.lastName)result.name=`${result.firstName} ${result.lastName}`.replace(/\s+/g,' ').trim();
   const streetLine=lines.find(l=>/hausnummer/i.test(fold(l)));if(streetLine){const m=streetLine.match(/Hausnummer\s+(.+)$/i);result.street=m?m[1].trim():''}
-  const placeLine=lines.find(l=>/\bPLZ\b/i.test(l)&&/\d{5}/.test(l));if(placeLine){const m=placeLine.match(/(\d{5})\s+(.+)$/);if(m){result.postalCode=m[1];result.city=m[2].trim()}}
+  const placeIdx=lines.findIndex(l=>/\bPLZ\b/i.test(l));
+  if(placeIdx>=0){for(const l of lines.slice(placeIdx,placeIdx+4)){const m=l.match(/\b(\d{5})\s+(.+)$/);if(m){result.postalCode=m[1];result.city=m[2].trim();break}}}
   result.privateEmail=pickEmailNear(raw,'email-privat');
   result.businessEmail=pickEmailNear(raw,'email-ges');
-  result.mobile=pickPhoneNear(raw,'Handy-privat').replace(/\s+/g,' ').trim();
-  const companyLine=lines.find(l=>/^\s*(Beschaftigung\s+)?Firma\s+/i.test(fold(l).replace('beschaftigung','Beschaftigung')))||lines.find(l=>/\bFirma\b/i.test(l)&&/\bTP\b/i.test(l));
-  result.companyText=companyLine?cleanPdsPrefix(companyLine.replace(/^.*?Firma\s+/i,'')):'';
-  result.startDate=deDate(firstMatch(all,/\bEintritt\s+(\d{2}\.\d{2}\.\d{4})/i));
-  result.endDate=deDate(firstMatch(all,/\bAustritt\s+(\d{2}\.\d{2}\.\d{4})/i));
-  const deptLine=lines.find(l=>/\bAbteilung\b/i.test(l));if(deptLine){const v=deptLine.replace(/^.*?Abteilung\s+/i,'').trim();const m=v.match(/^(\d{3})\s*-\s*(.+)$/);if(m){result.businessAreaCode=m[1];result.department=m[2].trim()}else result.department=v}
-  const costLine=lines.find(l=>/Stammkostenstelle/i.test(fold(l)));if(costLine)result.costCenter=costLine.replace(/^.*?Stammkostenstelle\s*/i,'').replace(/\s+100,00\s*%.*$/,'').trim();
-  const workLine=lines.find(l=>/Arbeitszeitmodell/i.test(fold(l))&&/VZ\s*\d+/i.test(l));if(workLine){const m=workLine.match(/VZ\s*(\d{1,2})/i);if(m)result.weeklyHours=Number(m[1]);const hrs=[...workLine.matchAll(/(\d{1,2}),\d{2}/g)].map(m=>Number(m[1]));if(hrs.length){result.workDays=hrs.map((h,i)=>h>0?String(i+1):null).filter(Boolean)}}
-  const vacationLine=lines.find(l=>/Urlaubsanspruch/i.test(fold(l)));if(vacationLine){const next=lines.slice(lines.indexOf(vacationLine),lines.indexOf(vacationLine)+3).join(' ');const m=next.match(/(?:Stufe\s*)?(\d{1,3})(?:\s|$)/);if(m)result.vacationDays=Number(m[1])}
-  const salaryLine=lines.find(l=>/Festbezug\s+Lohn\/Gehalt/i.test(l));if(salaryLine){const date=salaryLine.match(/\d{2}\.\d{2}\.\d{4}/);const amounts=[...salaryLine.matchAll(/\d{1,3}(?:\.\d{3})*,\d{2}/g)].map(m=>m[0]);if(date)result.salaryValidFrom=deDate(date[0]);if(amounts.length)result.grossSalary=deNumber(amounts.at(-1))}
+  result.mobile=pickPhoneNearLines(lines,'Handy-privat');
+  const companyLine=lines.find(l=>/\bFirma\b/i.test(l)&&/\bTP\b/i.test(l));result.companyText=companyLine?cleanPdsPrefix(companyLine.replace(/^.*?Firma\s+/i,'')):'';
+  result.startDate=deDate(firstMatch(all,/Betriebszugeh[oö]rigkeit\s+seit\s+(\d{2}\.\d{2}\.\d{4})/i)||firstMatch(all,/\bEintritt\s+(\d{2}\.\d{2}\.\d{4})/i));
+  const deptLine=lines.find(l=>/\bAbteilung\b/i.test(l));if(deptLine){const v=deptLine.replace(/^.*?Abteilung\s+/i,'').trim();const m=v.match(/^\d{3}\s*-\s*(.+)$/);result.department=(m?m[1]:v).trim()}
   const taxLine=lines.find(l=>/Steuerklasse/i.test(fold(l)));if(taxLine){result.taxClass=taxClass(taxLine);const m=taxLine.match(/Anz\.\s*Kinder\s+([0-9]+(?:,[0-9]+)?)/i);if(m)result.childAllowance=deNumber(m[1])}
-  const personGroupLine=lines.find(l=>/Personengruppenschl/i.test(fold(l)));if(personGroupLine)result.personGroup=firstMatch(personGroupLine,/\b(\d{3})\b/);
+  const religionLine=lines.find(l=>/Konfession/i.test(fold(l)));if(religionLine){result.religionText=religionLine.replace(/^.*?Konfession\s+/i,'').replace(/^Arbeitnehmer\s+/i,'').replace(/\s+Ehegatte.*$/i,'').trim()}
   const insurerLine=lines.find(l=>/^\s*Krankenkasse\s+\d+/i.test(l));if(insurerLine)result.healthInsuranceText=insurerLine.replace(/^\s*Krankenkasse\s+/i,'').trim();
-  const kv=firstMatch(all,/\bKV\s+(\d)\s*-/i),rv=firstMatch(all,/\bRV\s+(\d)\s*-/i),av=firstMatch(all,/\bAV\s+(\d)\s*-/i),pv=firstMatch(all,/\bPV\s+(\d)\s*-/i);if(kv&&rv&&av&&pv)result.contributionGroup=`${kv}${rv}${av}${pv}`;
-  if(/private\s+KV/i.test(all)||/private\s+PV/i.test(all))result.insuranceType='privat versichert';
-  const professionLine=lines.find(l=>/\bBeruf\b/i.test(l));if(professionLine)result.position=professionLine.replace(/^.*?\bBeruf\s+/i,'').trim();
-  const contractLine=lines.find(l=>/Vertragsform/i.test(fold(l)));if(contractLine){const f=fold(contractLine);result.contractType=f.includes('vollzeit')?'Vollzeit':f.includes('teilzeit')?'Teilzeit':f.includes('ausbildung')?'Ausbildung':''}
-  const emergencyIndex=lines.findIndex(l=>/Notfallkontakt/i.test(fold(l)));if(emergencyIndex>=0){const candidates=lines.slice(emergencyIndex,emergencyIndex+3).join(' ');const phone=firstMatch(candidates,/((?:\+49|0)\s*[1-9][0-9\s/()-]{6,})/);if(phone){result.emergencyContactPhone=phone.replace(/\s+/g,' ').trim();result.emergencyContactName=candidates.replace(/^.*?Notfallkontakt\s*/i,'').replace(phone,'').replace(/[:;,-]+\s*$/,'').trim()}}
+  const emergencyIndex=lines.findIndex(l=>/Notfallkontakt/i.test(fold(l)));
+  if(emergencyIndex>=0){
+    for(const l of lines.slice(emergencyIndex+1,emergencyIndex+4)){
+      const m=l.match(/^(.+?)\s*:\s*((?:\+49|0)\s*[1-9][0-9\s/()-]{6,})\s*$/);
+      if(m){result.emergencyContactName=m[1].trim();result.emergencyContactPhone=m[2].replace(/\s+/g,' ').trim();break}
+    }
+  }
   const holderLine=lines.find(l=>/Kontoinhaber/i.test(fold(l)));if(holderLine)result.accountHolder=holderLine.replace(/^.*?Kontoinhaber\s+/i,'').replace(/\s+IBAN.*$/i,'').trim();
   result.iban=firstMatch(all,/\bIBAN\s+([A-Z]{2}\d{2}(?:\s*\d){10,30})/i).replace(/\s/g,'');
   result.bic=firstMatch(all,/(?:SWIFT-BIC|BIC)\s+([A-Z0-9]{8,11})/i);
