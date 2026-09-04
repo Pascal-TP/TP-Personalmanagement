@@ -26,7 +26,7 @@ export async function renderTerminals(el, ctx){
         <div id="terminal-activation" class="terminal-activation hidden"></div>
       </article>
       <article class="card">
-        <div class="card-head"><div><h2>Terminal-App</h2><p>Diese Adresse auf jedem Android-Tablet in Chrome öffnen und anschließend zum Startbildschirm hinzufügen.</p></div></div>
+        <div class="card-head"><div><h2>Terminal-App</h2><p>Diese Adresse auf jedem Android-Gerät in Chrome öffnen und anschließend zum Startbildschirm hinzufügen. Bei der Erstaktivierung ist die Speicherung einer Wiederherstellungsdatei verpflichtend.</p></div></div>
         <div class="readonly-box terminal-url" id="terminal-url"></div>
         <div class="actions"><button class="btn secondary" id="open-terminal" type="button">Terminal-App öffnen</button></div>
       </article>
@@ -47,7 +47,7 @@ export async function renderTerminals(el, ctx){
     await setDoc(doc(db,'terminals',id),{secretHash,active:true,activationUpdatedAt:serverTimestamp(),updatedAt:serverTimestamp()},{merge:true});
     const box=el.querySelector('#terminal-activation');
     box.classList.remove('hidden');
-    box.innerHTML=`<strong>Aktivierungscode für ${esc(terminals.find(t=>t.id===id)?.name||id)}</strong><p>Diesen Code einmalig auf dem betreffenden Tablet eingeben. Er wird aus Sicherheitsgründen nicht im Klartext gespeichert.</p><code>${esc(code)}</code><small>Bitte den Code jetzt am Tablet verwenden. Bei Verlust kann jederzeit ein neuer erzeugt werden.</small>`;
+    box.innerHTML=`<strong>Aktivierungscode für ${esc(terminals.find(t=>t.id===id)?.name||id)}</strong><p>Diesen Code einmalig auf dem betreffenden Gerät eingeben. Danach muss dort eine neue Wiederherstellungsdatei gespeichert werden. Der Code wird serverseitig aus Sicherheitsgründen nicht im Klartext gespeichert.</p><code>${esc(code)}</code><small>Bitte den Code jetzt am Gerät verwenden. Ein neuer Aktivierungscode macht eine ältere Wiederherstellungsdatei ungültig; danach muss am Gerät eine neue Datei gespeichert werden.</small>`;
   }
 
   el.querySelector('#create-terminal').onclick=async()=>{
@@ -58,7 +58,7 @@ export async function renderTerminals(el, ctx){
     const description=el.querySelector('#new-terminal-description')?.value.trim()||'';
     try{
       await setDoc(doc(db,'terminals',id),{terminalNumber:next,name,description,active:true,secretHash:await sha256Hex(code),createdAt:serverTimestamp(),createdBy:ctx.profile.id,updatedAt:serverTimestamp()});
-      const box=el.querySelector('#terminal-activation');box.classList.remove('hidden');box.innerHTML=`<strong>${name} wurde angelegt.</strong><p>Terminal-ID: <b>${id}</b></p><p>Aktivierungscode:</p><code>${code}</code><small>Beides einmalig auf dem Tablet eingeben.</small>`;
+      const box=el.querySelector('#terminal-activation');box.classList.remove('hidden');box.innerHTML=`<strong>${name} wurde angelegt.</strong><p>Terminal-ID: <b>${id}</b></p><p>Aktivierungscode:</p><code>${code}</code><small>Beides einmalig auf dem Gerät eingeben. Anschließend muss dort die Wiederherstellungsdatei gespeichert werden, bevor die Aktivierung abgeschlossen werden kann.</small>`;
       toast(`${name} wurde angelegt.`);
     }catch(e){console.error(e);toast('Terminal konnte nicht angelegt werden.');}
   };
