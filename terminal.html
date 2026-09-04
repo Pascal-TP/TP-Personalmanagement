@@ -21,10 +21,23 @@
 
     <section id="setup-view" class="terminal-card hidden">
       <h2>Terminal einrichten</h2>
-      <p>Die Einrichtung ist nur einmal pro Tablet erforderlich. Terminal-ID und Aktivierungscode werden in der Terminalverwaltung des TP-Personalmanagements erzeugt.</p>
+      <p>Terminal-ID und Aktivierungscode werden durch einen Admin in der Terminalverwaltung erzeugt. Vor der ersten Aktivierung muss auf diesem Gerät eine Wiederherstellungsdatei gespeichert werden.</p>
       <label><span>Terminal-ID</span><input id="setup-id" autocomplete="off" placeholder="z. B. terminal-001"></label>
       <label><span>Aktivierungscode</span><input id="setup-secret" autocomplete="off" autocapitalize="characters" placeholder="Aktivierungscode"></label>
-      <button class="terminal-action primary" id="save-setup" type="button">Terminal aktivieren</button>
+      <button class="terminal-action primary" id="prepare-setup" type="button">Weiter zur Sicherung</button>
+      <div id="recovery-step" class="recovery-step hidden">
+        <h3>Wiederherstellungsdatei speichern</h3>
+        <p>Diese Datei enthält den Terminal-Aktivierungsschlüssel. Sie ermöglicht die Wiederherstellung, wenn Browserdaten gelöscht werden. Bitte geschützt auf dem Gerät aufbewahren.</p>
+        <button class="terminal-action secondary" id="download-recovery" type="button">Wiederherstellungsdatei speichern</button>
+        <p id="recovery-message" class="recovery-note"></p>
+        <label id="recovery-confirm-wrap" class="recovery-confirm hidden"><input id="recovery-confirm" type="checkbox"><span>Ich habe die Wiederherstellungsdatei auf diesem Gerät gespeichert.</span></label>
+        <button class="terminal-action primary" id="finish-setup" type="button" disabled>Terminal jetzt aktivieren</button>
+      </div>
+      <div class="recovery-restore">
+        <strong>Browserdaten gelöscht?</strong>
+        <p>Mit einer zuvor gespeicherten Wiederherstellungsdatei kann dieses Terminal wieder verbunden werden.</p>
+        <label class="terminal-file-button"><span>Wiederherstellungsdatei laden</span><input id="restore-file" type="file" accept="application/json,.json"></label>
+      </div>
       <p class="terminal-message" id="setup-message"></p>
     </section>
 
@@ -34,7 +47,10 @@
         <button class="stamp-button go" data-action="go" type="button"><span>GEHEN</span><small>Arbeitszeit beenden</small></button>
       </div>
       <div class="terminal-info"><span class="connection-dot" id="connection-dot"></span><span id="connection-text">Verbindung wird geprüft …</span></div>
-      <button class="terminal-link" id="reset-terminal" type="button">Terminal-Einrichtung zurücksetzen</button>
+      <div class="terminal-home-links">
+        <button class="terminal-link" id="download-current-recovery" type="button">Wiederherstellungsdatei erneut speichern</button>
+        <button class="terminal-link" id="reset-terminal" type="button">Terminal-Einrichtung zurücksetzen</button>
+      </div>
     </section>
 
     <section id="scan-view" class="terminal-card scan-card hidden">
