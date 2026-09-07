@@ -7,16 +7,58 @@ import { hasAdminPermission } from "./permissions.js";
 import { progressForTrainingYear, trainingProgressDocId, visibleTrainingsForYear } from "./training-utils.js";
 import { getAssignedUsers } from "./supervisor-utils.js";
 
-const uploadProof=httpsCallable(functions,'uploadPersonnelTrainingProof'),deleteProof=httpsCallable(functions,'deletePersonnelTrainingProof'),proofUrl=httpsCallable(functions,'getPersonnelTrainingProofDownloadUrl'),employeeProofs=httpsCallable(functions,'getPersonnelEmployeeProofDownloads');
+const uploadProof=httpsCallable(functions,'uploadPersonnelTrainingProof'),deleteProof=httpsCallable(functions,'deletePersonnelTrainingProof'),proofUrl=httpsCallable(functions,'getPersonnelTrainingProofDownloadUrl'),employeeProofs=httpsCallable(functions,'getPersonnelEmployeeProofDownloads'),createTrainingSession=httpsCallable(functions,'createPersonnelTrainingSession'),verifyTrainingSession=httpsCallable(functions,'verifyPersonnelTrainingSession');
+const PENDING_KEY='tpPersonnelTrainingPendingSessions';
 async function allTrainings(){const s=await getDocs(collection(db,'trainings'));return s.docs.map(d=>({id:d.id,...d.data()}))}
 async function progress(userId){const s=await getDocs(query(collection(db,'trainingProgress'),where('userId','==',userId)));return s.docs.map(d=>({id:d.id,...d.data()}))}
 function file64(file){return new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(String(r.result).split(',')[1]);r.onerror=rej;r.readAsDataURL(file)})}
 function status(entry){if(!entry)return'<span class="pill yellow">Offen</span>';if(entry.status==='completed'||entry.status==='abgeschlossen')return'<span class="pill green">Abgeschlossen</span>';return'<span class="pill blue">Begonnen</span>'}
 function yearOptions(selected){const now=new Date().getFullYear(),from=2026,to=Math.max(now+10,selected);let html='';for(let y=to;y>=from;y--)html+=`<option value="${y}" ${y===selected?'selected':''}>${y}</option>`;return html}
 
+function pendingSessions(){
+  try{return JSON.parse(localStorage.getItem(PENDING_KEY)||'[]').filter(x=>x&&x.token&&x.trainingId)}catch(_){return []}
+}
+function savePendingSession(entry){
+  const list=pendingSessions().filter(x=>x.token!==entry.token&&x.trainingId!==entry.trainingId);
+  list.push(entry);localStorage.setItem(PENDING_KEY,JSON.stringify(list.slice(-20)));
+}
+function removePendingSession(token){
+  localStorage.setItem(PENDING_KEY,JSON.stringify(pendingSessions().filter(x=>x.token!==token)));
+}
+async function applyIntegratedCompletion(ctx,token,{silent=false}={}){
+  const idToken=await auth.currentUser.getIdToken();
+  const result=await verifyTrainingSession({idToken,token}),d=result.data||{};
+  if(!d.completed)return false;
+  const year=Number(d.year)||new Date().getFullYear(),allPs=await progress(ctx.profile.id),id=trainingProgressDocId(ctx.profile.id,d.trainingId,year,allPs);
+  await setDoc(doc(db,'trainingProgress',id),{
+    userId:ctx.profile.id,trainingId:d.trainingId,trainingTitle:d.trainingTitle||'Schulung',year,
+    status:'completed',completedAt:serverTimestamp(),completionSource:'integrated_training',
+    quizScore:Number(d.score)||0,quizTotal:Number(d.total)||0
+  },{merge:true});
+  removePendingSession(token);
+  if(!silent)toast(`Schulung für ${year} automatisch abgeschlossen.`);
+  return true;
+}
+async function checkPendingCompletions(ctx){
+  let changed=false;
+  for(const entry of pendingSessions().filter(x=>x.userId===ctx.profile.id)){
+    try{if(await applyIntegratedCompletion(ctx,entry.token,{silent:true}))changed=true}catch(e){
+      const code=String(e?.code||'');
+      if(code.includes('not-found')||code.includes('deadline')||code.includes('permission-denied'))removePendingSession(entry.token);
+    }
+  }
+  if(changed)toast('Abgeschlossene Schulung wurde automatisch übernommen.');
+  return changed;
+}
+function proofLabel(p){
+  if(p?.proofName)return esc(p.proofName);
+  if(p?.completionSource==='integrated_training')return 'Digital bestätigt';
+  return '–';
+}
+
 async function ownView(ctx,year){
   const ts=await allTrainings(),vs=visibleTrainingsForYear(ts,ctx.profile,year),allPs=await progress(ctx.profile.id),ps=progressForTrainingYear(allPs,year),current=year===new Date().getFullYear();
-  return `<div class="training-year-note"><strong>Schulungsjahr ${year}</strong><span>${current?'Bearbeitung für das aktuelle Jahr möglich.':'Historische bzw. zukünftige Ansicht – Bearbeitung ist nur im aktuellen Jahr möglich.'}</span></div><div class="training-grid">${vs.length?vs.map(t=>{const p=ps.find(x=>x.trainingId===t.id);return`<article class="card training-card"><div class="training-top"><div><h2>${esc(t.title)}</h2><p>Bereiche: ${(t.bereiche||[]).join(', ')||'alle'}</p></div>${status(p)}</div><div class="training-meta"><div><span>Geöffnet</span><strong>${fmtDateTime(p?.openedAt)}</strong></div><div><span>Abgeschlossen</span><strong>${fmtDateTime(p?.completedAt)}</strong></div><div><span>Nachweis</span><strong>${esc(p?.proofName||'–')}</strong></div></div><div class="actions">${current&&t.url?`<button class="btn primary open-training" data-id="${t.id}" data-url="${esc(t.url)}">Schulung öffnen</button>`:''}${current?`<label class="btn secondary file-btn">Nachweis hochladen<input class="proof-file" data-id="${t.id}" type="file" accept="application/pdf,image/*"></label><button class="btn secondary complete-training" data-id="${t.id}">Abschließen</button>`:''}${p?.proofPath?`<button class="btn secondary download-proof" data-id="${t.id}">Nachweis</button>`:''}</div></article>`}).join(''):`<div class="empty">Für ${year} sind Ihnen keine Schulungen zugeordnet.</div>`}</div>`
+  return `<div class="training-year-note"><strong>Schulungsjahr ${year}</strong><span>${current?'Bearbeitung für das aktuelle Jahr möglich.':'Historische bzw. zukünftige Ansicht – Bearbeitung ist nur im aktuellen Jahr möglich.'}</span></div><div class="training-grid">${vs.length?vs.map(t=>{const p=ps.find(x=>x.trainingId===t.id);return`<article class="card training-card"><div class="training-top"><div><h2>${esc(t.title)}</h2><p>Bereiche: ${(t.bereiche||[]).join(', ')||'alle'}</p></div>${status(p)}</div><div class="training-meta"><div><span>Geöffnet</span><strong>${fmtDateTime(p?.openedAt)}</strong></div><div><span>Abgeschlossen</span><strong>${fmtDateTime(p?.completedAt)}</strong></div><div><span>Nachweis</span><strong>${proofLabel(p)}</strong></div></div><div class="actions">${current&&t.url?`<button class="btn primary open-training" data-id="${t.id}" data-url="${esc(t.url)}">Schulung öffnen</button>`:''}${current?`<label class="btn secondary file-btn">Externen Nachweis hochladen<input class="proof-file" data-id="${t.id}" type="file" accept="application/pdf,image/*"></label>`:''}${p?.proofPath?`<button class="btn secondary download-proof" data-id="${t.id}">Nachweis</button>`:''}</div></article>`}).join(''):`<div class="empty">Für ${year} sind Ihnen keine Schulungen zugeordnet.</div>`}</div>`
 }
 
 export async function renderSchulungen(el,ctx){
@@ -33,10 +75,10 @@ export async function renderSchulungen(el,ctx){
     el.querySelectorAll('.subnav-btn').forEach(b=>b.classList.toggle('active',b.dataset.tab===name));
     target.innerHTML='<div class="loading">Schulungen werden geladen …</div>';
     try{
-      if(name==='mine'){target.innerHTML=await ownView(ctx,selectedYear);bindOwn();return}
+      if(name==='mine'){await checkPendingCompletions(ctx);target.innerHTML=await ownView(ctx,selectedYear);bindOwn();return}
       if(name==='progress'){
         const ps=progressForTrainingYear(await progress(ctx.profile.id),selectedYear);
-        target.innerHTML=`<article class="card"><div class="card-head"><div><h2>Mein Bearbeitungsstand · ${selectedYear}</h2><p>Bearbeitungsstand und Nachweise dieses Schulungsjahres.</p></div></div>${ps.length?ps.map(p=>`<div class="list-row"><div><strong>${esc(p.trainingTitle||'Schulung')}</strong><span>Geöffnet: ${fmtDateTime(p.openedAt)} · Abgeschlossen: ${fmtDateTime(p.completedAt)} · Nachweis: ${esc(p.proofName||'–')}</span></div>${status(p)}</div>`).join(''):'<div class="empty">Für dieses Schulungsjahr ist noch kein Bearbeitungsstand vorhanden.</div>'}</article>`;return
+        target.innerHTML=`<article class="card"><div class="card-head"><div><h2>Mein Bearbeitungsstand · ${selectedYear}</h2><p>Bearbeitungsstand und Nachweise dieses Schulungsjahres.</p></div></div>${ps.length?ps.map(p=>`<div class="list-row"><div><strong>${esc(p.trainingTitle||'Schulung')}</strong><span>Geöffnet: ${fmtDateTime(p.openedAt)} · Abgeschlossen: ${fmtDateTime(p.completedAt)} · Nachweis: ${proofLabel(p)}</span></div>${status(p)}</div>`).join(''):'<div class="empty">Für dieses Schulungsjahr ist noch kein Bearbeitungsstand vorhanden.</div>'}</article>`;return
       }
       if(name==='manage')return await manage();
       if(name==='matrix')return await matrix();
@@ -52,9 +94,8 @@ export async function renderSchulungen(el,ctx){
       target.querySelectorAll('.download-proof').forEach(b=>b.onclick=async()=>{try{const idToken=await auth.currentUser.getIdToken();const r=await proofUrl({idToken,employeeId:ctx.profile.id,trainingId:b.dataset.id,year:selectedYear});if(r.data?.url)window.open(r.data.url,'_blank','noopener')}catch(e){console.error(e);toast('Nachweis konnte nicht geladen werden.')}});
       return;
     }
-    target.querySelectorAll('.open-training').forEach(b=>b.onclick=async()=>{const allPs=await progress(ctx.profile.id),id=trainingProgressDocId(ctx.profile.id,b.dataset.id,selectedYear,allPs),t=(await allTrainings()).find(x=>x.id===b.dataset.id);await setDoc(doc(db,'trainingProgress',id),{userId:ctx.profile.id,trainingId:t.id,trainingTitle:t.title,year:selectedYear,status:'started',openedAt:serverTimestamp()},{merge:true});window.open(b.dataset.url,'_blank','noopener');setTimeout(()=>tab('mine'),400)});
-    target.querySelectorAll('.complete-training').forEach(b=>b.onclick=async()=>{const allPs=await progress(ctx.profile.id),t=(await allTrainings()).find(x=>x.id===b.dataset.id),id=trainingProgressDocId(ctx.profile.id,t.id,selectedYear,allPs);await setDoc(doc(db,'trainingProgress',id),{userId:ctx.profile.id,trainingId:t.id,trainingTitle:t.title,year:selectedYear,status:'completed',completedAt:serverTimestamp()},{merge:true});toast(`Schulung für ${selectedYear} abgeschlossen.`);tab('mine')});
-    target.querySelectorAll('.proof-file').forEach(i=>i.onchange=async()=>{const f=i.files[0];if(!f)return;if(f.size>10*1024*1024){toast('Maximal 10 MB.');return}const t=(await allTrainings()).find(x=>x.id===i.dataset.id);try{const idToken=await auth.currentUser.getIdToken();const result=await uploadProof({idToken,portalUserId:ctx.profile.id,trainingId:t.id,trainingTitle:t.title,year:selectedYear,fileName:f.name,contentType:f.type,base64Data:await file64(f)}),d=result.data||{},allPs=await progress(ctx.profile.id),id=trainingProgressDocId(ctx.profile.id,t.id,selectedYear,allPs);await setDoc(doc(db,'trainingProgress',id),{userId:ctx.profile.id,trainingId:t.id,trainingTitle:t.title,year:selectedYear,proofPath:d.proofPath||d.path||'',proofName:d.proofName||f.name,proofUploadedAt:serverTimestamp()},{merge:true});toast(`Nachweis für ${selectedYear} hochgeladen.`);tab('mine')}catch(e){console.error(e);toast(e?.message||'Nachweis konnte nicht hochgeladen werden.')}});
+    target.querySelectorAll('.open-training').forEach(b=>b.onclick=async()=>{try{const allPs=await progress(ctx.profile.id),id=trainingProgressDocId(ctx.profile.id,b.dataset.id,selectedYear,allPs),t=(await allTrainings()).find(x=>x.id===b.dataset.id);await setDoc(doc(db,'trainingProgress',id),{userId:ctx.profile.id,trainingId:t.id,trainingTitle:t.title,year:selectedYear,status:'started',openedAt:serverTimestamp()},{merge:true});const idToken=await auth.currentUser.getIdToken(),session=(await createTrainingSession({idToken,trainingId:t.id,trainingTitle:t.title,year:selectedYear})).data||{};if(!session.token)throw new Error('Schulungstoken konnte nicht erstellt werden.');const launchUrl=new URL(b.dataset.url,window.location.href);launchUrl.searchParams.set('tpSession',session.token);savePendingSession({token:session.token,trainingId:t.id,year:selectedYear,userId:ctx.profile.id,origin:launchUrl.origin,createdAt:Date.now()});const w=window.open(launchUrl.toString(),'_blank');if(!w)toast('Das Schulungsfenster wurde vom Browser blockiert. Bitte Pop-ups für diese Seite erlauben.');setTimeout(()=>tab('mine'),400)}catch(e){console.error(e);toast(e?.message||'Schulung konnte nicht geöffnet werden.')}});
+    target.querySelectorAll('.proof-file').forEach(i=>i.onchange=async()=>{const f=i.files[0];if(!f)return;if(f.size>10*1024*1024){toast('Maximal 10 MB.');return}const t=(await allTrainings()).find(x=>x.id===i.dataset.id);try{const idToken=await auth.currentUser.getIdToken();const result=await uploadProof({idToken,portalUserId:ctx.profile.id,trainingId:t.id,trainingTitle:t.title,year:selectedYear,fileName:f.name,contentType:f.type,base64Data:await file64(f)}),d=result.data||{},allPs=await progress(ctx.profile.id),id=trainingProgressDocId(ctx.profile.id,t.id,selectedYear,allPs);await setDoc(doc(db,'trainingProgress',id),{userId:ctx.profile.id,trainingId:t.id,trainingTitle:t.title,year:selectedYear,status:'completed',completedAt:serverTimestamp(),completionSource:'external_proof',proofPath:d.proofPath||d.path||'',proofName:d.proofName||f.name,proofUploadedAt:serverTimestamp()},{merge:true});toast(`Nachweis für ${selectedYear} hochgeladen und Schulung abgeschlossen.`);tab('mine')}catch(e){console.error(e);toast(e?.message||'Nachweis konnte nicht hochgeladen werden.')}});
     target.querySelectorAll('.download-proof').forEach(b=>b.onclick=async()=>{try{const idToken=await auth.currentUser.getIdToken();const r=await proofUrl({idToken,employeeId:ctx.profile.id,trainingId:b.dataset.id,year:selectedYear});if(r.data?.url)window.open(r.data.url,'_blank','noopener')}catch(e){console.error(e);toast('Nachweis konnte nicht geladen werden.')}})
   }
 
@@ -92,5 +133,13 @@ export async function renderSchulungen(el,ctx){
 
   el.querySelectorAll('.subnav-btn').forEach(b=>b.onclick=()=>tab(b.dataset.tab));
   yearSelect.onchange=()=>{selectedYear=Number(yearSelect.value)||new Date().getFullYear();if(activeTab!=='manage'||canOverview)tab(activeTab)};
+  if(window.__tpTrainingCompletionHandler)window.removeEventListener('message',window.__tpTrainingCompletionHandler);
+  window.__tpTrainingCompletionHandler=async event=>{
+    const msg=event?.data||{};if(msg.type!=='TP_TRAINING_COMPLETED'||!msg.token)return;
+    const pending=pendingSessions().find(x=>x.token===msg.token&&x.userId===ctx.profile.id);
+    if(!pending||event.origin!==pending.origin)return;
+    try{if(await applyIntegratedCompletion(ctx,msg.token)&&activeTab==='mine')await tab('mine')}catch(e){console.error(e);toast('Der Schulungsabschluss konnte noch nicht übernommen werden. Bitte den Bereich Schulungen erneut öffnen.')}
+  };
+  window.addEventListener('message',window.__tpTrainingCompletionHandler);
   if(admin){if(canOverview)await tab('proofs');else if(canManage)await tab('manage');else target.innerHTML='<article class="card"><div class="empty">Für diesen Admin-Zugang ist keine Schulungsübersicht oder Schulungsverwaltung freigeschaltet.</div></article>'}else await tab('mine');
 }
