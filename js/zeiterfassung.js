@@ -105,6 +105,29 @@ function calcRecord(record) {
 }
 
 
+
+function addMinutesToClock(startDate, minutes) {
+  if (!startDate) return "";
+  const d = new Date(startDate.getTime() + Math.round(Number(minutes) || 0) * 60000);
+  return localTime(d);
+}
+
+function flatEightHourDays(records) {
+  const groups = new Map();
+  (records || []).filter(r => r.recordType !== "adjustment" && recordStartDate(r)).forEach(r => {
+    const key = recordDateKey(r);
+    if (!key) return;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(r);
+  });
+  return [...groups.entries()].map(([date, items]) => {
+    const sorted = [...items].sort((a,b) => (recordStartDate(a)?.getTime() || 0) - (recordStartDate(b)?.getTime() || 0));
+    const firstStart = recordStartDate(sorted[0]);
+    const open = sorted.some(isOpen);
+    return { date, firstStart, open };
+  }).sort((a,b) => String(b.date).localeCompare(String(a.date)));
+}
+
 function isOpen(record) {
   return !!recordStartDate(record) && !recordEndDate(record) && record.status !== "closed";
 }
@@ -216,6 +239,7 @@ export async function renderZeiterfassung(el, ctx) {
   setHead("Zeiterfassung", "Arbeitszeit stempeln, Buchungen einsehen und notwendige Korrekturen beantragen.");
   const projectTracking = ctx.profile.projectTimeTracking === true;
   const isAdmin = ctx.profile.role === "admin";
+  const flatEightHourView = ctx.profile.flatEightHourEmployeeView === true && !isAdmin;
 
   let entries = [];
   let ownRequests = [];
@@ -278,6 +302,7 @@ export async function renderZeiterfassung(el, ctx) {
   const openRecord = entries.find(isOpen) || null;
   const allocatedValues = calculateDailyTimeValues(entries, ctx.profile.earliestStartTime || "", {includeOpen:true});
   const accountValues = calculateTimeAccountValues(entries, ctx.profile, ownVacations, ownAbsences, {includeOpen:true});
+  const flatDays = flatEightHourView ? flatEightHourDays(entries) : [];
   const pendingRecordIds = new Set(
     ownRequests.filter(r => r.status === "pending" && r.requestType === "correction").map(r => r.recordId)
   );
@@ -346,9 +371,21 @@ export async function renderZeiterfassung(el, ctx) {
     </article>` : ""}
 
     <article class="card ${isAdmin?"admin-self-hidden":""}">
-      <div class="card-head"><div><h2>Meine Buchungen</h2><p>Gespeicherte Arbeitszeiten und Stundenkorrekturen. „Zeitguthaben“ zeigt den minutengenauen Stand des Stundenkontos nach der jeweiligen Buchung.</p></div></div>
-      ${ctx.profile.earliestStartTime ? `<div class="info-strip"><strong>Vorgegebener Arbeitsbeginn:</strong> Arbeitszeit wird frühestens ab <strong>${esc(ctx.profile.earliestStartTime)} Uhr</strong> angerechnet. Ein früherer echter KOMMEN-Zeitstempel bleibt zur Dokumentation sichtbar.</div>` : ""}
+      <div class="card-head"><div><h2>Meine Buchungen</h2><p>${flatEightHourView ? "Pauschale persönliche Arbeitszeitübersicht. Die tatsächlichen Buchungen werden im Hintergrund unverändert für Administration, Vorgesetzte, Projekte und Auswertungen verarbeitet." : "Gespeicherte Arbeitszeiten und Stundenkorrekturen. „Zeitguthaben“ zeigt den minutengenauen Stand des Stundenkontos nach der jeweiligen Buchung."}</p></div></div>
+      ${flatEightHourView ? `<div class="info-strip"><strong>Pauschale 8h-Darstellung aktiv:</strong> Pro Tag wird der erste tatsächlich erfasste Beginn angezeigt. Das dargestellte Ende liegt 8:30 Stunden später; davon werden 30 Minuten Pause abgezogen. Angezeigt werden somit pauschal 8:00 Stunden Arbeitszeit. Projektwechsel und tatsächliche Projektzeiten bleiben in dieser persönlichen Übersicht ausgeblendet.</div>` : (ctx.profile.earliestStartTime ? `<div class="info-strip"><strong>Vorgegebener Arbeitsbeginn:</strong> Arbeitszeit wird frühestens ab <strong>${esc(ctx.profile.earliestStartTime)} Uhr</strong> angerechnet. Ein früherer echter KOMMEN-Zeitstempel bleibt zur Dokumentation sichtbar.</div>` : "")}
       <div class="table-wrap"><table>
+        ${flatEightHourView ? `
+        <thead><tr><th>Datum</th><th>Beginn</th><th>Ende</th><th>Pause</th><th>Arbeitszeit</th><th>Status</th></tr></thead>
+        <tbody>
+          ${flatDays.length ? flatDays.map(day => `<tr>
+            <td>${fmtDate(day.date)}</td>
+            <td>${esc(day.firstStart ? localTime(day.firstStart) : "–")}</td>
+            <td>${esc(day.firstStart ? addMinutesToClock(day.firstStart, 510) : "–")}</td>
+            <td><strong>30 Min.</strong></td>
+            <td><strong>8:00 h</strong></td>
+            <td>${day.open ? statusPill("läuft", "blue") : statusPill("erfasst", "green")}</td>
+          </tr>`).join("") : `<tr><td colspan="6" class="empty">Noch keine Buchungen vorhanden.</td></tr>`}
+        </tbody>` : `
         <thead><tr><th>Datum</th><th>Projekt</th><th>Beginn</th><th>Ende</th><th>Pause</th><th>Arbeitszeit</th><th>Zeitguthaben</th><th>Status</th><th>Aktion</th></tr></thead>
         <tbody>
           ${entries.length ? entries.map(r => {
@@ -379,7 +416,7 @@ export async function renderZeiterfassung(el, ctx) {
               <td>${open ? `<span class="muted-small">erst nach Gehen</span>` : pending ? statusPill("Korrektur beantragt", "yellow") : `<button class="btn small secondary correction-btn" type="button" data-id="${r.id}">Korrektur beantragen</button>`}</td>
             </tr>`;
           }).join("") : `<tr><td colspan="9" class="empty">Noch keine Buchungen vorhanden.</td></tr>`}
-        </tbody>
+        </tbody>`}
       </table></div>
     </article>
 

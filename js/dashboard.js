@@ -151,8 +151,14 @@ function currentMonthBalance(profile,timeRecords,vacations,absences=[]){
     const day=new Date(start.getFullYear(),start.getMonth(),start.getDate(),12);
     return day>=calcStart&&day<=today;
   });
-  const timeValues=calculateDailyTimeValues(relevantRecords,profile.earliestStartTime||"",{includeOpen:true,now});
-  const actualMinutes=Math.round(relevantRecords.reduce((sum,r)=>sum+(timeValues.get(r.id)?.net||0),0));
+  let actualMinutes=0;
+  if(profile.flatEightHourEmployeeView===true){
+    const bookedDays=new Set(relevantRecords.filter(r=>r.recordType!=="adjustment"&&timeRecordStart(r)).map(r=>localDateKey(timeRecordStart(r))));
+    actualMinutes=bookedDays.size*480;
+  }else{
+    const timeValues=calculateDailyTimeValues(relevantRecords,profile.earliestStartTime||"",{includeOpen:true,now});
+    actualMinutes=Math.round(relevantRecords.reduce((sum,r)=>sum+(timeValues.get(r.id)?.net||0),0));
+  }
 
   return {targetMinutes,actualMinutes,balanceMinutes:actualMinutes-targetMinutes};
 }
