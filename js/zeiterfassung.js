@@ -371,8 +371,8 @@ export async function renderZeiterfassung(el, ctx) {
     </article>` : ""}
 
     <article class="card ${isAdmin?"admin-self-hidden":""}">
-      <div class="card-head"><div><h2>Meine Buchungen</h2><p>${flatEightHourView ? "Pauschale persönliche Arbeitszeitübersicht. Die tatsächlichen Buchungen werden im Hintergrund unverändert für Administration, Vorgesetzte, Projekte und Auswertungen verarbeitet." : "Gespeicherte Arbeitszeiten und Stundenkorrekturen. „Zeitguthaben“ zeigt den minutengenauen Stand des Stundenkontos nach der jeweiligen Buchung."}</p></div></div>
-      ${flatEightHourView ? `<div class="info-strip"><strong>Pauschale 8h-Darstellung aktiv:</strong> Pro Tag wird der erste tatsächlich erfasste Beginn angezeigt. Das dargestellte Ende liegt 8:30 Stunden später; davon werden 30 Minuten Pause abgezogen. Angezeigt werden somit pauschal 8:00 Stunden Arbeitszeit. Projektwechsel und tatsächliche Projektzeiten bleiben in dieser persönlichen Übersicht ausgeblendet.</div>` : (ctx.profile.earliestStartTime ? `<div class="info-strip"><strong>Vorgegebener Arbeitsbeginn:</strong> Arbeitszeit wird frühestens ab <strong>${esc(ctx.profile.earliestStartTime)} Uhr</strong> angerechnet. Ein früherer echter KOMMEN-Zeitstempel bleibt zur Dokumentation sichtbar.</div>` : "")}
+      <div class="card-head"><div><h2>Meine Buchungen</h2>${flatEightHourView ? "" : `<p>Gespeicherte Arbeitszeiten und Stundenkorrekturen. „Zeitguthaben“ zeigt den minutengenauen Stand des Stundenkontos nach der jeweiligen Buchung.</p>`}</div></div>
+      ${flatEightHourView ? "" : (ctx.profile.earliestStartTime ? `<div class="info-strip"><strong>Vorgegebener Arbeitsbeginn:</strong> Arbeitszeit wird frühestens ab <strong>${esc(ctx.profile.earliestStartTime)} Uhr</strong> angerechnet. Ein früherer echter KOMMEN-Zeitstempel bleibt zur Dokumentation sichtbar.</div>` : "")}
       <div class="table-wrap"><table>
         ${flatEightHourView ? `
         <thead><tr><th>Datum</th><th>Beginn</th><th>Ende</th><th>Pause</th><th>Arbeitszeit</th><th>Status</th></tr></thead>
