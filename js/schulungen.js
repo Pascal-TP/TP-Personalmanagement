@@ -29,7 +29,18 @@ async function applyIntegratedCompletion(ctx,token,{silent=false}={}){
   const idToken=await auth.currentUser.getIdToken();
   const result=await verifyTrainingSession({idToken,token}),d=result.data||{};
   if(!d.completed)return false;
-  const year=Number(d.year)||new Date().getFullYear(),allPs=await progress(ctx.profile.id),id=trainingProgressDocId(ctx.profile.id,d.trainingId,year,allPs);
+  const year=Number(d.year)||new Date().getFullYear(),allPs=await progress(ctx.profile.id);
+  const existing=progressForTrainingYear(allPs,year).find(p=>p.trainingId===d.trainingId);
+
+  // Eine freiwillige Wiederholung darf einen bereits vorhandenen Abschluss
+  // (digital oder per externem Nachweis) nicht verändern oder zurücksetzen.
+  if(existing&&(existing.status==='completed'||existing.status==='abgeschlossen')){
+    removePendingSession(token);
+    if(!silent)toast('Schulung erneut durchgeführt. Der vorhandene Abschluss bleibt unverändert.');
+    return true;
+  }
+
+  const id=trainingProgressDocId(ctx.profile.id,d.trainingId,year,allPs);
   await setDoc(doc(db,'trainingProgress',id),{
     userId:ctx.profile.id,trainingId:d.trainingId,trainingTitle:d.trainingTitle||'Schulung',year,
     status:'completed',completedAt:serverTimestamp(),completionSource:'integrated_training',
@@ -94,7 +105,21 @@ export async function renderSchulungen(el,ctx){
       target.querySelectorAll('.download-proof').forEach(b=>b.onclick=async()=>{try{const idToken=await auth.currentUser.getIdToken();const r=await proofUrl({idToken,employeeId:ctx.profile.id,trainingId:b.dataset.id,year:selectedYear});if(r.data?.url)window.open(r.data.url,'_blank','noopener')}catch(e){console.error(e);toast('Nachweis konnte nicht geladen werden.')}});
       return;
     }
-    target.querySelectorAll('.open-training').forEach(b=>b.onclick=async()=>{try{const allPs=await progress(ctx.profile.id),id=trainingProgressDocId(ctx.profile.id,b.dataset.id,selectedYear,allPs),t=(await allTrainings()).find(x=>x.id===b.dataset.id);await setDoc(doc(db,'trainingProgress',id),{userId:ctx.profile.id,trainingId:t.id,trainingTitle:t.title,year:selectedYear,status:'started',openedAt:serverTimestamp()},{merge:true});const idToken=await auth.currentUser.getIdToken(),session=(await createTrainingSession({idToken,trainingId:t.id,trainingTitle:t.title,year:selectedYear})).data||{};if(!session.token)throw new Error('Schulungstoken konnte nicht erstellt werden.');const launchUrl=new URL(b.dataset.url,window.location.href);launchUrl.searchParams.set('tpSession',session.token);savePendingSession({token:session.token,trainingId:t.id,year:selectedYear,userId:ctx.profile.id,origin:launchUrl.origin,createdAt:Date.now()});const w=window.open(launchUrl.toString(),'_blank');if(!w)toast('Das Schulungsfenster wurde vom Browser blockiert. Bitte Pop-ups für diese Seite erlauben.');setTimeout(()=>tab('mine'),400)}catch(e){console.error(e);toast(e?.message||'Schulung konnte nicht geöffnet werden.')}});
+    target.querySelectorAll('.open-training').forEach(b=>b.onclick=async()=>{try{
+      const allPs=await progress(ctx.profile.id),existing=progressForTrainingYear(allPs,selectedYear).find(p=>p.trainingId===b.dataset.id),alreadyCompleted=existing&&(existing.status==='completed'||existing.status==='abgeschlossen');
+      if(alreadyCompleted&&!confirm('Diese Schulung ist bereits abgeschlossen. Möchten Sie die Schulung trotzdem noch einmal durchführen?\n\nDer vorhandene Abschluss und Nachweis bleiben dabei unverändert.'))return;
+      const id=trainingProgressDocId(ctx.profile.id,b.dataset.id,selectedYear,allPs),t=(await allTrainings()).find(x=>x.id===b.dataset.id);
+      if(!alreadyCompleted){
+        await setDoc(doc(db,'trainingProgress',id),{userId:ctx.profile.id,trainingId:t.id,trainingTitle:t.title,year:selectedYear,status:'started',openedAt:serverTimestamp()},{merge:true});
+      }
+      const idToken=await auth.currentUser.getIdToken(),session=(await createTrainingSession({idToken,trainingId:t.id,trainingTitle:t.title,year:selectedYear})).data||{};
+      if(!session.token)throw new Error('Schulungstoken konnte nicht erstellt werden.');
+      const launchUrl=new URL(b.dataset.url,window.location.href);launchUrl.searchParams.set('tpSession',session.token);
+      savePendingSession({token:session.token,trainingId:t.id,year:selectedYear,userId:ctx.profile.id,origin:launchUrl.origin,createdAt:Date.now(),preserveCompletion:!!alreadyCompleted});
+      const w=window.open(launchUrl.toString(),'_blank');
+      if(!w)toast('Das Schulungsfenster wurde vom Browser blockiert. Bitte Pop-ups für diese Seite erlauben.');
+      if(!alreadyCompleted)setTimeout(()=>tab('mine'),400);
+    }catch(e){console.error(e);toast(e?.message||'Schulung konnte nicht geöffnet werden.')}});
     target.querySelectorAll('.proof-file').forEach(i=>i.onchange=async()=>{const f=i.files[0];if(!f)return;if(f.size>10*1024*1024){toast('Maximal 10 MB.');return}const t=(await allTrainings()).find(x=>x.id===i.dataset.id);try{const idToken=await auth.currentUser.getIdToken();const result=await uploadProof({idToken,portalUserId:ctx.profile.id,trainingId:t.id,trainingTitle:t.title,year:selectedYear,fileName:f.name,contentType:f.type,base64Data:await file64(f)}),d=result.data||{},allPs=await progress(ctx.profile.id),id=trainingProgressDocId(ctx.profile.id,t.id,selectedYear,allPs);await setDoc(doc(db,'trainingProgress',id),{userId:ctx.profile.id,trainingId:t.id,trainingTitle:t.title,year:selectedYear,status:'completed',completedAt:serverTimestamp(),completionSource:'external_proof',proofPath:d.proofPath||d.path||'',proofName:d.proofName||f.name,proofUploadedAt:serverTimestamp()},{merge:true});toast(`Nachweis für ${selectedYear} hochgeladen und Schulung abgeschlossen.`);tab('mine')}catch(e){console.error(e);toast(e?.message||'Nachweis konnte nicht hochgeladen werden.')}});
     target.querySelectorAll('.download-proof').forEach(b=>b.onclick=async()=>{try{const idToken=await auth.currentUser.getIdToken();const r=await proofUrl({idToken,employeeId:ctx.profile.id,trainingId:b.dataset.id,year:selectedYear});if(r.data?.url)window.open(r.data.url,'_blank','noopener')}catch(e){console.error(e);toast('Nachweis konnte nicht geladen werden.')}})
   }
