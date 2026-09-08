@@ -38,7 +38,8 @@ const views = {
   reports:{label:"Auswertungen",icon:"▥",roles:["admin","supervisor"],adminPermission:"hoursExport",render:renderAuswertungen},
   history:{label:"Historie",icon:"↺",roles:["admin"],adminPermission:"historyView",render:renderHistorie},
   backup:{label:"Datensicherung",icon:"⤓",roles:["admin"],adminPermission:"backup",render:renderDatensicherung},
-  applicants:{label:"Bewerbungsportal",icon:"↗",roles:["admin"],adminPermission:"applicantPortal",external:true}
+  applicants:{label:"Bewerbungsportal",icon:"↗",roles:["admin"],adminPermission:"applicantPortal",external:true},
+  management:{label:"Managementportal",icon:"↗",roles:["employee","supervisor","admin"],external:true}
 };
 
 export async function refreshProfile(){
@@ -51,6 +52,7 @@ export async function refreshProfile(){
 export function setHead(title,subtitle=""){document.getElementById("page-title").textContent=title;document.getElementById("page-subtitle").textContent=subtitle}
 export async function navigate(view){
   if(view==="applicants"){const url=localStorage.getItem("tpApplicantsUrl")||"";if(url)window.open(url,"_blank","noopener");else toast("Das Bewerbungsportal wird später als separates Tool angebunden.");return}
+  if(view==="management"){const url=localStorage.getItem("tpManagementPortalUrl")||"";if(url)window.open(url,"_blank","noopener");else toast("Das Managementportal wird später über die gemeinsame Zugangslogik angebunden.");return}
   ctx.view=view; renderNav(); const item=views[view]||views.dashboard; content.innerHTML=`<div class="loading">Bereich wird geladen …</div>`;
   try{await item.render(content,ctx)}catch(e){console.error(e);content.innerHTML=`<div class="error-card"><strong>Der Bereich konnte nicht geladen werden.</strong><p>${e.message}</p></div>`}
 }
