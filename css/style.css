@@ -338,6 +338,6 @@
 /* V2.15.1 – Systemberechtigung TP-Managementportal */
 .permission-toggle{margin-top:4px}
 .permission-option{display:flex;gap:12px;align-items:flex-start;padding:12px 14px;border:1px solid #d9dee5;border-radius:12px;background:#fafbfc;cursor:pointer}
-.permission-option input{margin-top:3px;flex:0 0 auto}
+.permission-option input{width:auto;margin:3px 0 0;flex:0 0 auto}
 .permission-option span{display:flex;flex-direction:column;gap:3px}
 .permission-option small{color:#667085;font-weight:400;line-height:1.35}
