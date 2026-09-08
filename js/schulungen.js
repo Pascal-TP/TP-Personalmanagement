@@ -143,9 +143,17 @@ export async function renderSchulungen(el,ctx){
 
   async function proofs(){
     const us=await relevantUsers();
-    target.innerHTML=`<article class="card"><div class="card-head"><div><h2>Nachweise je Mitarbeiter · ${selectedYear}</h2><p>Bearbeitungsstände und vorhandene Schulungsnachweise des gewählten Jahres</p></div></div><div id="proof-list"></div></article>`;
+    target.innerHTML=`<article class="card"><div class="card-head"><div><h2>Nachweise je Mitarbeiter · ${selectedYear}</h2><p>Abgeschlossene Schulungen und vorhandene Schulungsnachweise des gewählten Jahres</p></div></div><div id="proof-list"></div></article>`;
     const box=target.querySelector('#proof-list');
-    for(const u of us){const ps=progressForTrainingYear(await progress(u.id),selectedYear);box.insertAdjacentHTML('beforeend',`<div class="employee-proof-block"><div class="employee-proof-head"><strong>${esc(u.name||u.email)}</strong><button class="btn secondary small all-proofs" data-id="${u.id}">Alle Nachweise ${selectedYear}</button></div>${ps.length?ps.map(p=>`<div class="list-row"><div><strong>${esc(p.trainingTitle||'Schulung')}</strong><span>${p.proofName?`Nachweis: ${esc(p.proofName)}`:p.completionSource==='integrated_training'?'✓ Digital bestätigt':'Kein Nachweis'}</span></div>${p.proofPath?`<button class="btn secondary small one-proof" data-user="${u.id}" data-training="${p.trainingId}">Download</button>`:''}</div>`).join(''):'<div class="muted small">Noch keine Bearbeitungsstände in diesem Jahr.</div>'}</div>`)}
+    for(const u of us){
+      const allPs=progressForTrainingYear(await progress(u.id),selectedYear);
+      const ps=allPs.filter(p=>{
+        const completed=p?.status==='completed'||p?.status==='abgeschlossen';
+        const hasProof=!!(p?.proofPath||p?.proofName||p?.completionSource==='integrated_training');
+        return completed&&hasProof;
+      });
+      box.insertAdjacentHTML('beforeend',`<div class="employee-proof-block"><div class="employee-proof-head"><strong>${esc(u.name||u.email)}</strong><button class="btn secondary small all-proofs" data-id="${u.id}">Alle Nachweise ${selectedYear}</button></div>${ps.length?ps.map(p=>`<div class="list-row"><div><strong>${esc(p.trainingTitle||'Schulung')}</strong><span>${p.proofName?`Nachweis: ${esc(p.proofName)}`:p.completionSource==='integrated_training'?'✓ Digital bestätigt':'Kein Nachweis'}</span></div>${p.proofPath?`<button class="btn secondary small one-proof" data-user="${u.id}" data-training="${p.trainingId}">Download</button>`:''}</div>`).join(''):'<div class="muted small">Noch keine abgeschlossenen Schulungen mit Nachweis in diesem Jahr.</div>'}</div>`);
+    }
     box.querySelectorAll('.one-proof').forEach(b=>b.onclick=async()=>{try{const idToken=await auth.currentUser.getIdToken();const r=await proofUrl({idToken,employeeId:b.dataset.user,trainingId:b.dataset.training,year:selectedYear});if(r.data?.url)window.open(r.data.url,'_blank','noopener')}catch(e){console.error(e);toast('Download nicht möglich.')}});
     box.querySelectorAll('.all-proofs').forEach(b=>b.onclick=async()=>{try{const idToken=await auth.currentUser.getIdToken();const r=await employeeProofs({idToken,employeeId:b.dataset.id,year:selectedYear});for(const f of r.data?.files||[])window.open(f.url,'_blank','noopener')}catch(e){console.error(e);toast('Sammeldownload nicht möglich.')}})
   }
