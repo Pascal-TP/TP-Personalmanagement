@@ -341,3 +341,7 @@
 .permission-option input{width:auto;margin:3px 0 0;flex:0 0 auto}
 .permission-option span{display:flex;flex-direction:column;gap:3px}
 .permission-option small{color:#667085;font-weight:400;line-height:1.35}
+
+/* V2.15.2 – zusätzliche Dokumentenberechtigung TP-Managementportal */
+.permission-options{display:grid;gap:10px}
+.permission-option.inactive{opacity:.62}
