@@ -15,6 +15,25 @@ import { parsePdsPersonalPdf, normalizePdsName } from "./pds-personal-import.js"
 const PUBLIC_HISTORY_FIELDS=[
   "name","companyId","email","username","hasRealEmail","role","managementPortalAccess","managementPortalDocumentAccess","adminPermissions","supervisorPermissions","supervisorId","supervisorId2","active","startDate","endDate","weeklyHours","vacationDays","earliestStartTime","employeeNumber","businessAreaId","projectTimeTracking","flatEightHourEmployeeView","department","position","contractType","probationEndDate","fixedTermEndDate","costCenter","workDays","firstAider","firstAiderValidUntil","fireWarden","fireWardenValidUntil","forkliftPermit","forkliftPermitValidUntil","aerialLiftPermit","aerialLiftPermitValidUntil","drivingLicenseClasses","nextDrivingLicenseCheck","occupationalMedicalNotes","bereiche","extraTrainings","trainingAssignments"
 ];
+
+function portalDirectoryData(user={}){
+  return {
+    name:String(user.name||user.email||user.username||'').trim(),
+    email:user.email||'',
+    username:user.username||'',
+    role:user.role||'employee',
+    active:user.active!==false && user.archived!==true,
+    managementPortalAccess:user.managementPortalAccess===true,
+    managementPortalDocumentAccess:user.managementPortalDocumentAccess===true,
+    updatedAt:serverTimestamp()
+  };
+}
+async function syncPortalDirectory(users=[]){
+  const batch=writeBatch(db);
+  users.forEach(u=>batch.set(doc(db,'managementPortalUsers',u.id),portalDirectoryData(u),{merge:true}));
+  await batch.commit();
+}
+
 const PRIVATE_HISTORY_FIELDS=[
   "birthDate","birthdayList","salutation","title","firstName","lastName","gender","birthName","birthPlace","birthNationality","healthInsuranceNumber","maritalStatus","marriageDate","street","postalCode","city","privateEmail","phone","mobile","emergencyContactName","emergencyContactPhone","taxId","taxClass","childAllowance","religion","socialSecurityNumber","healthInsuranceId","insuranceType","personGroup","contributionGroup","iban","bic","bankId","accountHolder","grossSalary","hourlyRate","salaryValidFrom"
 ];
@@ -106,6 +125,7 @@ export async function renderMitarbeiter(el,ctx){
     getDocs(collection(db,'users')),getDocs(collection(db,'companies')),getDocs(collection(db,'trainings')),(canView||canEdit?getDocs(collection(db,'employeePrivate')):Promise.resolve({docs:[]})),getDocs(collection(db,'healthInsurers')),getDocs(collection(db,'banks')),getDocs(collection(db,'religionTaxCodes')),getDocs(collection(db,'businessAreas')),(canManageNfc?getDocs(collection(db,'nfcCredentials')):Promise.resolve({docs:[]}))
   ]);
   const users=uSnap.docs.map(d=>({id:d.id,...d.data()})),activeUsers=users.filter(u=>u.archived!==true),companies=cSnap.docs.map(d=>({id:d.id,...d.data()})),trainings=tSnap.docs.map(d=>({id:d.id,...d.data()}));
+  try{await syncPortalDirectory(users)}catch(err){console.warn('Portal-Benutzerverzeichnis konnte nicht synchronisiert werden',err)}
   let photoUrls={};
   try{photoUrls=await getEmployeePhotoUrls(ctx,activeUsers.map(u=>u.id))}catch(err){console.warn('Mitarbeiterfotos konnten nicht geladen werden',err)}
   const privateMap=new Map(pSnap.docs.map(d=>[d.id,{id:d.id,...d.data()}]));
@@ -440,6 +460,7 @@ export async function renderMitarbeiter(el,ctx){
       const changes=[{field:'archived',oldValue:false,newValue:true},{field:'active',oldValue:u.active!==false,newValue:false}];
       const batch=writeBatch(db);
       batch.update(doc(db,'users',u.id),{archived:true,active:false,archivedAt:serverTimestamp(),archivedBy:ctx.profile.id,updatedAt:serverTimestamp()});
+      batch.set(doc(db,'managementPortalUsers',u.id),{...portalDirectoryData({...u,active:false,archived:true}),active:false},{merge:true});
       batch.set(doc(collection(db,'employeeHistory')),historyRecord(ctx,u.id,{...u,active:false},'archive',changes));
       await batch.commit();
       toast('Mitarbeiter wurde entfernt und der Zugang deaktiviert.');
@@ -582,6 +603,7 @@ el.querySelectorAll('.edit-user').forEach(b=>b.onclick=async()=>{
           throw new Error('Die Rolle des aktuell angemeldeten Admin-Zugangs kann nicht selbst herabgestuft werden. Bitte mit einem anderen Admin anmelden und die Rolle dort ändern.');
         }
         batch.update(doc(db,'users',id),publicData);
+        batch.set(doc(db,'managementPortalUsers',id),portalDirectoryData({...previousUser,...publicData}),{merge:true});
         batch.set(doc(db,'employeePrivate',id),privateData,{merge:true});
         if(changes.length)batch.set(doc(collection(db,'employeeHistory')),historyRecord(ctx,id,publicData,'update',changes));
         await batch.commit();
@@ -594,6 +616,7 @@ el.querySelectorAll('.edit-user').forEach(b=>b.onclick=async()=>{
           authHandle=await createAuthAccount(email,password);
           const uid=authHandle.uid;
           batch.set(doc(db,'users',uid),{...publicData,email,createdAt:serverTimestamp()});
+          batch.set(doc(db,'managementPortalUsers',uid),portalDirectoryData({...publicData,email}),{merge:true});
           batch.set(doc(db,'employeePrivate',uid),{...privateData,createdAt:serverTimestamp()});
           batch.set(doc(collection(db,'employeeHistory')),historyRecord(ctx,uid,{...publicData,email},'create',[]));
           await batch.commit();
