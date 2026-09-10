@@ -52,7 +52,7 @@ export async function refreshProfile(){
 export function setHead(title,subtitle=""){document.getElementById("page-title").textContent=title;document.getElementById("page-subtitle").textContent=subtitle}
 export async function navigate(view){
   if(view==="applicants"){const url=localStorage.getItem("tpApplicantsUrl")||"";if(url)window.open(url,"_blank","noopener");else toast("Das Bewerbungsportal wird später als separates Tool angebunden.");return}
-  if(view==="management"){if(ctx.profile?.managementPortalAccess!==true){toast("Für diesen Benutzer ist das TP-Managementportal nicht freigeschaltet.");return}const url=localStorage.getItem("tpManagementPortalUrl")||"";if(url)window.open(url,"_blank","noopener");else toast("Das TP-Managementportal wird nach Einrichtung der produktiven URL hier direkt geöffnet.");return}
+  if(view==="management"){if(ctx.profile?.managementPortalAccess!==true){toast("Für diesen Benutzer ist das TP-Managementportal nicht freigeschaltet.");return}window.open("https://pascal-tp.github.io/TP-Managementportal/","_blank","noopener");return}
   ctx.view=view; renderNav(); const item=views[view]||views.dashboard; content.innerHTML=`<div class="loading">Bereich wird geladen …</div>`;
   try{await item.render(content,ctx)}catch(e){console.error(e);content.innerHTML=`<div class="error-card"><strong>Der Bereich konnte nicht geladen werden.</strong><p>${e.message}</p></div>`}
 }
