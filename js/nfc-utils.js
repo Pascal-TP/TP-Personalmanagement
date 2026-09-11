@@ -14,6 +14,60 @@ export function nfcSupported() {
   return typeof window !== 'undefined' && 'NDEFReader' in window && window.isSecureContext;
 }
 
+
+export function normalizeNfcSerialNumber(value) {
+  const hex = String(value || '').replace(/[^a-fA-F0-9]/g, '').toLowerCase();
+  if (!hex || hex.length % 2 !== 0 || !/^[a-f0-9]+$/.test(hex)) return '';
+  return hex;
+}
+
+export function nfcSerialAliases(value) {
+  const hex = normalizeNfcSerialNumber(value);
+  if (!hex) return [];
+  const bytes = hex.match(/.{2}/g) || [];
+  const reversedHex = [...bytes].reverse().join('');
+  const aliases = new Set([hex]);
+  try {
+    const big = BigInt(`0x${hex}`).toString(10);
+    const little = BigInt(`0x${reversedHex}`).toString(10);
+    aliases.add(big);
+    aliases.add(little);
+    if (bytes.length === 7) {
+      aliases.add(big.padStart(17, '0'));
+      aliases.add(little.padStart(17, '0'));
+    }
+  } catch (_) {}
+  return [...aliases].filter(Boolean);
+}
+
+export async function readEmployeeNfcSerialNumber({ timeoutMs = 20000 } = {}) {
+  if (!nfcSupported()) throw new Error('Web NFC ist auf diesem Gerät/Browser nicht verfügbar. Bitte Google Chrome auf einem NFC-fähigen Android-Gerät verwenden.');
+  const controller = new AbortController();
+  const ndef = new NDEFReader();
+  return await new Promise(async (resolve, reject) => {
+    const timer = setTimeout(() => {
+      controller.abort();
+      reject(new Error('Zeitüberschreitung beim Lesen der Transponder-ID. Bitte erneut versuchen.'));
+    }, timeoutMs);
+    const finish = (fn, value) => {
+      clearTimeout(timer);
+      try { controller.abort(); } catch (_) {}
+      fn(value);
+    };
+    ndef.onreadingerror = () => finish(reject, new Error('Transponder-ID konnte nicht gelesen werden. Bitte den Transponder erneut an das Gerät halten.'));
+    ndef.onreading = event => {
+      const serial = normalizeNfcSerialNumber(event.serialNumber || '');
+      if (!serial) return finish(reject, new Error('Der Transponder wurde erkannt, aber seine Seriennummer konnte nicht ermittelt werden.'));
+      finish(resolve, serial);
+    };
+    try {
+      await ndef.scan({ signal: controller.signal });
+    } catch (err) {
+      finish(reject, err);
+    }
+  });
+}
+
 export function makeEmployeeNfcPayload(token) {
   return `TPPM1|${token}`;
 }

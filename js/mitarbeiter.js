@@ -6,7 +6,7 @@ import { setHead } from "./app.js";
 import { AREA_NAMES, esc, syntheticEmail, ROLE_LABELS, toast, initials } from "./utils.js";
 import { renderPersonalakte } from "./personalakte.js";
 import { ADMIN_PERMISSION_DEFS, DEFAULT_ADMIN_PERMISSIONS, SUPERVISOR_PERMISSION_DEFS, hasAdminPermission, hasAnyAdminPermission, normalizedAdminPermissions, normalizedSupervisorPermissions } from "./permissions.js";
-import { randomToken, sha256Hex, nfcSupported, writeEmployeeNfcTag } from "./nfc-utils.js";
+import { randomToken, sha256Hex, nfcSupported, writeEmployeeNfcTag, readEmployeeNfcSerialNumber, nfcSerialAliases } from "./nfc-utils.js";
 import { getEmployeePhotoUrls, uploadEmployeePhoto, deleteEmployeePhoto } from "./employee-photos.js";
 import { sameTrainingSelection, upsertTrainingAssignmentHistory } from "./training-utils.js";
 import { calculateDailyTimeValues, calculateTimeAccountValues, wasStartLimited } from "./time-utils.js";
@@ -430,19 +430,40 @@ export async function renderMitarbeiter(el,ctx){
     const box=el.querySelector('#nfc-credential-box');if(!box)return;
     if(!employee){box.innerHTML='<span class="muted">Der NFC-Transponder kann nach dem Anlegen des Mitarbeiters zugewiesen werden.</span>';return;}
     const active=nfcCredentials.filter(x=>x.userId===employee.id&&x.active!==false);
-    box.innerHTML=`<div class="nfc-status-row"><div><strong>${active.length?'NFC-Transponder aktiv':'Kein NFC-Transponder zugewiesen'}</strong><span>${active.length?'Der Mitarbeiter kann sich an freigeschalteten Terminals identifizieren.':'Für die Terminal-Zeiterfassung zunächst einen Transponder programmieren.'}</span></div><span class="pill ${active.length?'green':'yellow'}">${active.length?'aktiv':'nicht eingerichtet'}</span></div><div class="actions"><button class="btn primary small" type="button" id="assign-nfc">${active.length?'Neuen Transponder zuweisen':'Transponder zuweisen'}</button>${active.length?'<button class="btn danger small" type="button" id="disable-nfc">Transponder sperren</button>':''}</div><small class="nfc-browser-note">${nfcSupported()?'Web NFC ist auf diesem Gerät verfügbar.':'Zum Programmieren bitte diese Mitarbeiterkartei in Google Chrome auf einem NFC-fähigen Android-Gerät öffnen.'}</small>`;
+    const uidReady=active.some(x=>Array.isArray(x.uidHashes)&&x.uidHashes.length);
+    box.innerHTML=`<div class="nfc-status-row"><div><strong>${active.length?'NFC-Transponder aktiv':'Kein NFC-Transponder zugewiesen'}</strong><span>${active.length?(uidReady?'Der Mitarbeiter kann den Transponder am internen NFC-Leser und am externen USB-Leser verwenden.':'Der Transponder funktioniert am internen NFC-Leser. Für den externen USB-Leser bitte die Transponder-ID einmal ergänzen.'):'Für die Terminal-Zeiterfassung zunächst einen Transponder programmieren.'}</span></div><span class="pill ${active.length?'green':'yellow'}">${active.length?(uidReady?'intern + extern':'intern'):'nicht eingerichtet'}</span></div><div class="actions"><button class="btn primary small" type="button" id="assign-nfc">${active.length?'Neuen Transponder zuweisen':'Transponder zuweisen'}</button>${active.length&&!uidReady?'<button class="btn secondary small" type="button" id="capture-nfc-uid">Transponder-ID ergänzen</button>':''}${active.length?'<button class="btn danger small" type="button" id="disable-nfc">Transponder sperren</button>':''}</div><small class="nfc-browser-note">${nfcSupported()?'Web NFC ist auf diesem Gerät verfügbar. Bei einer neuen Zuweisung werden Transponder-ID und TP-Schlüssel gemeinsam hinterlegt.':'Zum Programmieren bitte diese Mitarbeiterkartei in Google Chrome auf einem NFC-fähigen Android-Gerät öffnen.'}</small>`;
+    async function uidHashesFromSerial(serial){
+      const aliases=nfcSerialAliases(serial);
+      if(!aliases.length)throw new Error('Die Transponder-ID konnte nicht ausgewertet werden.');
+      return await Promise.all(aliases.map(value=>sha256Hex(`uid:${value}`)));
+    }
     const assign=box.querySelector('#assign-nfc');if(assign)assign.onclick=async()=>{
       if(!nfcSupported()){toast('Bitte Google Chrome auf einem NFC-fähigen Android-Gerät verwenden.');return;}
       if(active.length&&!confirm('Der bisherige NFC-Transponder wird nach erfolgreicher Zuweisung gesperrt. Fortfahren?'))return;
-      const token=randomToken(24);assign.disabled=true;assign.textContent='Transponder bereithalten …';
+      const token=randomToken(24);assign.disabled=true;assign.textContent='Transponder-ID lesen …';
       try{
+        const serial=await readEmployeeNfcSerialNumber();
+        const uidHashes=await uidHashesFromSerial(serial);
+        assign.textContent='TP-Schlüssel schreiben …';
         await writeEmployeeNfcTag(token);
         const hash=await sha256Hex(token);const batch=writeBatch(db);
         active.forEach(c=>batch.update(doc(db,'nfcCredentials',c.id),{active:false,disabledAt:serverTimestamp(),updatedAt:serverTimestamp()}));
-        batch.set(doc(db,'nfcCredentials',hash),{userId:employee.id,userName:employee.name||'',employeeNumber:employee.employeeNumber||'',active:true,createdAt:serverTimestamp(),createdBy:ctx.profile.id});
+        batch.set(doc(db,'nfcCredentials',hash),{userId:employee.id,userName:employee.name||'',employeeNumber:employee.employeeNumber||'',uidHashes,uidCapturedAt:serverTimestamp(),active:true,createdAt:serverTimestamp(),createdBy:ctx.profile.id});
         await batch.commit();toast(`NFC-Transponder für ${employee.name||'Mitarbeiter'} wurde erfolgreich zugewiesen.`);
-        box.innerHTML='<div class="success-box"><strong>NFC-Transponder zugewiesen</strong><span>Der Transponder ist jetzt für die Terminal-Zeiterfassung freigeschaltet.</span></div>';
+        box.innerHTML='<div class="success-box"><strong>NFC-Transponder zugewiesen</strong><span>Der Transponder ist jetzt für interne NFC-Leser und den externen USB-Leser freigeschaltet.</span></div>';
       }catch(err){console.error(err);toast(err?.message||'NFC-Transponder konnte nicht programmiert werden.');assign.disabled=false;assign.textContent=active.length?'Neuen Transponder zuweisen':'Transponder zuweisen';}
+    };
+    const captureUid=box.querySelector('#capture-nfc-uid');if(captureUid)captureUid.onclick=async()=>{
+      if(!nfcSupported()){toast('Bitte Google Chrome auf einem NFC-fähigen Android-Gerät verwenden.');return;}
+      captureUid.disabled=true;captureUid.textContent='Transponder-ID lesen …';
+      try{
+        const serial=await readEmployeeNfcSerialNumber();
+        const uidHashes=await uidHashesFromSerial(serial);
+        const batch=writeBatch(db);
+        active.forEach(c=>batch.update(doc(db,'nfcCredentials',c.id),{uidHashes,uidCapturedAt:serverTimestamp(),updatedAt:serverTimestamp()}));
+        await batch.commit();toast('Transponder-ID wurde ergänzt. Der vorhandene Transponder kann jetzt auch am externen USB-Leser verwendet werden.');
+        captureUid.textContent='Transponder-ID ergänzt ✓';
+      }catch(err){console.error(err);toast(err?.message||'Transponder-ID konnte nicht ergänzt werden.');captureUid.disabled=false;captureUid.textContent='Transponder-ID ergänzen';}
     };
     const disable=box.querySelector('#disable-nfc');if(disable)disable.onclick=async()=>{if(!confirm('Den NFC-Transponder dieses Mitarbeiters wirklich sperren?'))return;try{const batch=writeBatch(db);active.forEach(c=>batch.update(doc(db,'nfcCredentials',c.id),{active:false,disabledAt:serverTimestamp(),updatedAt:serverTimestamp()}));await batch.commit();box.innerHTML='<div class="warning-box"><strong>Transponder gesperrt</strong><span>Der bisherige NFC-Transponder kann nicht mehr zum Stempeln verwendet werden.</span></div>';toast('NFC-Transponder wurde gesperrt.');}catch(err){console.error(err);toast('Transponder konnte nicht gesperrt werden.');}};
   }
