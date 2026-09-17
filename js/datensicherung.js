@@ -1,7 +1,7 @@
 import { functions } from "./firebase.js";
 import { httpsCallable } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-functions.js";
 import { setHead } from "./app.js";
-import { esc, toast } from "./utils.js";
+import { esc, toast, confirmDialog, inputDialog } from "./utils.js";
 import { hasAdminPermission } from "./permissions.js";
 
 const createBackup = httpsCallable(functions, "createPersonnelBackup", { timeout: 540000 });
@@ -75,9 +75,10 @@ export async function renderDatensicherung(el,ctx){
       listEl.querySelectorAll(".backup-restore").forEach(btn=>btn.onclick=async()=>{
         const row=rows.find(x=>x.backupId===btn.dataset.id);
         const text=`Backup vom ${fmtDate(row?.createdAt)} wirklich wiederherstellen?\n\nDie Anwendungsdaten werden auf diesen Sicherungsstand zurückgesetzt. Firebase-Login-Konten und Passwörter bleiben unverändert.`;
-        if(!confirm(text))return;
-        const verify=prompt('Zur Sicherheit bitte das Wort WIEDERHERSTELLEN eingeben:');
-        if(verify!=="WIEDERHERSTELLEN"){toast("Wiederherstellung abgebrochen.");return;}
+        if(!await confirmDialog(text,{danger:true}))return;
+        const verify=await inputDialog('Zur Sicherheit bitte das Wort WIEDERHERSTELLEN eingeben:');
+        if(verify===null)return;
+        if(verify!=="WIEDERHERSTELLEN"){toast("Das Sicherheitswort stimmt nicht. Die Wiederherstellung wurde abgebrochen.","error");return;}
         btn.disabled=true;btn.textContent="Wiederherstellung läuft …";
         try{
           const res=await restoreBackup({idToken:await token(),backupId:btn.dataset.id});
@@ -88,7 +89,7 @@ export async function renderDatensicherung(el,ctx){
 
       listEl.querySelectorAll(".backup-delete").forEach(btn=>btn.onclick=async()=>{
         const row=rows.find(x=>x.backupId===btn.dataset.id);
-        if(!confirm(`Datensicherung vom ${fmtDate(row?.createdAt)} wirklich endgültig löschen?`))return;
+        if(!await confirmDialog(`Datensicherung vom ${fmtDate(row?.createdAt)} wirklich endgültig löschen?`,{danger:true}))return;
         btn.disabled=true;
         try{await deleteBackup({idToken:await token(),backupId:btn.dataset.id});toast("Backup gelöscht.");await load();}
         catch(err){console.error(err);toast(err?.message||"Backup konnte nicht gelöscht werden.");btn.disabled=false;}
@@ -97,7 +98,7 @@ export async function renderDatensicherung(el,ctx){
   }
 
   createBtn.onclick=async()=>{
-    if(!confirm("Jetzt einen vollständigen Sicherungsstand des TP-Personalmanagements erstellen?"))return;
+    if(!await confirmDialog("Jetzt einen vollständigen Sicherungsstand des TP-Personalmanagements erstellen?"))return;
     createBtn.disabled=true;createBtn.textContent="Backup wird erstellt …";createStatus.innerHTML='<div class="info-strip">Firestore-Daten und Dateien werden gesichert. Bitte dieses Fenster geöffnet lassen.</div>';
     try{
       const res=await createBackup({idToken:await token()});

@@ -1,7 +1,7 @@
 import { auth, db } from "./firebase.js";
 import { onAuthStateChanged, signInWithEmailAndPassword, signOut, sendPasswordResetEmail, updatePassword } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
 import { doc, getDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-import { normalizeLogin, ROLE_LABELS, roleHeading, initials, toast } from "./utils.js";
+import { normalizeLogin, ROLE_LABELS, roleHeading, initials, toast, inputDialog } from "./utils.js";
 import { renderDashboard } from "./dashboard.js";
 import { renderMitarbeiter } from "./mitarbeiter.js";
 import { renderSupervisorMitarbeiter } from "./mitarbeiter-vorgesetzter.js";
@@ -68,9 +68,9 @@ function updateChrome(){
   document.getElementById("mobile-user-name").textContent=displayName;document.getElementById("mobile-user-role").textContent=displayRole;
 }
 
-document.getElementById("login-form").addEventListener("submit",async e=>{e.preventDefault();const msg=document.getElementById("login-message");msg.textContent="Anmeldung läuft …";try{await signInWithEmailAndPassword(auth,normalizeLogin(document.getElementById("login-identifier").value),document.getElementById("login-password").value);msg.textContent=""}catch(err){console.error(err);msg.textContent="Anmeldung nicht möglich. Bitte Zugangsdaten prüfen."}});
+document.getElementById("login-form").addEventListener("submit",async e=>{e.preventDefault();const msg=document.getElementById("login-message");msg.textContent="Anmeldung läuft …";try{await signInWithEmailAndPassword(auth,normalizeLogin(document.getElementById("login-identifier").value),document.getElementById("login-password").value);msg.textContent=""}catch(err){console.error(err);msg.textContent="";toast("Anmeldung nicht möglich. Bitte Zugangsdaten prüfen.","error")}});
 document.getElementById("forgot-password-btn").onclick=async()=>{const raw=document.getElementById("login-identifier").value.trim();if(!raw){toast("Bitte zuerst die E-Mail-Adresse eintragen.");return}if(!raw.includes("@")){toast("Bei Benutzernamen erfolgt der Passwort-Reset derzeit über die Personalabteilung.");return}try{await sendPasswordResetEmail(auth,raw);toast("Passwort-Link wurde angefordert.")}catch(e){console.error(e);toast("Passwort-Link konnte nicht angefordert werden.")}};
-async function changeOwnPassword(){const p=prompt("Neues Passwort (mindestens 6 Zeichen):");if(!p)return;if(p.length<6){toast("Das Passwort ist zu kurz.");return}try{await updatePassword(auth.currentUser,p);toast("Passwort geändert.")}catch(e){toast("Passwort konnte nicht geändert werden. Ggf. erneut anmelden.")}}
+async function changeOwnPassword(){const p=await inputDialog("Neues Passwort (mindestens 6 Zeichen):", "", {password:true});if(!p)return;if(p.length<6){toast("Das Passwort ist zu kurz.");return}try{await updatePassword(auth.currentUser,p);toast("Passwort geändert.")}catch(e){toast("Passwort konnte nicht geändert werden. Ggf. erneut anmelden.")}}
 const HELP_URLS={
   admin:"anleitungen/TP-Personalmanagement_Anleitung_Admin.pdf",
   supervisor:"anleitungen/TP-Personalmanagement_Anleitung_Vorgesetzte.pdf",
@@ -95,4 +95,4 @@ document.getElementById("user-chip").onkeydown=e=>{if((e.key==="Enter"||e.key===
 document.addEventListener("click",e=>{if(!e.target.closest(".user-menu-wrap"))closeMobileUserMenu()});
 window.addEventListener("resize",()=>{if(!window.matchMedia("(max-width: 700px)").matches)closeMobileUserMenu()});
 
-onAuthStateChanged(auth,async user=>{ctx.user=user;if(!user){ctx.profile=null;closeMobileUserMenu();loginPage.classList.remove("hidden");shell.classList.add("hidden");return}try{await refreshProfile();updateChrome();renderNav();loginPage.classList.add("hidden");shell.classList.remove("hidden");ctx.view="dashboard";await navigate("dashboard")}catch(e){console.error(e);await signOut(auth);document.getElementById("login-message").textContent=e.message}});
+onAuthStateChanged(auth,async user=>{ctx.user=user;if(!user){ctx.profile=null;closeMobileUserMenu();loginPage.classList.remove("hidden");shell.classList.add("hidden");return}try{await refreshProfile();updateChrome();renderNav();loginPage.classList.add("hidden");shell.classList.remove("hidden");ctx.view="dashboard";await navigate("dashboard")}catch(e){console.error(e);await signOut(auth);toast(e.message,"error")}});

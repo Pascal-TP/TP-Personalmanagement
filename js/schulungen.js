@@ -2,7 +2,7 @@ import { auth, db, functions } from "./firebase.js";
 import { collection, addDoc, getDocs, query, where, doc, setDoc, updateDoc, deleteDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 import { httpsCallable } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-functions.js";
 import { setHead } from "./app.js";
-import { AREA_NAMES, esc, fmtDateTime, toast } from "./utils.js";
+import { AREA_NAMES, esc, fmtDateTime, toast, confirmDialog } from "./utils.js";
 import { hasAdminPermission } from "./permissions.js";
 import { progressForTrainingYear, trainingProgressDocId, visibleTrainingsForYear } from "./training-utils.js";
 import { getAssignedUsers } from "./supervisor-utils.js";
@@ -107,7 +107,7 @@ export async function renderSchulungen(el,ctx){
     }
     target.querySelectorAll('.open-training').forEach(b=>b.onclick=async()=>{try{
       const allPs=await progress(ctx.profile.id),existing=progressForTrainingYear(allPs,selectedYear).find(p=>p.trainingId===b.dataset.id),alreadyCompleted=existing&&(existing.status==='completed'||existing.status==='abgeschlossen');
-      if(alreadyCompleted&&!confirm('Diese Schulung ist bereits abgeschlossen. Möchten Sie die Schulung trotzdem noch einmal durchführen?\n\nDer vorhandene Abschluss und Nachweis bleiben dabei unverändert.'))return;
+      if(alreadyCompleted&&!await confirmDialog('Diese Schulung ist bereits abgeschlossen. Möchten Sie die Schulung trotzdem noch einmal durchführen?\n\nDer vorhandene Abschluss und Nachweis bleiben dabei unverändert.'))return;
       const id=trainingProgressDocId(ctx.profile.id,b.dataset.id,selectedYear,allPs),t=(await allTrainings()).find(x=>x.id===b.dataset.id);
       if(!alreadyCompleted){
         await setDoc(doc(db,'trainingProgress',id),{userId:ctx.profile.id,trainingId:t.id,trainingTitle:t.title,year:selectedYear,status:'started',openedAt:serverTimestamp()},{merge:true});
@@ -131,7 +131,7 @@ export async function renderSchulungen(el,ctx){
     function mode(x){show.classList.toggle('hidden',x!=='show');create.classList.toggle('hidden',x!=='create');target.querySelectorAll('.choice-card').forEach(b=>b.classList.toggle('active',b.dataset.mode===x))}
     target.querySelectorAll('.choice-card').forEach(b=>b.onclick=()=>{if(b.dataset.mode==='create')form.reset();mode(b.dataset.mode)});target.querySelector('#cancel-training').onclick=()=>mode('show');
     target.querySelectorAll('.edit-training').forEach(b=>b.onclick=()=>{const t=ts.find(x=>x.id===b.dataset.id);form.elements.id.value=t.id;form.elements.title.value=t.title||'';form.elements.url.value=t.url||'';form.elements.active.value=String(t.active!==false);form.querySelectorAll('[name=bereich]').forEach(x=>x.checked=(t.bereiche||[]).includes(x.value));mode('create')});
-    target.querySelectorAll('.del-training').forEach(b=>b.onclick=async()=>{if(confirm('Schulung wirklich löschen?')){await deleteDoc(doc(db,'trainings',b.dataset.id));manage()}});
+    target.querySelectorAll('.del-training').forEach(b=>b.onclick=async()=>{if(await confirmDialog('Schulung wirklich löschen?')){await deleteDoc(doc(db,'trainings',b.dataset.id));manage()}});
     form.onsubmit=async e=>{e.preventDefault();const id=form.elements.id.value,d={title:form.elements.title.value.trim(),url:form.elements.url.value.trim(),active:form.elements.active.value==='true',bereiche:[...form.querySelectorAll('[name=bereich]:checked')].map(x=>x.value),updatedAt:serverTimestamp()};if(id)await updateDoc(doc(db,'trainings',id),d);else await addDoc(collection(db,'trainings'),{...d,createdAt:serverTimestamp()});toast('Schulung gespeichert.');manage()}
   }
 

@@ -1,7 +1,7 @@
 import { db, functions } from "./firebase.js";
 import { httpsCallable } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-functions.js";
 import { collection, query, where, getDocs, addDoc, deleteDoc, doc, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-import { esc, fmtDateTime, toast } from "./utils.js";
+import { esc, fmtDateTime, toast, confirmDialog } from "./utils.js";
 
 const uploadPersonnelDocument=httpsCallable(functions,'uploadPersonnelDocument');
 const getPersonnelDocumentUrl=httpsCallable(functions,'getPersonnelDocumentDownloadUrl');
@@ -42,6 +42,6 @@ export async function renderPersonalakte(container,ctx,employee,options={}){
     }catch(err){console.error(err);toast(err?.message||'Dokument konnte nicht hochgeladen werden.')}finally{button.disabled=false;button.textContent='Datei hochladen'}
   };
   container.querySelectorAll('.doc-download').forEach(b=>b.onclick=async()=>{const meta=docs.find(x=>x.id===b.dataset.id);try{const token=await ctx.user.getIdToken();const result=await getPersonnelDocumentUrl({idToken:token,employeeId:employee.id,path:meta.path,fileName:meta.fileName});if(result.data?.url)window.open(result.data.url,'_blank','noopener');else throw new Error('Keine Download-URL erhalten.')}catch(err){console.error(err);toast('Dokument konnte nicht geöffnet werden.')}});
-  container.querySelectorAll('.doc-delete').forEach(b=>b.onclick=async()=>{const meta=docs.find(x=>x.id===b.dataset.id);if(!confirm(`Dokument „${meta.fileName}“ wirklich löschen?`))return;try{const token=await ctx.user.getIdToken();await deletePersonnelDocumentFile({idToken:token,employeeId:employee.id,path:meta.path});await deleteDoc(doc(db,'employeeDocuments',meta.id));toast('Dokument gelöscht.');await renderPersonalakte(container,ctx,employee)}catch(err){console.error(err);toast('Dokument konnte nicht gelöscht werden.')}});
+  container.querySelectorAll('.doc-delete').forEach(b=>b.onclick=async()=>{const meta=docs.find(x=>x.id===b.dataset.id);if(!await confirmDialog(`Dokument „${meta.fileName}“ wirklich löschen?`))return;try{const token=await ctx.user.getIdToken();await deletePersonnelDocumentFile({idToken:token,employeeId:employee.id,path:meta.path});await deleteDoc(doc(db,'employeeDocuments',meta.id));toast('Dokument gelöscht.');await renderPersonalakte(container,ctx,employee)}catch(err){console.error(err);toast('Dokument konnte nicht gelöscht werden.')}});
   container.querySelectorAll('.payroll-doc-download').forEach(b=>b.onclick=async()=>{const meta=payrollDocs.find(x=>x.id===b.dataset.id);try{const token=await ctx.user.getIdToken();const result=await getPersonnelPayrollDocumentUrl({idToken:token,employeeId:employee.id,path:meta.path,fileName:meta.fileName});if(result.data?.url)window.open(result.data.url,'_blank','noopener');else throw new Error('Keine Download-URL erhalten.')}catch(err){console.error(err);toast('Abrechnung konnte nicht geöffnet werden.')}});
 }

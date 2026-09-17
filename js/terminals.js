@@ -1,7 +1,7 @@
 import { db } from './firebase.js';
 import { collection, doc, getDocs, setDoc, updateDoc, serverTimestamp } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js';
 import { setHead } from './app.js';
-import { esc, toast } from './utils.js';
+import { esc, toast, inputDialog } from './utils.js';
 import { hasAdminPermission } from './permissions.js';
 import { randomToken, sha256Hex } from './nfc-utils.js';
 
@@ -66,7 +66,7 @@ export async function renderTerminals(el, ctx){
 
   el.querySelectorAll('.edit-terminal-description').forEach(b=>b.onclick=async()=>{
     const current=b.dataset.description||'';
-    const description=window.prompt('Beschreibung für dieses Terminal:',current);
+    const description=await inputDialog('Beschreibung für dieses Terminal:',current);
     if(description===null)return;
     const clean=description.trim().slice(0,120);
     try{

@@ -12,7 +12,7 @@ import {
   writeBatch
 } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 import { setHead } from "./app.js";
-import { esc, fmtDate, fmtDateTime, statusPill, toast } from "./utils.js";
+import { esc, fmtDate, fmtDateTime, statusPill, toast, confirmDialog, validationNotice } from "./utils.js";
 import { hasAdminPermission } from "./permissions.js";
 import { calculateDailyTimeValues, calculateTimeAccountValues, wasStartLimited } from "./time-utils.js";
 import { getAssignedDocs, getAssignedUsers } from "./supervisor-utils.js";
@@ -604,12 +604,14 @@ export async function renderZeiterfassung(el, ctx) {
   document.getElementById("missing-request-form").onsubmit = async e => {
     e.preventDefault();
     const data = Object.fromEntries(new FormData(e.currentTarget).entries());
-    if (!String(data.reason || "").trim()) { toast("Eine Begründung ist erforderlich."); return; }
-    if (projectTracking && !validProjectNumber(data.projectNumber)) { toast("Bitte eine sechsstellige Projektnummer eingeben."); return; }
-    if (mins(data.requestedEnd) <= mins(data.requestedStart)) { toast("Die Endzeit muss nach der Startzeit liegen."); return; }
+    const issues=[];
+    if(!String(data.reason||'').trim())issues.push('• Begründung fehlt.');
+    if(projectTracking&&!validProjectNumber(data.projectNumber))issues.push('• Eine sechsstellige Projektnummer ist erforderlich.');
+    if(mins(data.requestedEnd)<=mins(data.requestedStart))issues.push('• Die Endzeit muss nach der Startzeit liegen.');
+    if(issues.length){validationNotice(['Bitte folgende Angaben prüfen:',...issues]);return;}
     const sameDate = entries.some(r => recordDateKey(r) === data.requestedDate && (recordStartDate(r) || recordEndDate(r)));
     if (sameDate) {
-      const ok = confirm("Für diesen Tag existiert bereits eine Buchung. Möchten Sie trotzdem einen Antrag zur nachträglichen Erfassung stellen? Bei einer fehlerhaften Buchung ist normalerweise ‚Korrektur beantragen‘ die bessere Wahl.");
+      const ok = await confirmDialog("Für diesen Tag existiert bereits eine Buchung. Möchten Sie trotzdem einen Antrag zur nachträglichen Erfassung stellen? Bei einer fehlerhaften Buchung ist normalerweise ‚Korrektur beantragen‘ die bessere Wahl.");
       if (!ok) return;
     }
     await addDoc(collection(db, "timeCorrectionRequests"), {
@@ -661,9 +663,11 @@ export async function renderZeiterfassung(el, ctx) {
   document.getElementById("correction-request-form").onsubmit = async e => {
     e.preventDefault();
     const data = Object.fromEntries(new FormData(e.currentTarget).entries());
-    if (!String(data.reason || "").trim()) { toast("Eine Begründung ist erforderlich."); return; }
-    if (projectTracking && !validProjectNumber(data.projectNumber)) { toast("Bitte eine sechsstellige Projektnummer eingeben."); return; }
-    if (mins(data.requestedEnd) <= mins(data.requestedStart)) { toast("Die Endzeit muss nach der Startzeit liegen."); return; }
+    const issues=[];
+    if(!String(data.reason||'').trim())issues.push('• Begründung fehlt.');
+    if(projectTracking&&!validProjectNumber(data.projectNumber))issues.push('• Eine sechsstellige Projektnummer ist erforderlich.');
+    if(mins(data.requestedEnd)<=mins(data.requestedStart))issues.push('• Die Endzeit muss nach der Startzeit liegen.');
+    if(issues.length){validationNotice(['Bitte folgende Angaben prüfen:',...issues]);return;}
     const projectChanged = projectTracking && data.projectNumber !== data.originalProjectNumber;
     if (data.requestedStart === data.originalStart && data.requestedEnd === data.originalEnd && !projectChanged) { toast(projectTracking ? "Bitte ändern Sie mindestens eine Uhrzeit oder die Projektnummer." : "Bitte ändern Sie mindestens eine Uhrzeit."); return; }
     await addDoc(collection(db, "timeCorrectionRequests"), {

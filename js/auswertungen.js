@@ -1,7 +1,7 @@
 import { db } from "./firebase.js";
 import { collection, getDocs, doc, getDoc, query, where, setDoc, deleteDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 import { setHead } from "./app.js";
-import { esc, toast } from "./utils.js";
+import { esc, toast, confirmDialog } from "./utils.js";
 import { hasAdminPermission } from "./permissions.js";
 import { recordGrossMinutes } from "./time-utils.js";
 import { vacationYearBalance, vacationCarryoverDocId } from "./vacation-utils.js";
@@ -254,7 +254,7 @@ async function renderSupervisorAttendance(el,ctx){
   };
   deleteButton.onclick=async()=>{
     const userId=planningForm.elements.userId.value,key=planningForm.elements.date.value;
-    if(!confirm('Diese Planung wirklich löschen?'))return;
+    if(!await confirmDialog('Diese Planung wirklich löschen?'))return;
     try{
       const existing=plans.get(planningKey(userId,key));if(!existing?.id)throw new Error('Planung nicht gefunden.');await deleteDoc(doc(db,'teamWeekPlans',existing.id));
       toast('Planung wurde gelöscht.');closePlanningModal();await loadPlanningWeek();

@@ -2,7 +2,7 @@ import { db, functions } from "./firebase.js";
 import { httpsCallable } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-functions.js";
 import { collection, getDocs, query, where, addDoc, deleteDoc, doc, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 import { setHead } from "./app.js";
-import { esc, fmtDateTime, toast } from "./utils.js";
+import { esc, fmtDateTime, toast, confirmDialog } from "./utils.js";
 import { hasAdminPermission } from "./permissions.js";
 
 const uploadPayrollDocument = httpsCallable(functions, "uploadPersonnelPayrollDocument");
@@ -123,7 +123,7 @@ async function renderAdminPayroll(el,ctx){
     if(!valid.length){toast("Keine gültigen Abrechnungen zum Hochladen vorhanden.");return}
     const period=currentPeriod(); const [year,month]=period.split("-");
     const warningCount=valid.filter(r=>r.status==="warning").length;
-    if(warningCount&&!confirm(`Für ${warningCount} ausgewählte Abrechnung(en) besteht bereits mindestens eine Abrechnung im Monat ${periodLabel(period)}. Wirklich zusätzlich hochladen?`))return;
+    if(warningCount&&!await confirmDialog(`Für ${warningCount} ausgewählte Abrechnung(en) besteht bereits mindestens eine Abrechnung im Monat ${periodLabel(period)}. Wirklich zusätzlich hochladen?`))return;
     uploadBtn.disabled=true; uploadBtn.textContent=`Upload 0 / ${valid.length}`;
     let ok=0,failed=0;
     for(const row of valid){
@@ -164,7 +164,7 @@ async function renderAdminPayroll(el,ctx){
     target.querySelectorAll(".payroll-admin-open").forEach(b=>b.onclick=()=>openPayroll(ctx,payrollRows.find(r=>r.id===b.dataset.id)));
     target.querySelectorAll(".payroll-admin-delete").forEach(b=>b.onclick=async()=>{
       const row=payrollRows.find(r=>r.id===b.dataset.id),u=userById.get(row.userId)||{};
-      if(!confirm(`Abrechnung ${periodLabel(row.period)} von ${u.name||row.employeeNumber||"Mitarbeiter"} wirklich löschen?`))return;
+      if(!await confirmDialog(`Abrechnung ${periodLabel(row.period)} von ${u.name||row.employeeNumber||"Mitarbeiter"} wirklich löschen?`))return;
       try{const token=await ctx.user.getIdToken();await deletePayrollDocumentFile({idToken:token,employeeId:row.userId,path:row.path});await deleteDoc(doc(db,"payrollDocuments",row.id));payrollRows=payrollRows.filter(x=>x.id!==row.id);toast("Abrechnung gelöscht.");renderAdminList()}catch(err){console.error(err);toast("Abrechnung konnte nicht gelöscht werden.")}
     });
   }

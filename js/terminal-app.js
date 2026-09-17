@@ -1,3 +1,4 @@
+import { confirmDialog, validationNotice, toast } from './utils.js';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js';
 import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-functions.js';
 import { blazeConfig } from './firebase.js';
@@ -37,8 +38,7 @@ function applyConfig(){const c=terminalConfig();if(!c){$('terminal-name').textCo
 
 $('prepare-setup').onclick=()=>{
   const id=$('setup-id').value.trim();const secret=$('setup-secret').value.trim();
-  if(!/^terminal-\d{3}$/.test(id)){ $('setup-message').textContent='Bitte eine gültige Terminal-ID eingeben, z. B. terminal-001.';return;}
-  if(secret.length<16){$('setup-message').textContent='Bitte den vollständigen Aktivierungscode eingeben.';return;}
+  const issues=[];if(!/^terminal-\d{3}$/.test(id))issues.push('• Gültige Terminal-ID eingeben, z. B. terminal-001.');if(secret.length<16)issues.push('• Vollständigen Aktivierungscode eingeben.');if(issues.length){validationNotice(['Bitte folgende Angaben prüfen:',...issues]);return;}
   stagedSetup={id,secret,name:terminalNameFromId(id)};$('setup-message').textContent='';$('recovery-step').classList.remove('hidden');$('recovery-confirm').checked=false;$('finish-setup').disabled=true;
   $('download-recovery').focus();
 };
@@ -50,7 +50,7 @@ $('download-recovery').onclick=()=>{
 };
 $('recovery-confirm').onchange=e=>{$('finish-setup').disabled=!e.target.checked;};
 $('finish-setup').onclick=()=>{
-  if(!stagedSetup||!$('recovery-confirm').checked){$('recovery-message').textContent='Die Terminal-Einrichtung kann erst abgeschlossen werden, nachdem die Wiederherstellungsdatei gespeichert und bestätigt wurde.';return;}
+  if(!stagedSetup||!$('recovery-confirm').checked){toast('Die Terminal-Einrichtung kann erst abgeschlossen werden, nachdem die Wiederherstellungsdatei gespeichert und bestätigt wurde.','warning');return;}
   saveConfig(stagedSetup);stagedSetup=null;$('setup-id').value='';$('setup-secret').value='';$('setup-message').textContent='';applyConfig();
 };
 $('restore-file').onchange=async e=>{
@@ -60,9 +60,9 @@ $('restore-file').onchange=async e=>{
     const id=String(data.terminalId||'').trim();const secret=String(data.terminalSecret||'').trim();
     if(data.format!=='TP-Personalmanagement-Terminal-Recovery'||Number(data.version)!==1||!validTerminalCredentials(id,secret)) throw new Error('Ungültige Wiederherstellungsdatei.');
     saveConfig({id,secret,name:String(data.terminalName||terminalNameFromId(id))});$('setup-message').textContent='';e.target.value='';applyConfig();
-  }catch(err){console.error(err);$('setup-message').textContent='Die ausgewählte Datei ist keine gültige TP-Terminal-Wiederherstellungsdatei.';e.target.value='';}
+  }catch(err){console.error(err);toast('Die ausgewählte Datei ist keine gültige TP-Terminal-Wiederherstellungsdatei.','error');e.target.value='';}
 };
-$('reset-terminal').onclick=()=>{if(confirm('Terminal-Einrichtung auf diesem Gerät wirklich zurücksetzen? Die Wiederherstellungsdatei bleibt davon unberührt.')){clearConfig();applyConfig();}};
+$('reset-terminal').onclick=async()=>{if(await confirmDialog('Terminal-Einrichtung auf diesem Gerät wirklich zurücksetzen? Die Wiederherstellungsdatei bleibt davon unberührt.')){clearConfig();applyConfig();}};
 $('download-current-recovery').onclick=()=>{const c=terminalConfig();if(c)downloadRecoveryFile(c);};
 $('cancel-scan').onclick=resetHome;$('cancel-project').onclick=resetHome;
 
