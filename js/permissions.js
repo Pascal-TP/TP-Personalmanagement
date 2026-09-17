@@ -5,6 +5,7 @@ export const ADMIN_PERMISSION_DEFS = [
   {key:'employeesDelete',label:'Mitarbeiter entfernen',group:'Mitarbeiter'},
   {key:'terminalManage',label:'NFC-Terminals & Transponder verwalten',group:'Mitarbeiter'},
   {key:'permissionsManage',label:'Rollen & Berechtigungen verwalten',group:'Mitarbeiter'},
+  {key:'passwordReset',label:'Passwörter von Benutzername-Zugängen zurücksetzen',group:'Mitarbeiter',defaultEnabled:false},
   {key:'personnelDocuments',label:'Personalakten-Dokumente verwalten',group:'Mitarbeiter'},
   {key:'timeAdjustment',label:'Stundenkorrektur buchen',group:'Zeiterfassung & Urlaub'},
   {key:'timeApprove',label:'Anträge zur Zeiterfassung freigeben',group:'Zeiterfassung & Urlaub'},
@@ -25,7 +26,7 @@ export const ADMIN_PERMISSION_DEFS = [
 ];
 
 export const DEFAULT_ADMIN_PERMISSIONS = Object.freeze(
-  Object.fromEntries(ADMIN_PERMISSION_DEFS.map(x=>[x.key,true]))
+  Object.fromEntries(ADMIN_PERMISSION_DEFS.map(x=>[x.key,x.defaultEnabled!==false]))
 );
 
 export function normalizedAdminPermissions(profile){
@@ -33,7 +34,7 @@ export function normalizedAdminPermissions(profile){
   const stored=profile?.adminPermissions;
   // Migration: Admins aus Versionen vor V1.8 behalten zunächst alle Rechte.
   if(!stored || typeof stored!=='object') return {...DEFAULT_ADMIN_PERMISSIONS};
-  return Object.fromEntries(ADMIN_PERMISSION_DEFS.map(x=>[x.key,stored[x.key]!==false]));
+  return Object.fromEntries(ADMIN_PERMISSION_DEFS.map(x=>[x.key,Object.prototype.hasOwnProperty.call(stored,x.key)?stored[x.key]!==false:x.defaultEnabled!==false]));
 }
 
 export function hasAdminPermission(profile,key){

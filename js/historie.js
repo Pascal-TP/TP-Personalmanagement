@@ -75,10 +75,12 @@ export async function renderHistorie(el,ctx){
     const changes=Array.isArray(entry.changes)?entry.changes:[];
     const details=entry.action==="create"
       ? '<span class="muted">Mitarbeiter wurde neu angelegt.</span>'
+      : entry.action==="password_reset"
+        ? '<span class="muted">Passwort des Benutzername-Zugangs wurde durch einen berechtigten Admin zurückgesetzt. Das Passwort selbst wird nicht protokolliert.</span>'
       : changes.length
         ? `<div class="history-changes">${changes.map(ch=>`<div><strong>${esc(FIELD_LABELS[ch.field]||ch.field)}</strong><span>${esc(displayValue(ch.field,ch.oldValue,companies,userMap,trainingMap,religionMap,areaMap))} → ${esc(displayValue(ch.field,ch.newValue,companies,userMap,trainingMap,religionMap,areaMap))}</span></div>`).join("")}</div>`
         : '<span class="muted">Änderung ohne Detailangabe.</span>';
-    return `<tr><td>${esc(dateTime(entry.createdAt))}</td><td><strong>${esc(employeeName)}</strong><div class="small muted">${esc(entry.employeeEmail||"")}</div></td><td><span class="pill ${entry.action==='create'?'green':'blue'}">${entry.action==='create'?'angelegt':entry.action==='change_request_applied'?'Antrag übernommen':'geändert'}</span></td><td>${details}</td><td>${esc(actor)}</td></tr>`;
+    return `<tr><td>${esc(dateTime(entry.createdAt))}</td><td><strong>${esc(employeeName)}</strong><div class="small muted">${esc(entry.employeeEmail||"")}</div></td><td><span class="pill ${entry.action==='create'?'green':'blue'}">${entry.action==='create'?'angelegt':entry.action==='password_reset'?'Passwort zurückgesetzt':entry.action==='change_request_applied'?'Antrag übernommen':'geändert'}</span></td><td>${details}</td><td>${esc(actor)}</td></tr>`;
   }).join("");
 
   el.innerHTML=`<article class="card"><div class="card-head"><div><h2>Mitarbeiter-Historie</h2><p>${entries.length} protokollierte Vorgänge. Neueste Änderungen stehen oben.</p></div></div>
