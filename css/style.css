@@ -345,3 +345,10 @@
 /* V2.15.2 – zusätzliche Dokumentenberechtigung TP-Managementportal */
 .permission-options{display:grid;gap:10px}
 .permission-option.inactive{opacity:.62}
+
+/* Centrally positioned notices live in the browser top layer above existing dialogs. */
+dialog.tp-notice{position:fixed;inset:0;margin:auto;width:min(440px,calc(100vw - 32px));max-height:min(80vh,680px);overflow:auto;padding:24px;border:1px solid #d9e4ee;border-radius:16px;background:#fff;color:#18304b;box-shadow:0 25px 80px rgba(14,36,57,.3);box-sizing:border-box}
+dialog.tp-notice::backdrop{background:rgba(12,31,49,.46)}
+.tp-notice-head{display:flex;align-items:center;gap:12px;margin-bottom:14px}.tp-notice-head h2{font-size:18px;margin:0;color:#18304b}.tp-notice-icon{display:grid;place-items:center;flex:none;width:36px;height:36px;border-radius:50%;background:#e7f1fb;color:#256391;font-size:21px;font-weight:700}
+.tp-notice--success .tp-notice-icon{background:#e1f5e9;color:#167447}.tp-notice--warning .tp-notice-icon,.tp-notice--confirm .tp-notice-icon,.tp-notice--input .tp-notice-icon{background:#fff1d6;color:#9b5c00}.tp-notice--error .tp-notice-icon,.tp-notice--danger .tp-notice-icon{background:#ffe6e5;color:#ad292c}
+.tp-notice--danger{border-top:5px solid #bc3338!important}.tp-notice-text{white-space:pre-line;line-height:1.55;overflow-wrap:anywhere;font-size:14px}.tp-notice-field{display:block;margin-top:18px}.tp-notice-field span{display:block;margin-bottom:6px;font-size:13px}.tp-notice-field input{width:100%;box-sizing:border-box}.tp-notice-actions{display:flex;justify-content:flex-end;flex-wrap:wrap;gap:10px;margin-top:22px}
