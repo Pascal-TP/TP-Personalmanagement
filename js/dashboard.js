@@ -338,6 +338,7 @@ export async function renderDashboard(el,ctx){
   const accountBalance=calculateTimeAccountBalance(timeRecords,p,vacations,absences,{includeOpen:false,now:yesterday,until:yesterday});
   const balanceClass=accountBalance>0?'positive':accountBalance<0?'negative':'neutral';
   const balanceDate=new Intl.DateTimeFormat('de-DE').format(yesterday);
+  const monthName=new Intl.DateTimeFormat("de-DE",{month:"long"}).format(new Date());
 
   const trainingAction=p.role==="admin"?(globalTrainingCountAvailable&&openTrainings>0):openTrainings>0;
   const vacationAction=canApproveVacation&&pendingTeamVac>0;
