@@ -1,6 +1,5 @@
 import { db, functions } from "./firebase.js";
 import {
-import { positionOn } from "./employment-utils.js";
   collection,
   getDocs,
   addDoc,
@@ -8,6 +7,7 @@ import { positionOn } from "./employment-utils.js";
   query,
   where,
 } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+import { positionOn } from "./employment-utils.js";
 import { httpsCallable } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-functions.js";
 import { setHead } from "./app.js";
 import { esc } from "./utils.js";
