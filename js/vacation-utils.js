@@ -1,3 +1,4 @@
+import { vacationEntitlementOn } from "./employment-utils.js";
 function iso(d){return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`}
 function workdays(from,to,user,limitFrom=null,limitTo=null){
   if(!from||!to)return 0; let a=new Date(`${from}T12:00:00`),b=new Date(`${to}T12:00:00`);
@@ -21,7 +22,7 @@ function approvedVacationDays(vacations,user,year,until=null,absences=[]){
   return requested+direct;
 }
 export function vacationYearBalance(user,vacations,settings,year,{asOf=new Date(),depth=0,absences=[],adjustments=[]}={}){
-  year=Number(year); const entitlement=Number(user?.vacationDays||0); const setting=settingFor(settings,user.id,year); const adjustmentDays=(adjustments||[]).filter(a=>a.userId===user.id&&Number(a.year)===year).reduce((s,a)=>s+(Number(a.days)||0),0);
+  year=Number(year); const today=asOf instanceof Date?iso(asOf):String(asOf); const entitlementDate=String(today).startsWith(`${year}-`)?today:`${year}-12-31`; const entitlement=vacationEntitlementOn(user,entitlementDate); const setting=settingFor(settings,user.id,year); const adjustmentDays=(adjustments||[]).filter(a=>a.userId===user.id&&Number(a.year)===year).reduce((s,a)=>s+(Number(a.days)||0),0);
   let carryover=0;
   if(year>=2026){
     if(setting&&setting.carryoverDays!==undefined&&setting.carryoverDays!==null&&setting.carryoverDays!=='') carryover=Math.max(0,Number(setting.carryoverDays)||0);
@@ -32,7 +33,7 @@ export function vacationYearBalance(user,vacations,settings,year,{asOf=new Date(
   const usedToExpiry=Math.min(carryover,approvedVacationDays(vacations,user,year,expiry,absences));
   const totalApproved=approvedVacationDays(vacations,user,year,null,absences);
   const currentUsed=Math.max(0,totalApproved-usedToExpiry); const currentRemaining=entitlement+adjustmentDays-currentUsed;
-  const today=asOf instanceof Date?iso(asOf):String(asOf); const carryoverOpen=Math.max(0,carryover-usedToExpiry);
+  const carryoverOpen=Math.max(0,carryover-usedToExpiry);
   const carryoverRemaining=today<=expiry?carryoverOpen:0; const expired=today>expiry?carryoverOpen:0;
   return {year,entitlement,adjustmentDays,carryover,expiry,extensionUntil:extension,extensionReason:setting?.extensionReason||'',carryoverUsed:usedToExpiry,carryoverRemaining,expired,currentUsed,currentRemaining,totalApproved,totalRemaining:currentRemaining+carryoverRemaining,setting};
 }

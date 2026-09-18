@@ -6,6 +6,7 @@ import { hasAdminPermission } from "./permissions.js";
 import { recordGrossMinutes } from "./time-utils.js";
 import { vacationYearBalance, vacationCarryoverDocId } from "./vacation-utils.js";
 import { getAssignedUsers, getAssignedDocs, isSupervisorOf } from "./supervisor-utils.js";
+import { positionOn } from "./employment-utils.js";
 
 const ABSENCE_LABELS={vacation:'Urlaub',sick:'Krank',child_sick:'Kind krank',special_leave:'Sonderurlaub',vocational_school:'Berufsschule',training:'Weiterbildung',university:'Uni',unpaid_leave:'Unbezahlter Urlaub',release:'Freistellung',parental_leave:'Elternzeit',other:'Sonstige Abwesenheit'};
 function easterSunday(y){const a=y%19,b=Math.floor(y/100),c=y%100,d=Math.floor(b/4),e=b%4,f=Math.floor((b+8)/25),g=Math.floor((b-f+1)/3),h=(19*a+b-d-g+15)%30,i=Math.floor(c/4),k=c%4,l=(32+2*e+2*i-h-k)%7,m=Math.floor((a+11*h+22*l)/451),mo=Math.floor((h+l-7*m+114)/31),day=((h+l-7*m+114)%31)+1;return new Date(y,mo-1,day,12)}
@@ -65,7 +66,7 @@ function teamWeekHtml(users,monday,vacations,absences,filter=''){
   const days=Array.from({length:7},(_,i)=>addDays(monday,i));
   const q=String(filter||'').trim().toLocaleLowerCase('de');
   const visible=users.filter(u=>!q||(u.name||u.email||'').toLocaleLowerCase('de').includes(q));
-  const rows=visible.map(u=>`<tr><th class="team-name-cell"><strong>${esc(u.name||u.email||u.id)}</strong><span>${esc(u.position||u.department||'')}</span></th>${days.map(d=>{const k=isoDate(d),m=teamDayMark(u,k,vacations,absences);return `<td class="team-day-cell ${m?`state-${m.cls}`:''}" title="${esc(m?.title||m?.label||'Keine Abwesenheit hinterlegt')}">${m?`<span class="team-day-badge">${esc(m.label)}</span>`:'<span class="team-day-empty">–</span>'}</td>`}).join('')}</tr>`).join('');
+  const rows=visible.map(u=>`<tr><th class="team-name-cell"><strong>${esc(u.name||u.email||u.id)}</strong><span>${esc(positionOn(u)||u.department||'')}</span></th>${days.map(d=>{const k=isoDate(d),m=teamDayMark(u,k,vacations,absences);return `<td class="team-day-cell ${m?`state-${m.cls}`:''}" title="${esc(m?.title||m?.label||'Keine Abwesenheit hinterlegt')}">${m?`<span class="team-day-badge">${esc(m.label)}</span>`:'<span class="team-day-empty">–</span>'}</td>`}).join('')}</tr>`).join('');
   return `<div class="team-week-scroll"><table class="team-week-table"><thead><tr><th class="team-name-cell">Mitarbeiter</th>${days.map(d=>`<th><span>${esc(new Intl.DateTimeFormat('de-DE',{weekday:'short'}).format(d))}</span><strong>${esc(new Intl.DateTimeFormat('de-DE',{day:'2-digit',month:'2-digit'}).format(d))}</strong></th>`).join('')}</tr></thead><tbody>${rows||'<tr><td colspan="8" class="empty">Keine Mitarbeiter gefunden.</td></tr>'}</tbody></table></div><div class="team-attendance-legend"><span><i class="state-vacation"></i>Urlaub / Gleittag</span><span><i class="state-sick"></i>Krank</span><span><i class="state-child-sick"></i>Kind krank</span><span><i class="state-special"></i>Sonderurlaub</span><span><i class="state-release"></i>weitere Abwesenheit</span><span><i class="state-holiday"></i>Feiertag</span><span><i class="state-off"></i>regelmäßig frei</span><span class="muted">Leere Zelle = keine Abwesenheit hinterlegt</span></div>`;
 }
 
@@ -95,7 +96,7 @@ function planningWeekHtml(users,monday,vacations,absences,plans,filter=''){
   const days=Array.from({length:7},(_,i)=>addDays(monday,i));
   const q=String(filter||'').trim().toLocaleLowerCase('de');
   const visible=users.filter(u=>!q||(u.name||u.email||'').toLocaleLowerCase('de').includes(q));
-  const rows=visible.map(u=>`<tr><th class="team-name-cell"><strong>${esc(u.name||u.email||u.id)}</strong><span>${esc(u.position||u.department||'')}</span></th>${days.map(d=>{
+  const rows=visible.map(u=>`<tr><th class="team-name-cell"><strong>${esc(u.name||u.email||u.id)}</strong><span>${esc(positionOn(u)||u.department||'')}</span></th>${days.map(d=>{
     const key=isoDate(d),mark=teamDayMark(u,key,vacations,absences),plan=plans.get(planningKey(u.id,key));
     return planningCellHtml(u,key,plan,mark);
   }).join('')}</tr>`).join('');
@@ -105,7 +106,7 @@ function planningWeekHtml(users,monday,vacations,absences,plans,filter=''){
 function planningPrintHtml(users,monday,vacations,absences,plans,supervisorName){
   const days=Array.from({length:7},(_,i)=>addDays(monday,i));
   const week=isoWeek(monday);
-  const rows=users.map(u=>`<tr><th><strong>${esc(u.name||u.email||u.id)}</strong><small>${esc(u.position||u.department||'')}</small></th>${days.map(d=>{
+  const rows=users.map(u=>`<tr><th><strong>${esc(u.name||u.email||u.id)}</strong><small>${esc(positionOn(u)||u.department||'')}</small></th>${days.map(d=>{
     const key=isoDate(d),mark=teamDayMark(u,key,vacations,absences),plan=plans.get(planningKey(u.id,key)),tasks=planTasks(plan);
     return `<td>${mark?`<div class="mark">${esc(mark.label)}</div>`:''}${plan?`<strong>${esc(plan.fromTime||'–')}–${esc(plan.toTime||'–')}</strong>${tasks.length?`<ul>${tasks.map(t=>`<li>${esc(t)}</li>`).join('')}</ul>`:''}`:'<span class="empty-plan">–</span>'}${mark&&plan?'<div class="warn">⚠ Planung vorhanden</div>':''}</td>`;
   }).join('')}</tr>`).join('');
