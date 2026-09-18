@@ -458,9 +458,24 @@ export async function renderMitarbeiter(el,ctx){
       if(!aliases.length)throw new Error('Die Transponder-ID konnte nicht ausgewertet werden.');
       return await Promise.all(aliases.map(value=>sha256Hex(`uid:${value}`)));
     }
+    function lockEmployeeFormForNfc(){
+      // Nur die Mitarbeiterkartei sperren. Die HID-/Tastaturerfassung des externen
+      // Lesers im Empfangsterminal bleibt davon vollständig unberührt.
+      const activeElement=document.activeElement;
+      if(activeElement&&typeof activeElement.blur==='function')activeElement.blur();
+      const controls=[...form.querySelectorAll('input, select, textarea')];
+      const previous=controls.map(control=>({control,disabled:control.disabled}));
+      controls.forEach(control=>{control.disabled=true;});
+      form.classList.add('nfc-reading-locked');
+      return ()=>{
+        previous.forEach(({control,disabled})=>{if(document.body.contains(control))control.disabled=disabled;});
+        form.classList.remove('nfc-reading-locked');
+      };
+    }
     const assign=box.querySelector('#assign-nfc');if(assign)assign.onclick=async()=>{
       if(!nfcSupported()){toast('Web NFC ist auf diesem Gerät nicht verfügbar. Bitte ein NFC-fähiges Android-Gerät mit Chrome oder ein PC-Terminal mit NFC-Leser verwenden.','error');return;}
       if(active.length&&!await confirmDialog('Der bisherige NFC-Transponder wird nach erfolgreicher Zuweisung gesperrt. Fortfahren?'))return;
+      const unlockEmployeeForm=lockEmployeeFormForNfc();
       const token=randomToken(24);assign.disabled=true;assign.textContent='Transponder-ID lesen …';const progress=box.querySelector('#nfc-progress');if(progress){progress.classList.remove('hidden');progress.innerHTML='<strong>NFC-Transponder einlesen</strong><br>Halten Sie den Transponder jetzt an die NFC-Fläche des Smartphones. <strong>Warte auf Transponder …</strong>';}
       try{
         const serial=await readEmployeeNfcSerialNumber();if(progress)progress.innerHTML='<strong>Transponder erkannt ✓</strong><br>Bitte den Transponder am Smartphone lassen. Der TP-Schlüssel wird jetzt geschrieben.';
@@ -473,9 +488,11 @@ export async function renderMitarbeiter(el,ctx){
         await batch.commit();if(progress)progress.innerHTML='<strong>NFC-Transponder erfolgreich zugewiesen ✓</strong>';toast(`NFC-Transponder für ${employee.name||'Mitarbeiter'} wurde erfolgreich zugewiesen.`);
         box.innerHTML='<div class="success-box"><strong>NFC-Transponder zugewiesen</strong><span>Der Transponder ist jetzt für interne NFC-Leser und den externen USB-Leser freigeschaltet.</span></div>';
       }catch(err){console.error(err);if(progress){progress.classList.remove('hidden');progress.innerHTML='<strong>Kein Transponder erkannt bzw. Vorgang abgebrochen.</strong><br>Bitte erneut versuchen und den Transponder direkt nach dem Start an die NFC-Fläche halten.';}toast(err?.message||'NFC-Transponder konnte nicht programmiert werden.','error');assign.disabled=false;assign.textContent=active.length?'Neuen Transponder zuweisen':'Transponder zuweisen';}
+      finally{unlockEmployeeForm();}
     };
     const captureUid=box.querySelector('#capture-nfc-uid');if(captureUid)captureUid.onclick=async()=>{
       if(!nfcSupported()){toast('Web NFC ist auf diesem Gerät nicht verfügbar. Bitte ein NFC-fähiges Android-Gerät mit Chrome oder ein PC-Terminal mit NFC-Leser verwenden.','error');return;}
+      const unlockEmployeeForm=lockEmployeeFormForNfc();
       captureUid.disabled=true;captureUid.textContent='Transponder-ID lesen …';const progress=box.querySelector('#nfc-progress');if(progress){progress.classList.remove('hidden');progress.innerHTML='<strong>Transponder-ID einlesen</strong><br>Halten Sie den Transponder jetzt an die NFC-Fläche des Smartphones. <strong>Warte auf Transponder …</strong>';}
       try{
         const serial=await readEmployeeNfcSerialNumber();
@@ -485,6 +502,7 @@ export async function renderMitarbeiter(el,ctx){
         await batch.commit();toast('Transponder-ID wurde ergänzt. Der vorhandene Transponder kann jetzt auch am externen USB-Leser verwendet werden.');
         captureUid.textContent='Transponder-ID ergänzt ✓';
       }catch(err){console.error(err);toast(err?.message||'Transponder-ID konnte nicht ergänzt werden.');captureUid.disabled=false;captureUid.textContent='Transponder-ID ergänzen';}
+      finally{unlockEmployeeForm();}
     };
     const disable=box.querySelector('#disable-nfc');if(disable)disable.onclick=async()=>{if(!await confirmDialog('Den NFC-Transponder dieses Mitarbeiters wirklich sperren?'))return;try{const batch=writeBatch(db);active.forEach(c=>batch.update(doc(db,'nfcCredentials',c.id),{active:false,disabledAt:serverTimestamp(),updatedAt:serverTimestamp()}));await batch.commit();box.innerHTML='<div class="warning-box"><strong>Transponder gesperrt</strong><span>Der bisherige NFC-Transponder kann nicht mehr zum Stempeln verwendet werden.</span></div>';toast('NFC-Transponder wurde gesperrt.');}catch(err){console.error(err);toast('Transponder konnte nicht gesperrt werden.');}};
   }

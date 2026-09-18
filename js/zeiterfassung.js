@@ -239,6 +239,7 @@ export async function renderZeiterfassung(el, ctx) {
   setHead("Zeiterfassung", "Arbeitszeit stempeln, Buchungen einsehen und notwendige Korrekturen beantragen.");
   const projectTracking = ctx.profile.projectTimeTracking === true;
   const isAdmin = ctx.profile.role === "admin";
+  const hideOwnTimeActions = ctx.profile.noTimeTracking === true && ctx.profile.role !== "admin";
   const flatEightHourView = ctx.profile.flatEightHourEmployeeView === true && !isAdmin;
 
   let entries = [];
@@ -314,7 +315,7 @@ export async function renderZeiterfassung(el, ctx) {
     : "Aktuell ist keine Arbeitszeit gestartet.";
 
   el.innerHTML = `
-    <div class="two-col time-top-grid ${isAdmin?"admin-self-hidden":""}">
+    <div class="two-col time-top-grid ${isAdmin?"admin-self-hidden":""} ${hideOwnTimeActions?"hidden":""}">
       <article class="card">
         <div class="card-head"><div><h2>Anträge zur Zeiterfassung</h2><p>Nachträgliche Erfassungen und Korrekturen werden erst nach Freigabe wirksam.</p></div></div>
         <div class="info-strip">Bereits gestempelte Zeiten können nicht direkt geändert werden. Für jede nachträgliche Änderung ist eine Begründung erforderlich.</div>
