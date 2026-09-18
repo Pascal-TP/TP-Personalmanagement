@@ -7,12 +7,17 @@ function workdays(from,to,user,limitFrom=null,limitTo=null){
   for(const d=new Date(a);d<=b;d.setDate(d.getDate()+1))if(allowed.has(String(d.getDay())))n++; return n;
 }
 function settingFor(settings,userId,year){return settings.find(x=>x.userId===userId&&Number(x.year)===Number(year))||null}
+function vacationDaysInRange(item,user,from,to){
+  const base=workdays(item?.from,item?.to,user,from,to);
+  if(base===1&&item?.from===item?.to&&['morning','afternoon'].includes(item?.dayPortion))return 0.5;
+  return base;
+}
 function approvedVacationDays(vacations,user,year,until=null,absences=[]){
   const y1=`${year}-01-01`,y2=until||`${year}-12-31`;
   const requested=(vacations||[]).filter(v=>v.userId===user.id&&v.status==='approved'&&String(v.type||'Urlaub')==='Urlaub')
-    .reduce((s,v)=>s+workdays(v.from,v.to,user,y1,y2),0);
+    .reduce((s,v)=>s+vacationDaysInRange(v,user,y1,y2),0);
   const direct=(absences||[]).filter(a=>a.userId===user.id&&a.type==='vacation'&&a.status!=='withdrawn')
-    .reduce((s,a)=>s+workdays(a.from,a.to,user,y1,y2),0);
+    .reduce((s,a)=>s+vacationDaysInRange(a,user,y1,y2),0);
   return requested+direct;
 }
 export function vacationYearBalance(user,vacations,settings,year,{asOf=new Date(),depth=0,absences=[]}={}){

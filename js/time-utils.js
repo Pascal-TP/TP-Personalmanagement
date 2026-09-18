@@ -147,6 +147,17 @@ function coveredDateSet(items,{approvedOnly=false}={}){
   return set;
 }
 
+function coveredDateFractions(items,{approvedOnly=false}={}){
+  const map=new Map();
+  (items||[]).forEach(item=>{
+    if(item?.status==='withdrawn')return;
+    if(approvedOnly&&item?.status!=='approved')return;
+    const half=item?.from===item?.to&&['morning','afternoon'].includes(item?.dayPortion);
+    dateRangeKeys(item?.from,item?.to).forEach(key=>map.set(key,Math.max(map.get(key)||0,half?0.5:1)));
+  });
+  return map;
+}
+
 // V2.9.2.1 – laufendes Zeitguthaben / Minusstundenkonto.
 // Das Konto startet mit dem ersten vorhandenen Zeit- oder Korrekturdatensatz und
 // läuft danach minutengenau weiter. Pro Arbeitstag wird das Tagessoll einmal
@@ -173,19 +184,20 @@ export function calculateTimeAccountValues(records,profile={},vacations=[],absen
   const workDayCount=Math.max(1,workDays.size);
   const weeklyHours=Number(profile?.weeklyHours??40);
   const dailyTargetMinutes=Math.round(((Number.isFinite(weeklyHours)?weeklyHours:40)*60)/workDayCount);
-  const leaveDays=coveredDateSet(vacations,{approvedOnly:true});
-  const absenceDays=coveredDateSet(absences);
+  const leaveFractions=coveredDateFractions(vacations,{approvedOnly:true});
+  const absenceFractions=coveredDateFractions(absences);
 
   let balance=0;
   for(const key of dateRangeKeys(firstKey,lastKey)){
     const day=parseDateKey(key);
     const scheduled=day&&workDays.has(String(day.getDay()));
-    if(scheduled&&!leaveDays.has(key)&&!absenceDays.has(key))balance-=dailyTargetMinutes;
+    const relief=Math.max(leaveFractions.get(key)||0,absenceFractions.get(key)||0);
+    if(scheduled)balance-=Math.round(dailyTargetMinutes*(1-relief));
 
     const dayItems=[...(byDay.get(key)||[])].sort((a,b)=>recordSortValue(a)-recordSortValue(b));
     for(const r of dayItems){
       balance+=Math.round(Number(dailyValues.get(r.id)?.net)||0);
-      result.set(r.id,{balance,targetMinutes:scheduled&&!leaveDays.has(key)&&!absenceDays.has(key)?dailyTargetMinutes:0});
+      result.set(r.id,{balance,targetMinutes:scheduled?Math.round(dailyTargetMinutes*(1-relief)):0});
     }
   }
   return result;
@@ -219,14 +231,15 @@ export function calculateTimeAccountBalance(records,profile={},vacations=[],abse
   const workDayCount=Math.max(1,workDays.size);
   const weeklyHours=Number(profile?.weeklyHours??40);
   const dailyTargetMinutes=Math.round(((Number.isFinite(weeklyHours)?weeklyHours:40)*60)/workDayCount);
-  const leaveDays=coveredDateSet(vacations,{approvedOnly:true});
-  const absenceDays=coveredDateSet(absences);
+  const leaveFractions=coveredDateFractions(vacations,{approvedOnly:true});
+  const absenceFractions=coveredDateFractions(absences);
 
   let balance=0;
   for(const key of dateRangeKeys(firstKey,lastKey)){
     const day=parseDateKey(key);
     const scheduled=day&&workDays.has(String(day.getDay()));
-    if(scheduled&&!leaveDays.has(key)&&!absenceDays.has(key))balance-=dailyTargetMinutes;
+    const relief=Math.max(leaveFractions.get(key)||0,absenceFractions.get(key)||0);
+    if(scheduled)balance-=Math.round(dailyTargetMinutes*(1-relief));
     for(const r of byDay.get(key)||[])balance+=Math.round(Number(dailyValues.get(r.id)?.net)||0);
   }
   return balance;
