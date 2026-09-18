@@ -6,7 +6,7 @@ import { hasAdminPermission } from "./permissions.js";
 
 const FIELD_LABELS = {
   name:"Name", companyId:"Firma", email:"E-Mail / Login", username:"Benutzername", hasRealEmail:"Login-Art", role:"Rolle", adminPermissions:"Admin-Berechtigungen", supervisorPermissions:"Vorgesetzten-Berechtigungen", supervisorId:"1. Vorgesetzter", supervisorId2:"2. Vorgesetzter", active:"Status",
-  startDate:"Eintritt", endDate:"Austritt", weeklyHours:"Wochenstunden", vacationDays:"Urlaubstage/Jahr", employeeNumber:"Mitarbeiternummer", businessAreaId:"Geschäftsbereich", companyAreaNumber:"Geschäftsbereich-Nr.", projectTimeTracking:"Zeiterfassung auf Projekte",
+  startDate:"Eintritt", endDate:"Austritt", weeklyHours:"Wochenstunden", vacationDays:"Urlaubstage/Jahr", employeeNumber:"Mitarbeiternummer", businessAreaId:"Geschäftsbereich", companyAreaNumber:"Geschäftsbereich-Nr.", projectTimeTracking:"Zeiterfassung auf Projekte", noTimeTracking:"Mitarbeiter ohne Zeiterfassung",
   department:"Abteilung", position:"Position / Tätigkeit", contractType:"Beschäftigungsart", probationEndDate:"Probezeit bis", fixedTermEndDate:"Befristung bis", costCenter:"Kostenstelle", workDays:"Arbeitstage",
   firstAider:"Ersthelfer", firstAiderValidUntil:"Ersthelfer gültig bis", fireWarden:"Brandschutzhelfer", fireWardenValidUntil:"Brandschutzhelfer gültig bis", forkliftPermit:"Staplerschein", forkliftPermitValidUntil:"Staplerschein gültig bis", aerialLiftPermit:"Hubarbeitsbühne", aerialLiftPermitValidUntil:"Hubarbeitsbühne gültig bis", drivingLicenseClasses:"Führerscheinklassen", nextDrivingLicenseCheck:"Nächste Führerscheinkontrolle", occupationalMedicalNotes:"Arbeitsmedizinische Vorsorgen / Hinweise",
   bereiche:"Schulungsbereiche", extraTrainings:"Zusatzschulungen",

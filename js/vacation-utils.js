@@ -20,20 +20,20 @@ function approvedVacationDays(vacations,user,year,until=null,absences=[]){
     .reduce((s,a)=>s+vacationDaysInRange(a,user,y1,y2),0);
   return requested+direct;
 }
-export function vacationYearBalance(user,vacations,settings,year,{asOf=new Date(),depth=0,absences=[]}={}){
-  year=Number(year); const entitlement=Number(user?.vacationDays||0); const setting=settingFor(settings,user.id,year);
+export function vacationYearBalance(user,vacations,settings,year,{asOf=new Date(),depth=0,absences=[],adjustments=[]}={}){
+  year=Number(year); const entitlement=Number(user?.vacationDays||0); const setting=settingFor(settings,user.id,year); const adjustmentDays=(adjustments||[]).filter(a=>a.userId===user.id&&Number(a.year)===year).reduce((s,a)=>s+(Number(a.days)||0),0);
   let carryover=0;
   if(year>=2026){
     if(setting&&setting.carryoverDays!==undefined&&setting.carryoverDays!==null&&setting.carryoverDays!=='') carryover=Math.max(0,Number(setting.carryoverDays)||0);
-    else if(depth<15){ const prev=vacationYearBalance(user,vacations,settings,year-1,{asOf:new Date(year-1,11,31,12),depth:depth+1,absences}); carryover=Math.max(0,prev.currentRemaining); }
+    else if(depth<15){ const prev=vacationYearBalance(user,vacations,settings,year-1,{asOf:new Date(year-1,11,31,12),depth:depth+1,absences,adjustments}); carryover=Math.max(0,prev.currentRemaining); }
   }
   const defaultExpiry=`${year}-03-31`; const extension=setting?.extensionUntil&&setting?.extensionReason?setting.extensionUntil:'';
   const expiry=extension&&extension>defaultExpiry?extension:defaultExpiry;
   const usedToExpiry=Math.min(carryover,approvedVacationDays(vacations,user,year,expiry,absences));
   const totalApproved=approvedVacationDays(vacations,user,year,null,absences);
-  const currentUsed=Math.max(0,totalApproved-usedToExpiry); const currentRemaining=entitlement-currentUsed;
+  const currentUsed=Math.max(0,totalApproved-usedToExpiry); const currentRemaining=entitlement+adjustmentDays-currentUsed;
   const today=asOf instanceof Date?iso(asOf):String(asOf); const carryoverOpen=Math.max(0,carryover-usedToExpiry);
   const carryoverRemaining=today<=expiry?carryoverOpen:0; const expired=today>expiry?carryoverOpen:0;
-  return {year,entitlement,carryover,expiry,extensionUntil:extension,extensionReason:setting?.extensionReason||'',carryoverUsed:usedToExpiry,carryoverRemaining,expired,currentUsed,currentRemaining,totalApproved,totalRemaining:currentRemaining+carryoverRemaining,setting};
+  return {year,entitlement,adjustmentDays,carryover,expiry,extensionUntil:extension,extensionReason:setting?.extensionReason||'',carryoverUsed:usedToExpiry,carryoverRemaining,expired,currentUsed,currentRemaining,totalApproved,totalRemaining:currentRemaining+carryoverRemaining,setting};
 }
 export function vacationCarryoverDocId(userId,year){return `${userId}_${year}`}

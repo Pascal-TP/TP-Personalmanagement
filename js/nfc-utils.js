@@ -47,7 +47,7 @@ export async function readEmployeeNfcSerialNumber({ timeoutMs = 20000 } = {}) {
   return await new Promise(async (resolve, reject) => {
     const timer = setTimeout(() => {
       controller.abort();
-      reject(new Error('Zeitüberschreitung beim Lesen der Transponder-ID. Bitte erneut versuchen.'));
+      reject(new Error('Kein Transponder erkannt. Bitte erneut versuchen und den Transponder direkt nach dem Start an die NFC-Fläche des Smartphones halten.'));
     }, timeoutMs);
     const finish = (fn, value) => {
       clearTimeout(timer);

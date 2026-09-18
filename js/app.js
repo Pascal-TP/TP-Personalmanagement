@@ -51,6 +51,7 @@ export async function refreshProfile(){
 }
 export function setHead(title,subtitle=""){document.getElementById("page-title").textContent=title;document.getElementById("page-subtitle").textContent=subtitle}
 export async function navigate(view){
+  if(view==='time'&&ctx.profile?.role==='employee'&&ctx.profile?.noTimeTracking===true){toast('Für diesen Mitarbeiter ist keine Zeiterfassung eingerichtet.');view='dashboard';}
   if(view==="applicants"){const url=localStorage.getItem("tpApplicantsUrl")||"";if(url)window.open(url,"_blank","noopener");else toast("Das Bewerbungsportal wird später als separates Tool angebunden.");return}
   if(view==="management"){if(ctx.profile?.managementPortalAccess!==true){toast("Für diesen Benutzer ist das TP-Managementportal nicht freigeschaltet.");return}window.open("https://pascal-tp.github.io/TP-Managementportal/","_blank","noopener");return}
   ctx.view=view; renderNav(); const item=views[view]||views.dashboard; content.innerHTML=`<div class="loading">Bereich wird geladen …</div>`;
@@ -58,7 +59,7 @@ export async function navigate(view){
 }
 window.tpNavigate=navigate;
 window.addEventListener("tp:navigate",e=>{const view=e?.detail?.view;if(view&&views[view])navigate(view)});
-function renderNav(){const role=ctx.profile?.role||"employee";nav.innerHTML=Object.entries(views).filter(([,v])=>{if(!v.roles.includes(role))return false;if(v.requiresManagementPortalAccess&&ctx.profile?.managementPortalAccess!==true)return false;if(role!=="admin")return true;if(v.adminPermission&&!hasAdminPermission(ctx.profile,v.adminPermission))return false;if(v.adminAny&&!hasAnyAdminPermission(ctx.profile,v.adminAny))return false;return true}).map(([k,v])=>`<button class="nav-btn ${ctx.view===k?'active':''}" data-view="${k}"><span class="icon">${v.icon}</span><span>${v.label}</span></button>`).join("");nav.querySelectorAll("button").forEach(b=>b.onclick=()=>navigate(b.dataset.view))}
+function renderNav(){const role=ctx.profile?.role||"employee";nav.innerHTML=Object.entries(views).filter(([k,v])=>{if(!v.roles.includes(role))return false;if(k==='time'&&role==='employee'&&ctx.profile?.noTimeTracking===true)return false;if(v.requiresManagementPortalAccess&&ctx.profile?.managementPortalAccess!==true)return false;if(role!=="admin")return true;if(v.adminPermission&&!hasAdminPermission(ctx.profile,v.adminPermission))return false;if(v.adminAny&&!hasAnyAdminPermission(ctx.profile,v.adminAny))return false;return true}).map(([k,v])=>`<button class="nav-btn ${ctx.view===k?'active':''}" data-view="${k}"><span class="icon">${v.icon}</span><span>${v.label}</span></button>`).join("");nav.querySelectorAll("button").forEach(b=>b.onclick=()=>navigate(b.dataset.view))}
 function updateChrome(){
   const p=ctx.profile,c=ctx.company;document.getElementById("company-name").textContent=c?.name||"TP-Personalmanagement";
   const logo=document.querySelector("#company-logo img");logo.src=c?.logoUrl||c?.logoDataUrl||"assets/tp-logo.png";

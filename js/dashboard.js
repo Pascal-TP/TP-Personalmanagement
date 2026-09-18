@@ -334,9 +334,10 @@ export async function renderDashboard(el,ctx){
       ? timeRequests.filter(x=>x.status==="pending"&&(x.supervisorId===p.id||x.supervisorId2===p.id)).length
       : 0;
   const pendingTime=canApproveTime?pendingTeamTime:pendingOwnTime;
-  const hours=currentMonthBalance(p,timeRecords,vacations,absences);
-  const monthName=new Intl.DateTimeFormat("de-DE",{month:"long"}).format(new Date());
-  const saldoClass=hours.balanceMinutes>0?"positive":hours.balanceMinutes<0?"negative":"neutral";
+  const yesterday=new Date();yesterday.setDate(yesterday.getDate()-1);yesterday.setHours(23,59,59,999);
+  const accountBalance=calculateTimeAccountBalance(timeRecords,p,vacations,absences,{includeOpen:false,now:yesterday,until:yesterday});
+  const balanceClass=accountBalance>0?'positive':accountBalance<0?'negative':'neutral';
+  const balanceDate=new Intl.DateTimeFormat('de-DE').format(yesterday);
 
   const trainingAction=p.role==="admin"?(globalTrainingCountAvailable&&openTrainings>0):openTrainings>0;
   const vacationAction=canApproveVacation&&pendingTeamVac>0;
@@ -351,8 +352,8 @@ export async function renderDashboard(el,ctx){
     <div class="kpi-grid">
       <div class="kpi is-clickable ${trainingAction?"needs-action":""}" data-nav="trainings" role="button" tabindex="0"><span>Offene Schulungen</span><strong>${p.role==="admin"&&!globalTrainingCountAvailable?"–":openTrainings}</strong><small>${p.role==="admin"?(globalTrainingCountAvailable?(trainingAction?"offene Zuordnungen im Unternehmen":"keine offenen Zuordnungen"):"Schulungsübersicht nicht freigeschaltet"):(trainingAction?"Bearbeitung erforderlich":"keine offene Aufgabe")}</small></div>
       <div class="kpi is-clickable ${vacationAction?"needs-action":""}" data-nav="vacation" role="button" tabindex="0"><span>Urlaubsanträge</span><strong>${p.role==="admin"&&!canApproveVacation?"–":vacationCount}</strong><small>${p.role==="admin"?(canApproveVacation?(vacationAction?"offen im Unternehmen":"keine offenen Anträge"):"Urlaubsübersicht nicht freigeschaltet"):(canApproveVacation?(vacationAction?"zur Freigabe":"keine offene Freigabe"):"aktuell in Bearbeitung")}</small></div>
-      <div class="kpi is-clickable ${timeAction?"needs-action":""}" data-nav="time" role="button" tabindex="0"><span>Zeiterfassungsanträge</span><strong>${p.role==="admin"&&!canApproveTime?"–":pendingTime}</strong><small>${p.role==="admin"?(canApproveTime?(timeAction?"offen im Unternehmen":"keine offenen Anträge"):"Zeitfreigaben nicht freigeschaltet"):(canApproveTime?(timeAction?"zur Freigabe":"keine offene Freigabe"):"eigene offene Anträge")}</small></div>
-      ${p.role!=="admin"?`<div class="kpi hours-kpi is-clickable" data-nav="time" role="button" tabindex="0"><span>Soll / Ist · ${esc(monthName)}</span><strong>${hm(hours.targetMinutes)} / ${hm(hours.actualMinutes)}</strong><small class="hours-balance ${saldoClass}">Monatssaldo: ${hm(hours.balanceMinutes,{signed:true})}</small></div>`:""}
+      ${(p.role==='employee'&&p.noTimeTracking===true)?'':`<div class="kpi is-clickable ${timeAction?"needs-action":""}" data-nav="time" role="button" tabindex="0"><span>Zeiterfassungsanträge</span><strong>${p.role==="admin"&&!canApproveTime?"–":pendingTime}</strong><small>${p.role==="admin"?(canApproveTime?(timeAction?"offen im Unternehmen":"keine offenen Anträge"):"Zeitfreigaben nicht freigeschaltet"):(canApproveTime?(timeAction?"zur Freigabe":"keine offene Freigabe"):"eigene offene Anträge")}</small></div>`}
+      ${p.role!=="admin"&&p.noTimeTracking!==true?`<div class="kpi hours-kpi is-clickable" data-nav="time" role="button" tabindex="0"><span>Stundenkonto</span><strong>${hm(accountBalance,{signed:true})}</strong><small class="hours-balance ${balanceClass}">Stand: ${esc(balanceDate)} · Abschluss Vortag</small></div>`:""}
     </div>${changeRequestHint}${adminHint}${renderComplianceAlerts(complianceAlerts)}${tgaOvertimeHtml}${milestoneHtml}${hrReminderHtml}
     <div class="two-col">
       <article class="card"><div class="card-head"><div><h2>News & Hinweise</h2><p>Aktuelle Informationen der Personalabteilung</p></div></div>
