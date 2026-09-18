@@ -1,6 +1,6 @@
 import { auth, db } from "./firebase.js";
 import { onAuthStateChanged, signInWithEmailAndPassword, signOut, sendPasswordResetEmail, updatePassword } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-import { doc, getDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+import { doc, getDoc, updateDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 import { normalizeLogin, ROLE_LABELS, roleHeading, initials, toast, inputDialog } from "./utils.js";
 import { renderDashboard } from "./dashboard.js";
 import { renderMitarbeiter } from "./mitarbeiter.js";
@@ -71,7 +71,40 @@ function updateChrome(){
 
 document.getElementById("login-form").addEventListener("submit",async e=>{e.preventDefault();const msg=document.getElementById("login-message");msg.textContent="Anmeldung läuft …";try{await signInWithEmailAndPassword(auth,normalizeLogin(document.getElementById("login-identifier").value),document.getElementById("login-password").value);msg.textContent=""}catch(err){console.error(err);msg.textContent="";toast("Anmeldung nicht möglich. Bitte Zugangsdaten prüfen.","error")}});
 document.getElementById("forgot-password-btn").onclick=async()=>{const raw=document.getElementById("login-identifier").value.trim();if(!raw){toast("Bitte zuerst die E-Mail-Adresse eintragen.");return}if(!raw.includes("@")){toast("Bei Benutzernamen erfolgt der Passwort-Reset derzeit über die Personalabteilung.");return}try{await sendPasswordResetEmail(auth,raw);toast("Passwort-Link wurde angefordert.")}catch(e){console.error(e);toast("Passwort-Link konnte nicht angefordert werden.")}};
-async function changeOwnPassword(){const p=await inputDialog("Neues Passwort (mindestens 6 Zeichen):", "", {password:true});if(!p)return;if(p.length<6){toast("Das Passwort ist zu kurz.");return}try{await updatePassword(auth.currentUser,p);toast("Passwort geändert.")}catch(e){toast("Passwort konnte nicht geändert werden. Ggf. erneut anmelden.")}}
+function passwordIssue(value){
+  const p=String(value||'');
+  if(p.length<8)return 'Das Passwort muss mindestens 8 Zeichen lang sein.';
+  if(!/[A-ZÄÖÜ]/.test(p))return 'Das Passwort muss mindestens einen Großbuchstaben enthalten.';
+  if(!/[a-zäöüß]/.test(p))return 'Das Passwort muss mindestens einen Kleinbuchstaben enthalten.';
+  if(!/[0-9]/.test(p))return 'Das Passwort muss mindestens eine Zahl enthalten.';
+  if(!/[^A-Za-z0-9ÄÖÜäöüß]/.test(p))return 'Das Passwort muss mindestens ein Sonderzeichen enthalten.';
+  return '';
+}
+async function requestNewPassword({mandatory=false}={}){
+  const intro=mandatory?'Sie verwenden noch Ihr Startpasswort. Bitte legen Sie jetzt ein persönliches Passwort fest.\n\nMindestens 8 Zeichen, Groß- und Kleinbuchstaben, mindestens 1 Zahl und 1 Sonderzeichen.':'Neues Passwort eingeben.\n\nMindestens 8 Zeichen, Groß- und Kleinbuchstaben, mindestens 1 Zahl und 1 Sonderzeichen.';
+  const p=await inputDialog(intro,'',{title:mandatory?'Eigenes Passwort festlegen':'Passwort ändern',password:true,placeholder:'Neues Passwort'});
+  if(p===null)return null;
+  const issue=passwordIssue(p);if(issue){toast(issue,'error');return requestNewPassword({mandatory});}
+  const confirm=await inputDialog('Neues Passwort zur Sicherheit erneut eingeben:','',{title:'Passwort bestätigen',password:true,placeholder:'Passwort wiederholen'});
+  if(confirm===null)return null;
+  if(String(confirm)!==String(p)){toast('Die beiden Passwörter stimmen nicht überein.','error');return requestNewPassword({mandatory});}
+  return String(p);
+}
+async function changeOwnPassword(){const p=await requestNewPassword();if(!p)return;try{await updatePassword(auth.currentUser,p);await updateDoc(doc(db,'users',ctx.user.uid),{mustChangePassword:false,passwordChangedAt:serverTimestamp()});ctx.profile.mustChangePassword=false;toast('Passwort geändert.')}catch(e){console.error(e);toast('Passwort konnte nicht geändert werden. Ggf. erneut anmelden.','error')}}
+async function enforceInitialPasswordChange(){
+  if(ctx.profile?.mustChangePassword===false)return true;
+  const p=await requestNewPassword({mandatory:true});
+  if(!p){toast('Die Anmeldung wurde beendet. Vor der Nutzung muss ein persönliches Passwort festgelegt werden.','error');await signOut(auth);return false;}
+  try{
+    await updatePassword(auth.currentUser,p);
+    await updateDoc(doc(db,'users',ctx.user.uid),{mustChangePassword:false,passwordChangedAt:serverTimestamp()});
+    ctx.profile.mustChangePassword=false;
+    toast('Persönliches Passwort gespeichert. Willkommen im TP-Personalmanagement.');
+    return true;
+  }catch(e){
+    console.error(e);toast('Das Passwort konnte nicht gespeichert werden. Bitte erneut anmelden und noch einmal versuchen.','error');await signOut(auth);return false;
+  }
+}
 const HELP_URLS={
   admin:"anleitungen/TP-Personalmanagement_Anleitung_Admin.pdf",
   supervisor:"anleitungen/TP-Personalmanagement_Anleitung_Vorgesetzte.pdf",
@@ -96,4 +129,4 @@ document.getElementById("user-chip").onkeydown=e=>{if((e.key==="Enter"||e.key===
 document.addEventListener("click",e=>{if(!e.target.closest(".user-menu-wrap"))closeMobileUserMenu()});
 window.addEventListener("resize",()=>{if(!window.matchMedia("(max-width: 700px)").matches)closeMobileUserMenu()});
 
-onAuthStateChanged(auth,async user=>{ctx.user=user;if(!user){ctx.profile=null;closeMobileUserMenu();loginPage.classList.remove("hidden");shell.classList.add("hidden");return}try{await refreshProfile();updateChrome();renderNav();loginPage.classList.add("hidden");shell.classList.remove("hidden");ctx.view="dashboard";await navigate("dashboard")}catch(e){console.error(e);await signOut(auth);toast(e.message,"error")}});
+onAuthStateChanged(auth,async user=>{ctx.user=user;if(!user){ctx.profile=null;closeMobileUserMenu();loginPage.classList.remove("hidden");shell.classList.add("hidden");return}try{await refreshProfile();if(!await enforceInitialPasswordChange())return;updateChrome();renderNav();loginPage.classList.add("hidden");shell.classList.remove("hidden");ctx.view="dashboard";await navigate("dashboard")}catch(e){console.error(e);await signOut(auth);toast(e.message,"error")}});
