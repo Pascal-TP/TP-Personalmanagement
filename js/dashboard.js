@@ -12,6 +12,26 @@ import { getAssignedDocs } from "./supervisor-utils.js";
 const getTeamMilestones=httpsCallable(functions,'getPersonnelTeamMilestones');
 
 
+const DASHBOARD_ABSENCE_LABELS={vacation:'Urlaub',sick:'Krank',child_sick:'Kind krank',special_leave:'Sonderurlaub',vocational_school:'Berufsschule',training:'Weiterbildung',university:'Uni',unpaid_leave:'Unbezahlter Urlaub',release:'Freistellung',parental_leave:'Elternzeit',other:'Sonstige Abwesenheit'};
+function calendarEasterSunday(y){const a=y%19,b=Math.floor(y/100),c=y%100,d=Math.floor(b/4),e=b%4,f=Math.floor((b+8)/25),g=Math.floor((b-f+1)/3),h=(19*a+b-d-g+15)%30,i=Math.floor(c/4),k=c%4,l=(32+2*e+2*i-h-k)%7,m=Math.floor((a+11*h+22*l)/451),mo=Math.floor((h+l-7*m+114)/31),day=((h+l-7*m+114)%31)+1;return new Date(y,mo-1,day,12)}
+function calendarAddDays(d,n){const x=new Date(d);x.setDate(x.getDate()+n);return x}
+function dashboardHolidays(y){const fixed=[[0,1,'Neujahr'],[4,1,'Tag der Arbeit'],[9,3,'Tag der Deutschen Einheit'],[11,25,'1. Weihnachtstag'],[11,26,'2. Weihnachtstag']],e=calendarEasterSunday(y),mov=[[-2,'Karfreitag'],[1,'Ostermontag'],[39,'Christi Himmelfahrt'],[50,'Pfingstmontag']],map=new Map();fixed.forEach(([m,d,n])=>map.set(localDateKey(new Date(y,m,d,12)),n));mov.forEach(([o,n])=>map.set(localDateKey(calendarAddDays(e,o)),n));return map}
+function calendarRangeContains(from,to,key){return !!from&&!!to&&from<=key&&to>=key}
+function dashboardDayMark(profile,key,vacations,absences){
+  const absence=(absences||[]).find(a=>a.userId===profile.id&&a.status!=='withdrawn'&&calendarRangeContains(a.from,a.to,key));
+  if(absence){const half=['morning','afternoon'].includes(absence.dayPortion);return {code:absence.type==='vacation'?(half?'½U':'U'):absence.type==='sick'?'K':absence.type==='child_sick'?'KK':absence.type==='special_leave'?'SU':absence.type==='unpaid_leave'?'UU':absence.type==='release'?'FR':absence.type==='parental_leave'?'EZ':absence.type==='vocational_school'?'BS':absence.type==='training'?'WB':absence.type==='university'?'UNI':'A',cls:absence.type==='vacation'?`vacation${absence.dayPortion==='morning'?' half-morning':absence.dayPortion==='afternoon'?' half-afternoon':''}`:'absence',title:`${DASHBOARD_ABSENCE_LABELS[absence.type]||'Abwesenheit'}${absence.dayPortion==='morning'?' – ½ Tag vormittags':absence.dayPortion==='afternoon'?' – ½ Tag nachmittags':''}`}}
+  const vacation=(vacations||[]).find(v=>v.userId===profile.id&&v.status==='approved'&&calendarRangeContains(v.from,v.to,key));
+  if(vacation){const half=['morning','afternoon'].includes(vacation.dayPortion);return {code:vacation.type==='Freizeitausgleich'?'G':vacation.type==='Sonderurlaub'?'SU':half?'½U':'U',cls:`vacation${vacation.dayPortion==='morning'?' half-morning':vacation.dayPortion==='afternoon'?' half-afternoon':''}`,title:`${vacation.type||'Urlaub'}${vacation.dayPortion==='morning'?' – ½ Tag vormittags':vacation.dayPortion==='afternoon'?' – ½ Tag nachmittags':''}`}}
+  const d=new Date(`${key}T12:00:00`),holiday=dashboardHolidays(d.getFullYear()).get(key);if(holiday)return {code:'F',cls:'holiday',title:holiday};
+  const workDays=new Set((profile.workDays?.length?profile.workDays:['1','2','3','4','5']).map(String));if(!workDays.has(String(d.getDay())))return {code:'–',cls:'off',title:'Regelmäßig arbeitsfrei'};return null;
+}
+function dashboardCalendarHtml(profile,vacations,absences,year,month){
+  const first=new Date(year,month,1,12),offset=(first.getDay()+6)%7,last=new Date(year,month+1,0,12).getDate(),today=localDateKey(new Date()),monthLabel=new Intl.DateTimeFormat('de-DE',{month:'long',year:'numeric'}).format(first);let cells='';
+  for(let i=0;i<42;i++){const day=i-offset+1;if(day<1||day>last){cells+='<div class="dashboard-calendar-day outside" aria-hidden="true"></div>';continue}const d=new Date(year,month,day,12),key=localDateKey(d),mark=dashboardDayMark(profile,key,vacations,absences),isToday=key===today;cells+=`<button type="button" class="dashboard-calendar-day ${mark?.cls||''} ${isToday?'today':''}" data-date="${key}" data-detail="${esc(mark?.title||'Keine Abwesenheit hinterlegt')}" aria-label="${esc(`${fmtDate(key)}${mark?.title?` – ${mark.title}`:''}${isToday?' – heute':''}`)}"><span>${day}</span>${mark?.code?`<b>${esc(mark.code)}</b>`:''}</button>`}
+  return `<article class="card dashboard-calendar-card"><div class="card-head"><div><h2>Mein Kalender</h2><p>Urlaub und Abwesenheiten im Monatsüberblick</p></div></div><div class="dashboard-calendar-nav"><button type="button" class="dashboard-calendar-arrow" data-cal-step="-1" aria-label="Vorheriger Monat">‹</button><strong>${esc(monthLabel)}</strong><button type="button" class="dashboard-calendar-arrow" data-cal-step="1" aria-label="Nächster Monat">›</button></div><div class="dashboard-calendar-weekdays"><span>Mo</span><span>Di</span><span>Mi</span><span>Do</span><span>Fr</span><span>Sa</span><span>So</span></div><div class="dashboard-calendar-grid">${cells}</div><div class="dashboard-calendar-detail" aria-live="polite">Tag auswählen, um Details anzuzeigen.</div><div class="dashboard-calendar-legend"><span><i class="vacation"></i>U/G Urlaub / Gleittag</span><span><i class="vacation half-day"></i>½U halber Urlaub</span><span><i class="absence"></i>K/KK/… Abwesenheit</span><span><i class="holiday"></i>F Feiertag</span><span><i class="off"></i>– regelmäßig frei</span></div></article>`;
+}
+
+
 function dispatchDashboardNavigation(view){
   window.dispatchEvent(new CustomEvent("tp:navigate",{detail:{view}}));
 }
@@ -360,6 +380,7 @@ export async function renderDashboard(el,ctx){
       <article class="card"><div class="card-head"><div><h2>News & Hinweise</h2><p>Aktuelle Informationen der Personalabteilung</p></div></div>
         <div class="news-list">${news.length?news.map(n=>`<div class="news-card ${n.priority==='important'?'important':''}"><div class="news-icon">${n.priority==='important'?'!':'i'}</div><div><h3>${esc(n.title||'Hinweis')}</h3><div class="rich-content">${n.html||esc(n.text||'')}</div><span>${n.validTo?`gültig bis ${fmtDate(n.validTo)}`:'interne Mitteilung'}</span></div></div>`).join(""):`<div class="empty">Aktuell liegen keine Hinweise vor.</div>`}</div>
       </article>
+      <div id="dashboard-calendar-slot"></div>
       <article class="card"><div class="card-head"><div><h2>Mein Status</h2><p>Wichtige Personaldaten</p></div></div>
         <div class="stat-list">
           <div class="stat-row"><span>Firma</span><strong>${esc(ctx.company?.name||'–')}</strong></div>
@@ -369,6 +390,17 @@ export async function renderDashboard(el,ctx){
         </div>
       </article>
     </div>`;
+
+  const calendarSlot=el.querySelector('#dashboard-calendar-slot');
+  if(calendarSlot){
+    const now=new Date();let calendarYear=now.getFullYear(),calendarMonth=now.getMonth();
+    const paintCalendar=()=>{
+      calendarSlot.innerHTML=dashboardCalendarHtml(p,vacations,absences,calendarYear,calendarMonth);
+      calendarSlot.querySelectorAll('[data-cal-step]').forEach(btn=>btn.onclick=()=>{calendarMonth+=Number(btn.dataset.calStep||0);if(calendarMonth<0){calendarMonth=11;calendarYear--}if(calendarMonth>11){calendarMonth=0;calendarYear++}paintCalendar()});
+      calendarSlot.querySelectorAll('.dashboard-calendar-day:not(.outside)').forEach(btn=>btn.onclick=()=>{const detail=calendarSlot.querySelector('.dashboard-calendar-detail');calendarSlot.querySelectorAll('.dashboard-calendar-day.selected').forEach(x=>x.classList.remove('selected'));btn.classList.add('selected');if(detail)detail.innerHTML=`<strong>${esc(fmtDate(btn.dataset.date))}</strong><span>${esc(btn.dataset.detail||'Keine Abwesenheit hinterlegt')}</span>`});
+    };
+    paintCalendar();
+  }
 
   el.querySelectorAll(".kpi[data-nav]").forEach(card=>{
     const go=()=>dispatchDashboardNavigation(card.dataset.nav);
