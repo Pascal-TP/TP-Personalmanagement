@@ -362,3 +362,6 @@ dialog.tp-notice::backdrop{background:rgba(12,31,49,.46)}
 
 /* V2.15.7 · datierte Urlaubsansprüche und Karriereverlauf */
 .history-entry-grid{display:grid;grid-template-columns:minmax(180px,1fr) minmax(150px,190px);gap:8px 12px;align-items:center}.history-entry-grid input{min-width:0}.history-fixed-date{display:flex;align-items:center;min-height:42px;padding:0 10px;border:1px solid var(--border,#d9e0e7);border-radius:8px;background:#f6f8fa;color:#667085;font-size:.92rem}@media(max-width:640px){.history-entry-grid{grid-template-columns:1fr}.history-fixed-date{min-height:38px}}
+
+/* V2.15.7 – dynamische Verlaufsfelder */
+.dynamic-history-list{display:flex;flex-direction:column;gap:8px;margin-top:6px}.dynamic-history-row{display:grid;grid-template-columns:minmax(180px,1fr) minmax(150px,190px) auto;gap:8px 12px;align-items:center}.dynamic-history-row input{min-width:0}.history-add-btn{margin-top:9px;align-self:flex-start}.history-remove-btn{white-space:nowrap}.history-row-spacer{min-width:78px}@media(max-width:640px){.dynamic-history-row{grid-template-columns:1fr}.history-row-spacer{display:none}.history-remove-btn{justify-self:start}}
