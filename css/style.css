@@ -356,6 +356,6 @@ dialog.tp-notice::backdrop{background:rgba(12,31,49,.46)}
 /* Pflichtangaben in der Mitarbeiterkartei */
 .required-mark{color:#b53337;font-weight:800;font-size:14px;margin-left:2px}.employee-file.existing-user .new-user-required{display:none}
 
-/* V2.15.5 – halbe Urlaubstage in der Jahresübersicht */
+/* V2.15.6 – halbe Urlaubstage in der Jahresübersicht */
 .annual-calendar td.vacation.half-morning,.annual-legend i.vacation.half-day{background:linear-gradient(90deg,#d9f2df 0 50%,#fff 50% 100%)}
 .annual-calendar td.vacation.half-afternoon{background:linear-gradient(90deg,#fff 0 50%,#d9f2df 50% 100%)}
