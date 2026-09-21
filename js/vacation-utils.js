@@ -26,7 +26,10 @@ export function vacationYearBalance(user,vacations,settings,year,{asOf=new Date(
   let carryover=0;
   if(year>=2026){
     if(setting&&setting.carryoverDays!==undefined&&setting.carryoverDays!==null&&setting.carryoverDays!=='') carryover=Math.max(0,Number(setting.carryoverDays)||0);
-    else if(depth<15){ const prev=vacationYearBalance(user,vacations,settings,year-1,{asOf:new Date(year-1,11,31,12),depth:depth+1,absences,adjustments}); carryover=Math.max(0,prev.currentRemaining); }
+    // 2026 ist das Einführungsjahr des Moduls. Für dieses Jahr existiert keine
+    // Vorjahresberechnung im System; Übertrag gibt es daher nur nach expliziter
+    // Erfassung. Erst ab 2027 wird der Rest des Vorjahres automatisch übernommen.
+    else if(year>2026&&depth<15){ const prev=vacationYearBalance(user,vacations,settings,year-1,{asOf:new Date(year-1,11,31,12),depth:depth+1,absences,adjustments}); carryover=Math.max(0,prev.currentRemaining); }
   }
   const defaultExpiry=`${year}-03-31`; const extension=setting?.extensionUntil&&setting?.extensionReason?setting.extensionUntil:'';
   const expiry=extension&&extension>defaultExpiry?extension:defaultExpiry;
