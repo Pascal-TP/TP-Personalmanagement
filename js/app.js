@@ -18,6 +18,7 @@ import { renderStammdaten } from "./stammdaten.js";
 import { renderDatensicherung } from "./datensicherung.js";
 import { renderAenderungsantraege } from "./aenderungsantraege.js";
 import { hasAdminPermission, hasAnyAdminPermission } from "./permissions.js";
+import { beginPortalLoading, endPortalLoading } from "./loading-indicator.js";
 
 export const ctx = { user:null, profile:null, company:null, view:"dashboard" };
 const content=document.getElementById("content"), nav=document.getElementById("main-nav");
@@ -55,7 +56,8 @@ export async function navigate(view){
   if(view==="applicants"){const url=localStorage.getItem("tpApplicantsUrl")||"";if(url)window.open(url,"_blank","noopener");else toast("Das Bewerbungsportal wird später als separates Tool angebunden.");return}
   if(view==="management"){if(ctx.profile?.managementPortalAccess!==true){toast("Für diesen Benutzer ist das TP-Managementportal nicht freigeschaltet.");return}window.open("https://pascal-tp.github.io/TP-Managementportal/","_blank","noopener");return}
   ctx.view=view; renderNav(); const item=views[view]||views.dashboard; content.innerHTML=`<div class="loading">Bereich wird geladen …</div>`;
-  try{await item.render(content,ctx)}catch(e){console.error(e);content.innerHTML=`<div class="error-card"><strong>Der Bereich konnte nicht geladen werden.</strong><p>${e.message}</p></div>`}
+  const loadingId=beginPortalLoading(`${item.label||"Bereich"} wird geladen …`);
+  try{await item.render(content,ctx)}catch(e){console.error(e);content.innerHTML=`<div class="error-card"><strong>Der Bereich konnte nicht geladen werden.</strong><p>${e.message}</p></div>`}finally{endPortalLoading(loadingId)}
 }
 window.tpNavigate=navigate;
 window.addEventListener("tp:navigate",e=>{const view=e?.detail?.view;if(view&&views[view])navigate(view)});
@@ -129,4 +131,4 @@ document.getElementById("user-chip").onkeydown=e=>{if((e.key==="Enter"||e.key===
 document.addEventListener("click",e=>{if(!e.target.closest(".user-menu-wrap"))closeMobileUserMenu()});
 window.addEventListener("resize",()=>{if(!window.matchMedia("(max-width: 700px)").matches)closeMobileUserMenu()});
 
-onAuthStateChanged(auth,async user=>{ctx.user=user;if(!user){ctx.profile=null;closeMobileUserMenu();loginPage.classList.remove("hidden");shell.classList.add("hidden");return}try{await refreshProfile();if(!await enforceInitialPasswordChange())return;updateChrome();renderNav();loginPage.classList.add("hidden");shell.classList.remove("hidden");ctx.view="dashboard";await navigate("dashboard")}catch(e){console.error(e);await signOut(auth);toast(e.message,"error")}});
+onAuthStateChanged(auth,async user=>{ctx.user=user;if(!user){ctx.profile=null;closeMobileUserMenu();loginPage.classList.remove("hidden");shell.classList.add("hidden");return}try{const loadingId=beginPortalLoading("Benutzerprofil wird geladen …");try{await refreshProfile()}finally{endPortalLoading(loadingId)}if(!await enforceInitialPasswordChange())return;updateChrome();renderNav();loginPage.classList.add("hidden");shell.classList.remove("hidden");ctx.view="dashboard";await navigate("dashboard")}catch(e){console.error(e);await signOut(auth);toast(e.message,"error")}});
