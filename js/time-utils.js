@@ -1,3 +1,5 @@
+import { scheduledMinutesOn } from "./employment-utils.js";
+
 // V2.9.2 – gemeinsame Zeitberechnung.
 // Echte Stempelzeiten bleiben unverändert; earliestStartTime begrenzt nur die anrechenbare Zeit.
 
@@ -180,17 +182,13 @@ export function calculateTimeAccountValues(records,profile={},vacations=[],absen
   let firstKey=keys[0],lastKey=keys[keys.length-1];
   if(profile?.startDate&&/^\d{4}-\d{2}-\d{2}$/.test(String(profile.startDate))&&profile.startDate>firstKey)firstKey=profile.startDate;
 
-  const workDays=new Set((Array.isArray(profile?.workDays)&&profile.workDays.length?profile.workDays:['1','2','3','4','5']).map(String));
-  const workDayCount=Math.max(1,workDays.size);
-  const weeklyHours=Number(profile?.weeklyHours??40);
-  const dailyTargetMinutes=Math.round(((Number.isFinite(weeklyHours)?weeklyHours:40)*60)/workDayCount);
   const leaveFractions=coveredDateFractions(vacations,{approvedOnly:true});
   const absenceFractions=coveredDateFractions(absences);
 
   let balance=0;
   for(const key of dateRangeKeys(firstKey,lastKey)){
-    const day=parseDateKey(key);
-    const scheduled=day&&workDays.has(String(day.getDay()));
+    const dailyTargetMinutes=scheduledMinutesOn(profile,key);
+    const scheduled=dailyTargetMinutes>0;
     const relief=Math.max(leaveFractions.get(key)||0,absenceFractions.get(key)||0);
     if(scheduled)balance-=Math.round(dailyTargetMinutes*(1-relief));
 
@@ -227,17 +225,13 @@ export function calculateTimeAccountBalance(records,profile={},vacations=[],abse
   const lastKey=timeDateKey(endDate);
   if(firstKey>lastKey)return 0;
 
-  const workDays=new Set((Array.isArray(profile?.workDays)&&profile.workDays.length?profile.workDays:['1','2','3','4','5']).map(String));
-  const workDayCount=Math.max(1,workDays.size);
-  const weeklyHours=Number(profile?.weeklyHours??40);
-  const dailyTargetMinutes=Math.round(((Number.isFinite(weeklyHours)?weeklyHours:40)*60)/workDayCount);
   const leaveFractions=coveredDateFractions(vacations,{approvedOnly:true});
   const absenceFractions=coveredDateFractions(absences);
 
   let balance=0;
   for(const key of dateRangeKeys(firstKey,lastKey)){
-    const day=parseDateKey(key);
-    const scheduled=day&&workDays.has(String(day.getDay()));
+    const dailyTargetMinutes=scheduledMinutesOn(profile,key);
+    const scheduled=dailyTargetMinutes>0;
     const relief=Math.max(leaveFractions.get(key)||0,absenceFractions.get(key)||0);
     if(scheduled)balance-=Math.round(dailyTargetMinutes*(1-relief));
     for(const r of byDay.get(key)||[])balance+=Math.round(Number(dailyValues.get(r.id)?.net)||0);

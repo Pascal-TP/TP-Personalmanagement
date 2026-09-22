@@ -1,11 +1,11 @@
-import { vacationEntitlementOn } from "./employment-utils.js";
+import { vacationEntitlementOn, scheduledMinutesOn } from "./employment-utils.js";
 function iso(d){return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`}
 function workdays(from,to,user,limitFrom=null,limitTo=null){
   if(!from||!to)return 0; let a=new Date(`${from}T12:00:00`),b=new Date(`${to}T12:00:00`);
   if(Number.isNaN(a.getTime())||Number.isNaN(b.getTime()))return 0;
   if(limitFrom){const x=new Date(`${limitFrom}T12:00:00`);if(a<x)a=x} if(limitTo){const x=new Date(`${limitTo}T12:00:00`);if(b>x)b=x}
-  if(b<a)return 0; const allowed=new Set((user?.workDays?.length?user.workDays:['1','2','3','4','5']).map(String)); let n=0;
-  for(const d=new Date(a);d<=b;d.setDate(d.getDate()+1))if(allowed.has(String(d.getDay())))n++; return n;
+  if(b<a)return 0; let n=0;
+  for(const d=new Date(a);d<=b;d.setDate(d.getDate()+1))if(scheduledMinutesOn(user,iso(d))>0)n++; return n;
 }
 function settingFor(settings,userId,year){return settings.find(x=>x.userId===userId&&Number(x.year)===Number(year))||null}
 function vacationDaysInRange(item,user,from,to){

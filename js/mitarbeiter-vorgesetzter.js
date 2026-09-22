@@ -128,7 +128,7 @@ async function renderSupervisorBookings(container, employee) {
         <strong>${esc(bookingMonthLabel(month))}</strong>
       </div>
       <div class="table-wrap"><table class="employee-bookings-table">
-        <thead><tr><th>Datum</th><th>Projekt</th><th>KOMMEN</th><th>GEHEN</th><th>Arbeitszeit</th><th>Zeitguthaben</th><th>Buchungsart</th><th>Terminal / Hinweis</th></tr></thead>
+        <thead><tr><th>Datum</th><th>Projekt</th><th>KOMMEN</th><th>GEHEN</th><th>Arbeitszeit</th><th>Soll-Zeit</th><th>Zeitguthaben</th><th>Buchungsart</th><th>Terminal / Hinweis</th></tr></thead>
         <tbody>
           ${
             monthRecords.length
@@ -138,7 +138,7 @@ async function renderSupervisorBookings(container, employee) {
                       const note = [r.adjustmentReason, r.adjustmentDetails]
                         .filter(Boolean)
                         .join(" · ");
-                      return `<tr class="adjustment-row"><td>${esc(bookingDateKey(r).split("-").reverse().join("."))}</td><td>${esc(r.projectNumber || "–")}</td><td colspan="2"><strong>Stundenkorrektur</strong></td><td><strong>${esc(bookingMinutesText(r.adjustmentMinutes, { signed: true }))}</strong></td><td><strong>${esc(bookingMinutesText((accountValues.get(r.id) || {}).balance || 0, { signed: true }))}</strong></td><td>${esc(bookingSourceLabel(r))}</td><td>${esc(note || r.createdByName || "–")}</td></tr>`;
+                      return `<tr class="adjustment-row"><td>${esc(bookingDateKey(r).split("-").reverse().join("."))}</td><td>${esc(r.projectNumber || "–")}</td><td colspan="2"><strong>Stundenkorrektur</strong></td><td><strong>${esc(bookingMinutesText(r.adjustmentMinutes, { signed: true }))}</strong></td><td><strong>${esc(bookingMinutesText((accountValues.get(r.id)||{}).targetMinutes||0))}</strong></td><td><strong>${esc(bookingMinutesText((accountValues.get(r.id) || {}).balance || 0, { signed: true }))}</strong></td><td>${esc(bookingSourceLabel(r))}</td><td>${esc(note || r.createdByName || "–")}</td></tr>`;
                     }
                     const calc = bookingValues.get(r.id);
                     const net = calc ? calc.net : bookingNetMinutes(r);
@@ -159,13 +159,14 @@ async function renderSupervisorBookings(container, employee) {
               <td>${esc(bookingTime(r, "start") || "–")}${wasStartLimited(r,employee.earliestStartTime||"")?`<small class="booking-note start-limit-note">anrechenbar ab ${esc(employee.earliestStartTime)} Uhr</small>`:""}</td>
               <td>${esc(bookingTime(r, "end") || "–")}</td>
               <td>${net === null ? (open ? '<span class="pill yellow">läuft</span>' : "–") : esc(bookingMinutesText(net))}</td>
+              <td><strong>${esc(bookingMinutesText((accountValues.get(r.id)||{}).targetMinutes||0))}</strong></td>
               <td><strong>${esc(bookingMinutesText((accountValues.get(r.id) || {}).balance || 0, { signed: true }))}</strong></td>
               <td>${esc(bookingSourceLabel(r))}</td>
               <td>${esc(terminal || (open ? "offene Buchung" : "–"))}</td>
             </tr>`;
                   })
                   .join("")
-              : `<tr><td colspan="8" class="empty">Für ${esc(bookingMonthLabel(month))} sind keine Buchungen vorhanden.</td></tr>`
+              : `<tr><td colspan="9" class="empty">Für ${esc(bookingMonthLabel(month))} sind keine Buchungen vorhanden.</td></tr>`
           }
         </tbody>
       </table></div>`;

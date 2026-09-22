@@ -387,7 +387,7 @@ export async function renderZeiterfassung(el, ctx) {
             <td>${day.open ? statusPill("läuft", "blue") : statusPill("erfasst", "green")}</td>
           </tr>`).join("") : `<tr><td colspan="6" class="empty">Noch keine Buchungen vorhanden.</td></tr>`}
         </tbody>` : `
-        <thead><tr><th>Datum</th><th>Projekt</th><th>Beginn</th><th>Ende</th><th>Pause</th><th>Arbeitszeit</th><th>Zeitguthaben</th><th>Status</th><th>Aktion</th></tr></thead>
+        <thead><tr><th>Datum</th><th>Projekt</th><th>Beginn</th><th>Ende</th><th>Pause</th><th>Arbeitszeit</th><th>Soll-Zeit</th><th>Zeitguthaben</th><th>Status</th><th>Aktion</th></tr></thead>
         <tbody>
           ${entries.length ? entries.map(r => {
             if (r.recordType === "adjustment") {
@@ -397,6 +397,7 @@ export async function renderZeiterfassung(el, ctx) {
                 <td><strong>${esc(projectText(r.projectNumber))}</strong></td>
                 <td colspan="3"><strong>Stundenkorrektur</strong><small class="booking-note">${esc(reason || "Korrekturbuchung")}</small></td>
                 <td><strong class="adjustment-value ${Number(r.adjustmentMinutes) >= 0 ? "positive" : "negative"}">${signedHm(r.adjustmentMinutes)}</strong></td>
+                <td><strong>${hm((accountValues.get(r.id)||{}).targetMinutes||0)}</strong></td>
                 <td><strong>${signedHm((accountValues.get(r.id)||{}).balance||0)}</strong></td>
                 <td>${statusPill("Admin-Buchung", "blue")}</td>
                 <td><span class="muted-small">${esc(r.createdByName || "Personalabteilung")}</span></td>
@@ -412,11 +413,12 @@ export async function renderZeiterfassung(el, ctx) {
               <td>${esc(recordTime(r, "end") || "–")}</td>
               <td>${c.pause ? `<strong>${c.pause} Min.</strong>` : "–"}</td>
               <td>${open ? `<strong>${hm(c.net)}</strong><small class="booking-note">laufender Wert</small>` : `<strong>${hm(c.net)}</strong>`}</td>
+              <td><strong>${hm((accountValues.get(r.id)||{}).targetMinutes||0)}</strong></td>
               <td><strong>${signedHm((accountValues.get(r.id)||{}).balance||0)}</strong></td>
               <td>${open ? statusPill("läuft", "blue") : statusPill("erfasst", "green")}</td>
               <td>${open ? `<span class="muted-small">erst nach Gehen</span>` : pending ? statusPill("Korrektur beantragt", "yellow") : `<button class="btn small secondary correction-btn" type="button" data-id="${r.id}">Korrektur beantragen</button>`}</td>
             </tr>`;
-          }).join("") : `<tr><td colspan="9" class="empty">Noch keine Buchungen vorhanden.</td></tr>`}
+          }).join("") : `<tr><td colspan="10" class="empty">Noch keine Buchungen vorhanden.</td></tr>`}
         </tbody>`}
       </table></div>
     </article>

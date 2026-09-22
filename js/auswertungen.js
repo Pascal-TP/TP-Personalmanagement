@@ -6,14 +6,14 @@ import { hasAdminPermission } from "./permissions.js";
 import { recordGrossMinutes } from "./time-utils.js";
 import { vacationYearBalance, vacationCarryoverDocId } from "./vacation-utils.js";
 import { getAssignedUsers, getAssignedDocs, isSupervisorOf } from "./supervisor-utils.js";
-import { positionOn } from "./employment-utils.js";
+import { positionOn, scheduledMinutesOn } from "./employment-utils.js";
 
 const ABSENCE_LABELS={vacation:'Urlaub',sick:'Krank',child_sick:'Kind krank',special_leave:'Sonderurlaub',vocational_school:'Berufsschule',training:'Weiterbildung',university:'Uni',unpaid_leave:'Unbezahlter Urlaub',release:'Freistellung',parental_leave:'Elternzeit',other:'Sonstige Abwesenheit'};
 function easterSunday(y){const a=y%19,b=Math.floor(y/100),c=y%100,d=Math.floor(b/4),e=b%4,f=Math.floor((b+8)/25),g=Math.floor((b-f+1)/3),h=(19*a+b-d-g+15)%30,i=Math.floor(c/4),k=c%4,l=(32+2*e+2*i-h-k)%7,m=Math.floor((a+11*h+22*l)/451),mo=Math.floor((h+l-7*m+114)/31),day=((h+l-7*m+114)%31)+1;return new Date(y,mo-1,day,12)}
 function addDays(d,n){const x=new Date(d);x.setDate(x.getDate()+n);return x}
 function germanNationalHolidays(y){const fixed=[[0,1,'Neujahr'],[4,1,'Tag der Arbeit'],[9,3,'Tag der Deutschen Einheit'],[11,25,'1. Weihnachtstag'],[11,26,'2. Weihnachtstag']],e=easterSunday(y),mov=[[-2,'Karfreitag'],[1,'Ostermontag'],[39,'Christi Himmelfahrt'],[50,'Pfingstmontag']];const map=new Map();fixed.forEach(([m,d,n])=>map.set(dateKey(new Date(y,m,d,12)),n));mov.forEach(([o,n])=>map.set(dateKey(addDays(e,o)),n));return map}
 function daySet(from,to){const out=[];let d=new Date(`${from}T12:00:00`),e=new Date(`${to}T12:00:00`);for(;d<=e;d.setDate(d.getDate()+1))out.push(dateKey(d));return out}
-function annualHtml(user,year,vacations,absences,carryoverSettings=[],vacationAdjustments=[]){const workDays=new Set((user.workDays?.length?user.workDays:['1','2','3','4','5']).map(String)),holidays=germanNationalHolidays(year),marks=new Map();holidays.forEach((n,k)=>marks.set(k,{code:'F',cls:'holiday',title:n}));for(let m=0;m<12;m++){const last=new Date(year,m+1,0).getDate();for(let d=1;d<=last;d++){const dt=new Date(year,m,d,12),k=dateKey(dt);if(!workDays.has(String(dt.getDay()))&&!marks.has(k))marks.set(k,{code:'–',cls:'off',title:'Regelmäßig arbeitsfrei'})}}
+function annualHtml(user,year,vacations,absences,carryoverSettings=[],vacationAdjustments=[]){const holidays=germanNationalHolidays(year),marks=new Map();holidays.forEach((n,k)=>marks.set(k,{code:'F',cls:'holiday',title:n}));for(let m=0;m<12;m++){const last=new Date(year,m+1,0).getDate();for(let d=1;d<=last;d++){const dt=new Date(year,m,d,12),k=dateKey(dt);if(scheduledMinutesOn(user,k)<=0&&!marks.has(k))marks.set(k,{code:'–',cls:'off',title:'Regelmäßig arbeitsfrei'})}}
   vacations.filter(v=>v.userId===user.id&&v.status==='approved').forEach(v=>daySet(v.from,v.to).forEach(k=>{if(k.startsWith(String(year))&&!marks.get(k)?.cls?.includes('holiday'))marks.set(k,{code:v.type==='Freizeitausgleich'?'G':v.type==='Sonderurlaub'?'SU':(['morning','afternoon'].includes(v.dayPortion)?'½U':'U'),cls:`vacation${v.dayPortion==='morning'?' half-morning':v.dayPortion==='afternoon'?' half-afternoon':''}`,title:`${v.type||'Urlaub'}${v.dayPortion==='morning'?' – ½ Tag vormittags':v.dayPortion==='afternoon'?' – ½ Tag nachmittags':''}`})}));
   absences.filter(a=>a.userId===user.id&&a.status!=='withdrawn').forEach(a=>daySet(a.from,a.to).forEach(k=>{if(k.startsWith(String(year)))marks.set(k,{code:a.type==='vacation'?(['morning','afternoon'].includes(a.dayPortion)?'½U':'U'):a.type==='sick'?'K':a.type==='child_sick'?'KK':a.type==='special_leave'?'SU':a.type==='unpaid_leave'?'UU':a.type==='release'?'FR':a.type==='parental_leave'?'EZ':a.type==='vocational_school'?'BS':a.type==='training'?'WB':a.type==='university'?'UNI':'A',cls:a.type==='vacation'?`vacation${a.dayPortion==='morning'?' half-morning':a.dayPortion==='afternoon'?' half-afternoon':''}`:'absence',title:`${ABSENCE_LABELS[a.type]||'Abwesenheit'}${a.dayPortion==='morning'?' – ½ Tag vormittags':a.dayPortion==='afternoon'?' – ½ Tag nachmittags':''}`})}));
   const months=['Jan','Feb','Mär','Apr','Mai','Jun','Jul','Aug','Sep','Okt','Nov','Dez'];let rows='';for(let d=1;d<=31;d++){rows+=`<tr><th>${String(d).padStart(2,'0')}</th>`;for(let m=0;m<12;m++){const valid=d<=new Date(year,m+1,0).getDate();if(!valid){rows+='<td class="na"></td>';continue}const k=dateKey(new Date(year,m,d,12)),x=marks.get(k);rows+=`<td class="${x?.cls||''}" title="${esc(x?.title||'')}">${esc(x?.code||'')}</td>`}rows+='</tr>'}
@@ -59,8 +59,7 @@ function teamDayMark(user,key,vacations,absences){
   const d=new Date(`${key}T12:00:00`);
   const holiday=germanNationalHolidays(d.getFullYear()).get(key);
   if(holiday)return {label:'Feiertag',code:'F',cls:'holiday',title:holiday};
-  const workDays=new Set((user.workDays?.length?user.workDays:['1','2','3','4','5']).map(String));
-  if(!workDays.has(String(d.getDay())))return {label:'Frei',code:'–',cls:'off'};
+  if(scheduledMinutesOn(user,key)<=0)return {label:'Frei',code:'–',cls:'off'};
   return null;
 }
 function teamWeekHtml(users,monday,vacations,absences,filter=''){
@@ -374,9 +373,8 @@ function countUserWorkdaysInYear(from,to,year,user){
   const a=new Date(`${from}T12:00:00`),b=new Date(`${to}T12:00:00`);
   if(Number.isNaN(a.getTime())||Number.isNaN(b.getTime())||b<start||a>end)return 0;
   const first=a>start?a:start,last=b<end?b:end;
-  const allowed=new Set((user?.workDays?.length?user.workDays:['1','2','3','4','5']).map(String));
   let n=0;
-  for(const d=new Date(first);d<=last;d.setDate(d.getDate()+1))if(allowed.has(String(d.getDay())))n++;
+  for(const d=new Date(first);d<=last;d.setDate(d.getDate()+1))if(scheduledMinutesOn(user,dateKey(d))>0)n++;
   return n;
 }
 function countUserWorkdaysInMonth(from,to,year,month,user){
@@ -384,9 +382,8 @@ function countUserWorkdaysInMonth(from,to,year,month,user){
   const a=new Date(`${from}T12:00:00`),b=new Date(`${to}T12:00:00`);
   if(Number.isNaN(a.getTime())||Number.isNaN(b.getTime())||b<start||a>end)return 0;
   const first=a>start?a:start,last=b<end?b:end;
-  const allowed=new Set((user?.workDays?.length?user.workDays:['1','2','3','4','5']).map(String));
   let n=0;
-  for(const d=new Date(first);d<=last;d.setDate(d.getDate()+1))if(allowed.has(String(d.getDay())))n++;
+  for(const d=new Date(first);d<=last;d.setDate(d.getDate()+1))if(scheduledMinutesOn(user,dateKey(d))>0)n++;
   return n;
 }
 function companyLabel(companyMap,user){

@@ -7,6 +7,7 @@ import { hasAdminPermission } from "./permissions.js";
 import { progressForTrainingYear, visibleTrainingsForYear } from "./training-utils.js";
 import { calculateDailyTimeValues, calculateTimeAccountBalance, timeRecordStart } from "./time-utils.js";
 import { getAssignedDocs } from "./supervisor-utils.js";
+import { scheduledMinutesOn } from "./employment-utils.js";
 
 
 const getTeamMilestones=httpsCallable(functions,'getPersonnelTeamMilestones');
@@ -23,7 +24,7 @@ function dashboardDayMark(profile,key,vacations,absences){
   const vacation=(vacations||[]).find(v=>v.userId===profile.id&&v.status==='approved'&&calendarRangeContains(v.from,v.to,key));
   if(vacation){const half=['morning','afternoon'].includes(vacation.dayPortion);return {code:vacation.type==='Freizeitausgleich'?'G':vacation.type==='Sonderurlaub'?'SU':half?'½U':'U',cls:`vacation${vacation.dayPortion==='morning'?' half-morning':vacation.dayPortion==='afternoon'?' half-afternoon':''}`,title:`${vacation.type||'Urlaub'}${vacation.dayPortion==='morning'?' – ½ Tag vormittags':vacation.dayPortion==='afternoon'?' – ½ Tag nachmittags':''}`}}
   const d=new Date(`${key}T12:00:00`),holiday=dashboardHolidays(d.getFullYear()).get(key);if(holiday)return {code:'F',cls:'holiday',title:holiday};
-  const workDays=new Set((profile.workDays?.length?profile.workDays:['1','2','3','4','5']).map(String));if(!workDays.has(String(d.getDay())))return {code:'–',cls:'off',title:'Regelmäßig arbeitsfrei'};return null;
+  if(scheduledMinutesOn(profile,key)<=0)return {code:'–',cls:'off',title:'Regelmäßig arbeitsfrei'};return null;
 }
 function dashboardCalendarHtml(profile,vacations,absences,year,month){
   const first=new Date(year,month,1,12),offset=(first.getDay()+6)%7,last=new Date(year,month+1,0,12).getDate(),today=localDateKey(new Date()),monthLabel=new Intl.DateTimeFormat('de-DE',{month:'long',year:'numeric'}).format(first);let cells='';
@@ -156,14 +157,14 @@ function currentMonthBalance(profile,timeRecords,vacations,absences=[]){
     if(!Number.isNaN(employmentStart.getTime())&&employmentStart>calcStart)calcStart=employmentStart;
   }
 
-  const weeklyHours=Number(profile.weeklyHours||40);
-  const dailyTargetMinutes=(weeklyHours*60)/5;
-  const weekdays=workdaysBetween(calcStart,today);
-  const approvedLeaveDays=vacations
-    .filter(v=>v.status==="approved")
-    .reduce((sum,v)=>sum+overlapWorkdays(v.from,v.to,calcStart,today),0);
-  const absenceDays=absences.reduce((sum,a)=>sum+overlapWorkdays(a.from,a.to,calcStart,today),0);
-  const targetMinutes=Math.max(0,Math.round((weekdays-approvedLeaveDays-absenceDays)*dailyTargetMinutes));
+  let targetMinutes=0;
+  for(const day=new Date(calcStart);day<=today;day.setDate(day.getDate()+1)){
+    const key=localDateKey(day),scheduled=scheduledMinutesOn(profile,key);
+    const vacation=vacations.find(v=>v.status==='approved'&&calendarRangeContains(v.from,v.to,key));
+    const absence=absences.find(a=>a.status!=='withdrawn'&&calendarRangeContains(a.from,a.to,key));
+    const covered=vacation||absence,relief=covered?.from===covered?.to&&['morning','afternoon'].includes(covered?.dayPortion)?0.5:covered?1:0;
+    targetMinutes+=Math.round(scheduled*(1-relief));
+  }
 
   const relevantRecords=timeRecords.filter(r=>{
     const start=r.recordType==="adjustment"?(r.adjustmentDate?new Date(`${r.adjustmentDate}T12:00:00`):toDate(r.createdAt)):timeRecordStart(r);
