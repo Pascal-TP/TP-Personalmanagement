@@ -1,8 +1,9 @@
 import { db, auth, functions } from "./firebase.js";
-import { collection, getDocs, query, where, orderBy, limit, doc, updateDoc, arrayUnion, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+import { collection, getDocs, query, where, orderBy, limit, doc, updateDoc, writeBatch, arrayUnion, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 import { httpsCallable } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-functions.js";
 import { setHead } from "./app.js";
-import { esc, fmtDate, statusPill, toast } from "./utils.js";
+import { esc, fmtDate, statusPill, toast, confirmDialog } from "./utils.js";
+import { beginPortalLoading, endPortalLoading } from "./loading-indicator.js";
 import { hasAdminPermission } from "./permissions.js";
 import { progressForTrainingYear, visibleTrainingsForYear } from "./training-utils.js";
 import { calculateDailyTimeValues, calculateTimeAccountBalance, timeRecordStart } from "./time-utils.js";
@@ -51,7 +52,7 @@ function complianceAlertText(alert={}){
 
 function renderComplianceAlerts(items=[]){
   if(!items.length)return "";
-  return `<article class="card compliance-alert-card"><div class="card-head"><div><h2>Arbeitszeit-Hinweise</h2><p>Diese Hinweise müssen von jedem zugeordneten Vorgesetzten persönlich zur Kenntnis genommen werden.</p></div><span class="reminder-count urgent">${items.length} offen</span></div><div class="compliance-alert-list">${items.map(a=>`<div class="compliance-alert-row"><div class="compliance-alert-main">${complianceAlertText(a)}<span class="compliance-alert-meta">Hinweis-ID: ${esc(a.id)}</span></div><button class="btn small primary compliance-ack-btn" type="button" data-id="${esc(a.id)}">Zur Kenntnis genommen</button></div>`).join("")}</div></article>`;
+  return `<article class="card compliance-alert-card"><div class="card-head"><div><h2>Arbeitszeit-Hinweise</h2><p>Diese Hinweise müssen von jedem zugeordneten Vorgesetzten persönlich zur Kenntnis genommen werden.</p></div><div class="actions"><span class="reminder-count urgent">${items.length} offen</span><button class="btn small primary compliance-ack-all-btn" type="button">Alle zur Kenntnis genommen</button></div></div><div class="compliance-alert-list">${items.map(a=>`<div class="compliance-alert-row"><div class="compliance-alert-main">${complianceAlertText(a)}<span class="compliance-alert-meta">Hinweis-ID: ${esc(a.id)}</span></div><button class="btn small primary compliance-ack-btn" type="button" data-id="${esc(a.id)}">Zur Kenntnis genommen</button></div>`).join("")}</div></article>`;
 }
 function formatSignedHours(minutes){
   const value=Math.round(Number(minutes)||0),sign=value>0?'+':value<0?'−':'',abs=Math.abs(value);
@@ -419,4 +420,33 @@ export async function renderDashboard(el,ctx){
       console.error(e);btn.disabled=false;toast("Der Hinweis konnte nicht bestätigt werden.");
     }
   });
+  const acknowledgeAllButton=el.querySelector(".compliance-ack-all-btn");
+  if(acknowledgeAllButton)acknowledgeAllButton.onclick=async()=>{
+    const alerts=[...complianceAlerts];
+    if(!alerts.length)return;
+    const confirmed=await confirmDialog(`Möchten Sie wirklich alle ${alerts.length} aktuell angezeigten Arbeitszeit-Hinweise als zur Kenntnis genommen markieren?`,{acceptLabel:"Alle bestätigen"});
+    if(!confirmed)return;
+    acknowledgeAllButton.disabled=true;
+    el.querySelectorAll(".compliance-ack-btn").forEach(button=>button.disabled=true);
+    const loadingId=beginPortalLoading("Arbeitszeit-Hinweise werden bestätigt …");
+    let processed=0,writeError=null,refreshError=null;
+    try{
+      const chunkSize=400;
+      for(let start=0;start<alerts.length;start+=chunkSize){
+        const chunk=alerts.slice(start,start+chunkSize),batch=writeBatch(db);
+        chunk.forEach(alert=>batch.update(doc(db,"timeComplianceAlerts",alert.id),{acknowledgedBy:arrayUnion(p.id),updatedAt:serverTimestamp()}));
+        await batch.commit();
+        processed+=chunk.length;
+        acknowledgeAllButton.textContent=`${processed} von ${alerts.length} bestätigt …`;
+      }
+    }catch(e){
+      writeError=e;
+      console.error("Sammelkenntnisnahme der Arbeitszeit-Hinweise fehlgeschlagen",e);
+    }
+    try{await renderDashboard(el,ctx)}catch(e){refreshError=e;console.error("Dashboard konnte nach der Sammelkenntnisnahme nicht aktualisiert werden",e)}
+    endPortalLoading(loadingId);
+    if(writeError)toast(`Die Sammelkenntnisnahme wurde nicht vollständig abgeschlossen. ${processed} von ${alerts.length} Hinweisen wurden bestätigt. Verbleibende Hinweise bleiben offen.${refreshError?' Bitte laden Sie das Dashboard neu.':''}`,"error");
+    else if(refreshError)toast(`${processed} Arbeitszeit-Hinweise wurden bestätigt. Das Dashboard konnte anschließend nicht aktualisiert werden. Bitte laden Sie die Seite neu.`,"warning");
+    else toast(`${processed} Arbeitszeit-Hinweise wurden als zur Kenntnis genommen bestätigt.`);
+  };
 }
