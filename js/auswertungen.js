@@ -124,13 +124,18 @@ function bindEmployeeBookingsReport(root,users,records){const select=root.queryS
 
 async function renderSupervisorAttendance(el,ctx){
   setHead('Auswertungen','Anwesenheits-, Abwesenheits- und Wochenplanung für die zugeordneten Mitarbeiter.');
-  const [assignedUsers,vacations,absences,timeRecords]=await Promise.all([
+  const [assignedUsers,vacations,absences]=await Promise.all([
     getAssignedUsers(db,ctx.profile.id),
     getAssignedDocs(db,'vacationRequests',ctx.profile.id),
-    getAssignedDocs(db,'absences',ctx.profile.id),
-    getAssignedDocs(db,'timeRecords',ctx.profile.id)
+    getAssignedDocs(db,'absences',ctx.profile.id)
   ]);
   const users=assignedUsers.filter(u=>u.active!==false).sort((a,b)=>(a.name||'').localeCompare(b.name||'','de'));
+  // Zeitbuchungen werden anhand des Zielmitarbeiters freigegeben. Deshalb nur
+  // die zuvor sicher ermittelten, zugeordneten Benutzer-IDs einzeln abfragen.
+  const timeRecords=(await Promise.all(users.map(async user=>{
+    const snap=await getDocs(query(collection(db,'timeRecords'),where('userId','==',user.id)));
+    return snap.docs.map(d=>({id:d.id,...d.data()}));
+  }))).flat();
   let currentMonday=mondayOfWeek(new Date()),activeView='team',filter='',planningFilter='',plans=new Map();
   const currentYear=new Date().getFullYear();
 
