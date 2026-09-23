@@ -381,3 +381,4 @@ dialog.tp-notice::backdrop{background:rgba(12,31,49,.46)}
 @media(prefers-reduced-motion:reduce){.portal-loading-spinner{animation-duration:1.8s}}
 @media(max-width:480px){.portal-loading-card{min-width:0;width:100%;padding:17px 18px}}
 .matrix-status-edit{cursor:pointer;outline-offset:-3px}.matrix-status-edit:hover{filter:brightness(.96);box-shadow:inset 0 0 0 2px currentColor}.training-status-dialog{border:0;border-radius:16px;max-width:560px;width:calc(100% - 32px);padding:24px;box-shadow:0 24px 70px rgba(19,33,58,.28)}.training-status-dialog::backdrop{background:rgba(19,33,58,.45)}
+.file-btn{cursor:pointer}
