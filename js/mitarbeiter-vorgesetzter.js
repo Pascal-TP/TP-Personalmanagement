@@ -71,7 +71,8 @@ function bookingNetMinutes(record) {
 }
 function bookingSourceLabel(record) {
   if (record.recordType === "adjustment") return "Stundenkorrektur";
-  if (record.source === "nfc_terminal") return "NFC-Terminal";
+  if (record.source === "nfc_terminal")
+    return record.terminalIdentification === "qr" ? "QR-Terminal" : "NFC-Terminal";
   if (record.source === "approved_request") return "genehmigter Antrag";
   if (record.source === "desktop_stamp") return "Personalmanagement";
   if (record.source === "supervisor_adjustment")

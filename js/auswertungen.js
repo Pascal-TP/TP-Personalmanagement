@@ -1,5 +1,6 @@
-import { db } from "./firebase.js";
+import { auth, db, functions } from "./firebase.js";
 import { collection, getDocs, doc, getDoc, query, where, setDoc, deleteDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+import { httpsCallable } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-functions.js";
 import { setHead } from "./app.js";
 import { esc, toast, confirmDialog } from "./utils.js";
 import { hasAdminPermission } from "./permissions.js";
@@ -7,6 +8,9 @@ import { calculateDailyTimeValues, recordGrossMinutes, timeRecordDateKey, timeRe
 import { vacationYearBalance, vacationCarryoverDocId } from "./vacation-utils.js";
 import { getAssignedUsers, getAssignedDocs, isSupervisorOf } from "./supervisor-utils.js";
 import { positionOn, scheduledMinutesOn } from "./employment-utils.js";
+import { drawPersonnelQr, personnelQrDataUrl } from "./qr-utils.js";
+
+const listQrCredentials=httpsCallable(functions,'listPersonnelQrCredentials',{timeout:120000});
 
 const ABSENCE_LABELS={vacation:'Urlaub',sick:'Krank',child_sick:'Kind krank',special_leave:'Sonderurlaub',vocational_school:'Berufsschule',training:'Weiterbildung',university:'Uni',unpaid_leave:'Unbezahlter Urlaub',release:'Freistellung',parental_leave:'Elternzeit',other:'Sonstige Abwesenheit'};
 function easterSunday(y){const a=y%19,b=Math.floor(y/100),c=y%100,d=Math.floor(b/4),e=b%4,f=Math.floor((b+8)/25),g=Math.floor((b-f+1)/3),h=(19*a+b-d-g+15)%30,i=Math.floor(c/4),k=c%4,l=(32+2*e+2*i-h-k)%7,m=Math.floor((a+11*h+22*l)/451),mo=Math.floor((h+l-7*m+114)/31),day=((h+l-7*m+114)%31)+1;return new Date(y,mo-1,day,12)}
@@ -449,12 +453,28 @@ function printReport(type){
   window.print();
 }
 
+function qrReportCard(){return `<article class="card qr-report-card"><div class="card-head"><div><h2>QR-Codes Mitarbeiter</h2><p>Persönliche Terminal-Codes suchen, auswählen und platzsparend ausdrucken.</p></div></div><div class="form-grid"><label class="field"><span>Mitarbeiter suchen</span><input id="qr-report-search" type="search" placeholder="Name oder Mitarbeiternummer"></label><div class="field actions"><button class="btn secondary" type="button" id="qr-select-visible">Alle angezeigten auswählen</button><button class="btn secondary" type="button" id="qr-clear-selection">Auswahl aufheben</button><button class="btn primary" type="button" id="qr-print-selected">Auswahl drucken</button></div></div><div id="qr-report-result"><div class="loading">QR-Codes werden geladen …</div></div></article>`}
+async function bindQrReport(root){
+  const result=root.querySelector('#qr-report-result');if(!result)return;
+  try{
+    const idToken=await auth.currentUser.getIdToken(),response=await listQrCredentials({idToken,ensureMissing:true}),items=response.data?.items||[];
+    result.innerHTML=`<div class="qr-report-grid">${items.map((item,index)=>`<label class="qr-report-item" data-search="${esc(`${item.name} ${item.employeeNumber||''}`.toLocaleLowerCase('de'))}"><input type="checkbox" class="qr-report-check" data-index="${index}"><canvas width="220" height="220"></canvas><span><strong>${esc(item.name)}</strong>${item.employeeNumber?`<small>MA ${esc(item.employeeNumber)}</small>`:''}</span></label>`).join('')}</div>${items.length?'':'<div class="empty">Keine aktiven Mitarbeiter vorhanden.</div>'}`;
+    await Promise.all([...result.querySelectorAll('.qr-report-item')].map((row,index)=>drawPersonnelQr(row.querySelector('canvas'),items[index].token,{width:220})));
+    const applyFilter=()=>{const q=(root.querySelector('#qr-report-search').value||'').trim().toLocaleLowerCase('de');result.querySelectorAll('.qr-report-item').forEach(row=>row.classList.toggle('hidden',q&&!row.dataset.search.includes(q)))};
+    root.querySelector('#qr-report-search').oninput=applyFilter;
+    root.querySelector('#qr-select-visible').onclick=()=>result.querySelectorAll('.qr-report-item:not(.hidden) .qr-report-check').forEach(x=>x.checked=true);
+    root.querySelector('#qr-clear-selection').onclick=()=>result.querySelectorAll('.qr-report-check').forEach(x=>x.checked=false);
+    root.querySelector('#qr-print-selected').onclick=async()=>{const selected=[...result.querySelectorAll('.qr-report-check:checked')].map(x=>items[Number(x.dataset.index)]).filter(Boolean);if(!selected.length){toast('Bitte mindestens einen Mitarbeiter auswählen.');return}const prepared=await Promise.all(selected.map(async item=>({...item,dataUrl:await personnelQrDataUrl(item.token)}))),w=window.open('','_blank');if(!w){toast('Das Druckfenster wurde vom Browser blockiert.','error');return}w.document.open();w.document.write(`<!doctype html><html lang="de"><head><meta charset="utf-8"><title>QR-Codes Mitarbeiter</title><style>@page{size:A4;margin:10mm}body{font:9pt Arial;margin:0;color:#111}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:4mm}.item{display:flex;align-items:center;gap:3mm;border:1px solid #bbb;padding:2mm;break-inside:avoid;min-height:19mm}.item img{width:15mm;height:15mm;flex:0 0 15mm;image-rendering:pixelated}.item strong,.item span{display:block}.item span{font-size:8pt;margin-top:1mm}</style></head><body><div class="grid">${prepared.map(x=>`<div class="item"><img src="${x.dataUrl}"><div><strong>${esc(x.name)}</strong>${x.employeeNumber?`<span>MA ${esc(x.employeeNumber)}</span>`:''}</div></div>`).join('')}</div><script>window.onload=()=>setTimeout(()=>window.print(),150)<\/script></body></html>`);w.document.close()};
+  }catch(err){console.error(err);result.innerHTML=`<div class="error-card"><strong>QR-Codes konnten nicht geladen werden.</strong><p>${esc(err?.message||'')}</p></div>`;}
+}
+
 export async function renderAuswertungen(el,ctx){
   if(ctx.profile.role==='supervisor')return renderSupervisorAttendance(el,ctx);
   setHead('Auswertungen','Übergreifende Übersicht und fertiger PDS-Zeiterfassungsexport.');
   const canAnnual=ctx.profile.role==='admin'&&(hasAdminPermission(ctx.profile,'absenceManage')||hasAdminPermission(ctx.profile,'hoursExport'));
   const canBirthday=ctx.profile.role==='admin'&&hasAdminPermission(ctx.profile,'employeesView');
   const canHrReports=ctx.profile.role==='admin'&&hasAdminPermission(ctx.profile,'hoursExport');
+  const canQrReport=ctx.profile.role==='admin'&&hasAdminPermission(ctx.profile,'terminalManage');
   const [u,t,v,c,tr,a,pdsDoc,ab,priv,co,va]=await Promise.all([getDocs(collection(db,'users')),getDocs(collection(db,'trainings')),getDocs(collection(db,'vacationRequests')),getDocs(collection(db,'companies')),getDocs(collection(db,'timeRecords')),getDocs(collection(db,'businessAreas')),getDoc(doc(db,'pdsSettings','default')),(canAnnual||canHrReports)?getDocs(collection(db,'absences')):Promise.resolve({docs:[]}),canBirthday?getDocs(collection(db,'employeePrivate')):Promise.resolve({docs:[]}),(canHrReports||ctx.profile.role!=='admin')?getDocs(collection(db,'vacationCarryoverSettings')).catch(()=>({docs:[]})):Promise.resolve({docs:[]}),(canAnnual||canHrReports)?getDocs(collection(db,'vacationAdjustments')).catch(()=>({docs:[]})):Promise.resolve({docs:[]})]);
   let users=u.docs.map(d=>({id:d.id,...d.data()}));const absences=ab.docs.map(d=>({id:d.id,...d.data()})),vacations=v.docs.map(d=>({id:d.id,...d.data()})),carryoverSettings=co.docs.map(d=>({id:d.id,...d.data()})),vacationAdjustments=va.docs.map(d=>({id:d.id,...d.data()})),privateMap=new Map(priv.docs.map(d=>[d.id,{id:d.id,...d.data()}]));const companies=c.docs.map(d=>({id:d.id,...d.data()})),records=tr.docs.map(d=>({id:d.id,...d.data()})),areas=a.docs.map(d=>({id:d.id,...d.data()}));
   const settings={personnelCostPrefix:'60',bookingTextPrefix:'$7$ZeitDritts$',bookingTextMode:'period_week',bookingTextCustom:'',dataType:'i',...(pdsDoc.exists()?pdsDoc.data():{})};
@@ -474,6 +494,7 @@ export async function renderAuswertungen(el,ctx){
   <article class="card sickness-report-card"><div class="card-head"><div><h2>Krankheitstage</h2><p>Jahresauswertung als Mitarbeiterliste und Säulendiagramm.</p></div></div>
     <form id="sickness-form" class="form-grid report-year-controls"><label class="field"><span>Jahr</span><input name="year" type="number" min="2020" max="2100" value="${now.getFullYear()}" required></label><div class="field actions"><button type="button" class="btn primary" id="sickness-show">Auswertung anzeigen</button><button type="button" class="btn secondary" id="sickness-csv">CSV herunterladen</button></div></form><div id="sickness-result"></div></article>`:''}
   ${canBirthday?`<article class="card birthday-report-card"><div class="card-head"><div><h2>Geburtstagsliste</h2><p>Nach Monaten sortierte Liste aller Mitarbeiter, die der Aufnahme in die Geburtstagsliste zugestimmt haben.</p></div></div><div class="actions birthday-actions"><button type="button" class="btn primary" id="birthday-show">Liste anzeigen</button><button type="button" class="btn secondary" id="birthday-print" disabled>Drucken / PDF</button></div><div id="birthday-result"></div></article>`:''}
+  ${canQrReport?qrReportCard():''}
   <article class="card"><div class="card-head"><div><h2>Weitere Auswertungen</h2><p>Dieser Bereich bleibt modular erweiterbar.</p></div></div><div class="info-strip">Weitere Kennzahlen wie Schulungsquoten, Personalbewegungen und firmenbezogene Auswertungen können hier später ergänzt werden.</div></article>`;
   if(canAnnual){const af=el.querySelector('#annual-form'),ar=el.querySelector('#annual-result'),pb=el.querySelector('#annual-print');el.querySelector('#annual-show').onclick=()=>{const user=users.find(x=>x.id===af.elements.userId.value),year=Number(af.elements.year.value);if(!user||year<2020||year>2100){toast('Bitte Mitarbeiter und gültiges Jahr auswählen.','error');return}ar.innerHTML=annualHtml(user,year,vacations,absences,carryoverSettings,vacationAdjustments);pb.disabled=false};pb.onclick=()=>printReport('annual')}
   if(canHoursExport)bindEmployeeBookingsReport(el,users,records);
@@ -489,6 +510,7 @@ export async function renderAuswertungen(el,ctx){
     el.querySelector('#sickness-csv').onclick=()=>{const year=Number(sf.elements.year.value),rows=sicknessRows(users,absences,companies,year),head=['Mitarbeiter','Firma','Jahr','Krankheitstage'];download(`Krankheitstage_${year}.csv`,[head,...rows.map(r=>[r.name,r.company,year,r.days])].map(row=>row.map(csvCell).join(';')).join('\r\n'))};
   }
   if(canBirthday){const br=el.querySelector('#birthday-result'),bp=el.querySelector('#birthday-print');el.querySelector('#birthday-show').onclick=()=>{br.innerHTML=birthdayListHtml(users,privateMap,companies);bp.disabled=false};bp.onclick=()=>printReport('birthday')}
+  if(canQrReport)await bindQrReport(el);
   if(!canHoursExport)return;
   const form=el.querySelector('#pds-export-form'),result=el.querySelector('#pds-export-result'),booking=el.querySelector('#pds-booking-text');
   function currentPeriod(){return monthBounds(form.elements.period.value)}

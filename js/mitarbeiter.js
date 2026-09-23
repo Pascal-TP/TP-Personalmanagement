@@ -13,9 +13,11 @@ import { sameTrainingSelection, upsertTrainingAssignmentHistory } from "./traini
 import { calculateDailyTimeValues, calculateTimeAccountValues, wasStartLimited } from "./time-utils.js";
 import { parsePdsPersonalPdf, normalizePdsName } from "./pds-personal-import.js";
 import { normalizedVacationEntitlements, vacationEntitlementOn, normalizedPositionHistory, positionOn, normalizedWorkScheduleHistory, workScheduleOn } from "./employment-utils.js";
+import { drawPersonnelQr, printPersonnelQr } from "./qr-utils.js";
 
 
 const resetUsernamePassword = httpsCallable(functions, "resetPersonnelUsernamePassword");
+const ensureQrCredential = httpsCallable(functions, "ensurePersonnelQrCredential");
 function isStrongPassword(value){const p=String(value||'');return p.length>=8&&/[A-ZÄÖÜ]/.test(p)&&/[a-zäöüß]/.test(p)&&/[0-9]/.test(p)&&/[^A-Za-z0-9ÄÖÜäöüß]/.test(p);}
 
 const PUBLIC_HISTORY_FIELDS=[
@@ -110,7 +112,7 @@ function bookingNetMinutes(record){
 }
 function bookingSourceLabel(record){
   if(record.recordType==='adjustment')return 'Stundenkorrektur';
-  if(record.source==='nfc_terminal')return 'NFC-Terminal';
+  if(record.source==='nfc_terminal')return record.terminalIdentification==='qr'?'QR-Terminal':'NFC-Terminal';
   if(record.source==='approved_request')return 'genehmigter Antrag';
   if(record.source==='desktop_stamp')return 'Personalmanagement';
   return record.source?String(record.source):'Buchung';
@@ -273,7 +275,7 @@ export async function renderMitarbeiter(el,ctx){
     <div class="field full"><span>Pauschale 8h-Darstellung für Mitarbeiter</span><label class="inline-check compact"><input name="flatEightHourEmployeeView" type="checkbox"><span>Aktiv</span></label><small>Nur die persönliche Mitarbeiteransicht wird pauschal dargestellt: Beginn = erste reale Buchung des Tages, Ende = Beginn + 8:30 h, Pause = 30 Min., Arbeitszeit = 8:00 h. Admin, Vorgesetzte, Projekte, PDS/KLR und Prüfhinweise verwenden weiterhin die echten Buchungen.</small></div><div class="field full"><span>Mitarbeiter ohne Zeiterfassung</span><label class="inline-check compact"><input name="noTimeTracking" type="checkbox"><span>Aktiv</span></label><small>Blendet für diesen Mitarbeiter die persönliche Zeiterfassung, Stundenübersicht und Stundenkachel im Dashboard aus. Urlaub und andere Personalbereiche bleiben unverändert.</small></div>
     `;
 
-  const nfcBody=`<div class="field full"><div id="nfc-credential-box" class="nfc-credential-box"><span class="muted">Mitarbeiter zuerst anlegen bzw. öffnen.</span></div></div>`;
+  const nfcBody=`<div class="field full"><div id="nfc-credential-box" class="nfc-credential-box"><span class="muted">Mitarbeiter zuerst anlegen bzw. öffnen.</span></div></div><div class="field full qr-credential-section"><span>QR-Code für die Zeiterfassung</span><div id="qr-credential-box" class="qr-credential-box"><span class="muted">Mitarbeiter zuerst anlegen bzw. öffnen.</span></div></div>`;
 
   const bookingsBody=`<div class="field full"><div id="employee-bookings-box" class="employee-bookings-box"><span class="muted">Mitarbeiter zuerst öffnen.</span></div></div>`;
 
@@ -525,6 +527,19 @@ export async function renderMitarbeiter(el,ctx){
     };
     const disable=box.querySelector('#disable-nfc');if(disable)disable.onclick=async()=>{if(!await confirmDialog('Den NFC-Transponder dieses Mitarbeiters wirklich sperren?'))return;try{const batch=writeBatch(db);active.forEach(c=>batch.update(doc(db,'nfcCredentials',c.id),{active:false,disabledAt:serverTimestamp(),updatedAt:serverTimestamp()}));await batch.commit();box.innerHTML='<div class="warning-box"><strong>Transponder gesperrt</strong><span>Der bisherige NFC-Transponder kann nicht mehr zum Stempeln verwendet werden.</span></div>';toast('NFC-Transponder wurde gesperrt.');}catch(err){console.error(err);toast('Transponder konnte nicht gesperrt werden.');}};
   }
+  async function renderQrBox(employee){
+    const box=el.querySelector('#qr-credential-box');if(!box)return;
+    if(!employee?.id){box.innerHTML='<span class="muted">Der persönliche QR-Code wird beim Anlegen des Mitarbeiters automatisch erzeugt.</span>';return;}
+    box.innerHTML='<div class="loading">Persönlicher QR-Code wird geladen …</div>';
+    try{
+      const idToken=await ctx.user.getIdToken(),response=await ensureQrCredential({idToken,employeeId:employee.id}),token=response.data?.token;
+      if(!token)throw new Error('QR-Kennung wurde nicht bereitgestellt.');
+      box.innerHTML=`<div class="qr-employee-card"><canvas class="qr-employee-canvas" width="300" height="300" aria-label="Persönlicher QR-Code für ${esc(employee.name||'Mitarbeiter')}"></canvas><div><strong>Persönlicher QR-Code aktiv</strong><p>Dieser Code identifiziert den Mitarbeiter ausschließlich am freigeschalteten Zeiterfassungsterminal.</p><div class="actions"><button class="btn primary small qr-print" type="button">QR-Code drucken</button><button class="btn danger small qr-replace" type="button">QR-Code sperren und ersetzen</button></div></div></div>`;
+      await drawPersonnelQr(box.querySelector('.qr-employee-canvas'),token);
+      box.querySelector('.qr-print').onclick=async()=>{try{await printPersonnelQr(token)}catch(err){console.error(err);toast(err?.message||'QR-Code konnte nicht gedruckt werden.','error')}};
+      box.querySelector('.qr-replace').onclick=async()=>{if(!await confirmDialog('Die bisherige QR-Kennung wird sofort ungültig und durch eine neue ersetzt. Fortfahren?',{danger:true}))return;try{box.innerHTML='<div class="loading">Neue QR-Kennung wird erzeugt …</div>';await ensureQrCredential({idToken:await ctx.user.getIdToken(),employeeId:employee.id,replace:true});toast('Die bisherige QR-Kennung wurde gesperrt und ersetzt.');await renderQrBox(employee)}catch(err){console.error(err);toast(err?.message||'QR-Kennung konnte nicht ersetzt werden.','error');await renderQrBox(employee)}};
+    }catch(err){console.error(err);box.innerHTML=`<div class="error-card"><strong>QR-Code konnte nicht geladen werden.</strong><p>${esc(err?.message||'')}</p></div>`;}
+  }
   if(!(canView||canEdit||canDelete)&&canCreate){show?.classList.add('hidden');create?.classList.remove('hidden');}
   function tab(t){show.classList.toggle('hidden',t!=='show');create.classList.toggle('hidden',t!=='create');el.querySelectorAll('.choice-card').forEach(x=>x.classList.toggle('active',x.dataset.tab===t))}
   async function prepareNew(){if(!canCreate){toast('Keine Berechtigung zum Anlegen von Mitarbeitern.');return;}formMode='new';editingUserId=null;form.reset();form.elements.id.value='';form.classList.remove('existing-user');form.elements.password.required=true;syncLoginField();if(masterDataPrintBtn){masterDataPrintBtn.classList.add('hidden');masterDataPrintBtn.onclick=null;}if(pdsImportBtn)pdsImportBtn.classList.remove('hidden');form.elements.loginType.disabled=false;form.elements.login.disabled=false;form.elements.role.disabled=false;form.querySelectorAll('[name=adminPermission]').forEach(x=>{const def=ADMIN_PERMISSION_DEFS.find(d=>d.key===x.value);x.checked=def?.defaultEnabled!==false;x.disabled=!canManagePermissions});form.querySelectorAll('[name=supervisorPermission]').forEach(x=>{x.checked=true;x.disabled=!canManagePermissions});const adminOption=[...form.elements.role.options].find(o=>o.value==='admin');if(adminOption)adminOption.disabled=!canManagePermissions;setVal(form,'weeklyHours',40);renderWorkSchedules([{model:'uniform',validFrom:new Date().toISOString().slice(0,10),weeklyHours:40,workDays:['1','2','3','4','5'],changeType:'change'}]);renderVacationEntitlements([{days:30,validFrom:''}]);renderPositionHistory([{position:'',validFrom:''}]);setVal(form,'projectTimeTracking','false');form.elements.flatEightHourEmployeeView.checked=false;form.elements.noTimeTracking.checked=false;setVal(form,'earliestStartTime','');setVal(form,'active','true');form.elements.managementPortalAccess.checked=false;form.elements.managementPortalDocumentAccess.checked=false;syncManagementPortalPermissions();setVal(form,'trainingValidFrom',new Date().toISOString().slice(0,10));el.querySelector('#employee-form-title').textContent='Mitarbeiter anlegen';form.querySelectorAll('input,select,textarea').forEach(x=>x.disabled=false);form.querySelectorAll('button[type=submit]').forEach(x=>x.classList.remove('hidden'));const box=form.querySelector('#admin-permissions-box');if(box)box.classList.add('hidden');const supervisorBox=form.querySelector('#supervisor-permissions-box');if(supervisorBox)supervisorBox.classList.add('hidden');syncAdminRoleSections();renderPhotoEditor(null);await renderPersonalakte(akte,ctx,null,{readOnly:false,canManage:canManageDocs});await renderNfcBox(null);if(canViewBookings)await renderBookingBox(null)}
@@ -669,7 +684,7 @@ el.querySelectorAll('.reset-password').forEach(b=>b.onclick=async()=>{
     const readOnly=!canEdit;form.querySelectorAll('input,select,textarea').forEach(x=>{if(x.name==='id')return;const noteField=['adminNoteText','adminNoteDate'].includes(x.name);x.disabled=(noteField?!canManageNotes:readOnly)||(['loginType','login'].includes(x.name));});
     if(!readOnly&&!canManagePermissions){form.querySelectorAll('[name=adminPermission],[name=supervisorPermission]').forEach(x=>x.disabled=true);if(u.role==='admin')form.elements.role.disabled=true;}
     form.querySelectorAll('button[type=submit]').forEach(x=>x.classList.toggle('hidden',readOnly));
-    el.querySelector('#employee-form-title').textContent=`Mitarbeiterkartei · ${u.name||'Mitarbeiter'}`;renderPhotoEditor(u);setVal(form,'adminNoteDate',new Date().toISOString().slice(0,10));tab('create');await renderPersonalakte(akte,ctx,u,{readOnly,canManage:canManageDocs});await renderNfcBox(u);if(canViewBookings)await renderBookingBox(u);await renderSalaryHistory(u);if(canManageNotes)await renderEmployeeNotes(u);wireEmployeeHistoryActions(u);window.scrollTo({top:0,behavior:'smooth'});
+    el.querySelector('#employee-form-title').textContent=`Mitarbeiterkartei · ${u.name||'Mitarbeiter'}`;renderPhotoEditor(u);setVal(form,'adminNoteDate',new Date().toISOString().slice(0,10));tab('create');await renderPersonalakte(akte,ctx,u,{readOnly,canManage:canManageDocs});await renderNfcBox(u);await renderQrBox(u);if(canViewBookings)await renderBookingBox(u);await renderSalaryHistory(u);if(canManageNotes)await renderEmployeeNotes(u);wireEmployeeHistoryActions(u);window.scrollTo({top:0,behavior:'smooth'});
   });
 
   form.elements.role?.addEventListener('change',()=>{const adminBox=form.querySelector('#admin-permissions-box'),supervisorBox=form.querySelector('#supervisor-permissions-box');if(adminBox)adminBox.classList.toggle('hidden',form.elements.role.value!=='admin');if(supervisorBox)supervisorBox.classList.toggle('hidden',form.elements.role.value!=='supervisor');syncAdminRoleSections();if(form.elements.role.value==='admin'&&![...form.querySelectorAll('[name=adminPermission]')].some(x=>x.checked))form.querySelectorAll('[name=adminPermission]').forEach(x=>x.checked=true);if(form.elements.role.value==='supervisor'&&![...form.querySelectorAll('[name=supervisorPermission]')].some(x=>x.checked))form.querySelectorAll('[name=supervisorPermission]').forEach(x=>x.checked=true)});
@@ -755,6 +770,7 @@ el.querySelectorAll('.reset-password').forEach(b=>b.onclick=async()=>{
           batch.set(doc(collection(db,'employeeHistory')),historyRecord(ctx,uid,{...publicData,email},'create',[]));
           await batch.commit();
           firestoreCommitted=true;
+          try{await ensureQrCredential({idToken:await ctx.user.getIdToken(),employeeId:uid})}catch(qrErr){console.error('QR-Kennung konnte bei der Neuanlage noch nicht erzeugt werden',qrErr);toast('Mitarbeiter wurde angelegt. Der QR-Code wird beim ersten Öffnen der Kartei nachträglich erzeugt.','warning')}
           await closeSecondaryAuth(authHandle);
           authHandle=null;
         }catch(createErr){

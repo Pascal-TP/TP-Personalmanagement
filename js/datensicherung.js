@@ -8,6 +8,7 @@ const createBackup = httpsCallable(functions, "createPersonnelBackup", { timeout
 const listBackups = httpsCallable(functions, "listPersonnelBackups");
 const restoreBackup = httpsCallable(functions, "restorePersonnelBackup", { timeout: 540000 });
 const deleteBackup = httpsCallable(functions, "deletePersonnelBackup", { timeout: 540000 });
+const downloadBackup = httpsCallable(functions, "downloadPersonnelBackup", { timeout: 540000 });
 
 function fmtBytes(n=0){
   const value=Number(n||0);
@@ -69,8 +70,19 @@ export async function renderDatensicherung(el,ctx){
         <td>${Number(r.storageFiles||0)}</td>
         <td>${esc(fmtBytes(r.storageBytes||0))}</td>
         <td>${esc(r.createdByName||r.createdByEmail||"–")}</td>
-        <td><div class="actions"><button class="btn secondary small backup-restore" data-id="${esc(r.backupId)}" type="button">Wiederherstellen</button><button class="btn danger small backup-delete" data-id="${esc(r.backupId)}" type="button">Löschen</button></div></td>
+        <td><div class="actions"><button class="btn primary small backup-download" data-id="${esc(r.backupId)}" type="button">Backup herunterladen</button><button class="btn secondary small backup-restore" data-id="${esc(r.backupId)}" type="button">Wiederherstellen</button><button class="btn danger small backup-delete" data-id="${esc(r.backupId)}" type="button">Löschen</button></div></td>
       </tr>`).join("")}</tbody></table></div>`;
+
+      listEl.querySelectorAll(".backup-download").forEach(btn=>btn.onclick=async()=>{
+        const original=btn.textContent;btn.disabled=true;btn.textContent="ZIP wird vorbereitet …";
+        try{
+          const res=await downloadBackup({idToken:await token(),backupId:btn.dataset.id}),data=res.data||{};
+          if(!data.url)throw new Error("Es wurde kein geschützter Download bereitgestellt.");
+          const a=document.createElement("a");a.href=data.url;a.download=data.fileName||"TP-Personalmanagement_Backup.zip";a.rel="noopener";document.body.appendChild(a);a.click();a.remove();
+          toast("Das vollständige Backup-ZIP wurde zum Download bereitgestellt.");
+        }catch(err){console.error(err);toast(err?.message||"Backup-ZIP konnte nicht heruntergeladen werden.","error");}
+        finally{btn.disabled=false;btn.textContent=original;}
+      });
 
       listEl.querySelectorAll(".backup-restore").forEach(btn=>btn.onclick=async()=>{
         const row=rows.find(x=>x.backupId===btn.dataset.id);

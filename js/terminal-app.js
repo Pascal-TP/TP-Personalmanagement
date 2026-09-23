@@ -8,9 +8,10 @@ const app=initializeApp(blazeConfig,'tp-terminal-pwa');
 const functions=getFunctions(app,'europe-west1');
 const terminalStamp=httpsCallable(functions,'terminalStamp');
 
-const views=['setup','home','scan','project','result'];
+const views=['setup','home','scan','camera','project','result'];
 const $=id=>document.getElementById(id);
-let state={action:null,token:null,uid:null,employee:null,projectRequired:false,processing:false,returnTimer:null};
+let state={action:null,token:null,uid:null,qrToken:null,mode:'nfc',employee:null,projectRequired:false,processing:false,returnTimer:null};
+let qrStream=null,qrFrame=0,lastQrValue='',lastQrAt=0;
 let hidBuffer='';
 let hidTimer=null;
 let hidLastAt=0;
@@ -66,25 +67,29 @@ $('reset-terminal').onclick=async()=>{if(await confirmDialog('Terminal-Einrichtu
 $('download-current-recovery').onclick=()=>{const c=terminalConfig();if(c)downloadRecoveryFile(c);};
 $('cancel-scan').onclick=resetHome;$('cancel-project').onclick=resetHome;
 
-function resetHome(){clearTimeout(hidTimer);hidBuffer='';state={action:null,token:null,uid:null,employee:null,projectRequired:false,processing:false,returnTimer:null};$('project-number').value='';$('book-project').disabled=true;show('home');}
+function stopQrCamera(){cancelAnimationFrame(qrFrame);qrFrame=0;if(qrStream){qrStream.getTracks().forEach(track=>track.stop());qrStream=null}const video=$('qr-video');if(video){video.pause();video.srcObject=null}}
+window.addEventListener('pagehide',stopQrCamera);
+function resetHome(){stopQrCamera();clearTimeout(hidTimer);hidBuffer='';state={action:null,token:null,uid:null,qrToken:null,mode:'nfc',employee:null,projectRequired:false,processing:false,returnTimer:null};$('project-number').value='';$('book-project').disabled=true;show('home');}
 function result(ok,title,message){clearTimeout(state.returnTimer);$('result-view').classList.toggle('error',!ok);$('result-icon').textContent=ok?'✓':'!';$('result-title').textContent=title;$('result-message').textContent=message;show('result');state.returnTimer=setTimeout(resetHome,ok?3000:4500);}
 
 async function callStamp(projectNumber=''){
   const c=terminalConfig();if(!c){applyConfig();return;}
   if(!navigator.onLine){result(false,'Keine Verbindung','Die Buchung wurde nicht gespeichert. Bitte Internetverbindung prüfen und erneut stempeln.');return;}
   try{
-    const response=await terminalStamp({terminalId:c.id,terminalSecret:c.secret,nfcToken:state.token||'',nfcUid:state.uid||'',action:state.action,projectNumber});
+    const response=await terminalStamp({terminalId:c.id,terminalSecret:c.secret,nfcToken:state.token||'',nfcUid:state.uid||'',qrToken:state.qrToken||'',action:state.action,projectNumber});
     const data=response.data||{};
-    if(data.projectRequired){state.employee=data.userName||'Mitarbeiter';state.projectRequired=true;$('project-employee').textContent=state.employee;$('project-copy').textContent=data.openProjectNumber?`Aktuell läuft Projekt ${data.openProjectNumber}. Neue sechsstellige Projektnummer eingeben.`:'Bitte die sechsstellige Projektnummer eingeben.';$('project-number').value='';$('book-project').disabled=true;show('project');setTimeout(()=>$('project-number').focus(),50);return;}
+    if(data.projectRequired){stopQrCamera();state.employee=data.userName||'Mitarbeiter';state.projectRequired=true;$('project-employee').textContent=state.employee;$('project-copy').textContent=data.openProjectNumber?`Aktuell läuft Projekt ${data.openProjectNumber}. Neue sechsstellige Projektnummer eingeben.`:'Bitte die sechsstellige Projektnummer eingeben.';$('project-number').value='';$('book-project').disabled=true;show('project');setTimeout(()=>$('project-number').focus(),50);return true;}
+    stopQrCamera();
     result(true,'Buchung erfolgreich',data.message||'Die Arbeitszeit wurde erfolgreich gebucht.');
-  }catch(err){console.error(err);const msg=err?.message?.replace(/^Firebase:\s*/,'')||'Buchung konnte nicht durchgeführt werden.';result(false,'Buchung nicht möglich',msg);}
+    return true;
+  }catch(err){console.error(err);const msg=err?.message?.replace(/^Firebase:\s*/,'')||'Buchung konnte nicht durchgeführt werden.';if(state.mode==='qr'&&!$('camera-view').classList.contains('hidden')){$('camera-copy').textContent=msg+' Bitte erneut scannen.';state.processing=false;return false}result(false,'Buchung nicht möglich',msg);return false;}
 }
 
-async function submitCredential({token='',uid=''}){
+async function submitCredential({token='',uid='',qrToken=''}){
   if(state.processing||!state.action)return;
-  state.processing=true;state.token=token;state.uid=uid;
-  $('scan-title').textContent='Transponder erkannt';$('scan-copy').textContent='Buchung wird geprüft …';
-  try{await callStamp('');}finally{if($('scan-view')&&!$('scan-view').classList.contains('hidden'))state.processing=false;}
+  state.processing=true;state.token=token;state.uid=uid;state.qrToken=qrToken;state.mode=qrToken?'qr':'nfc';
+  if(qrToken)$('camera-copy').textContent='QR-Code erkannt. Buchung wird geprüft …';else{$('scan-title').textContent='Transponder erkannt';$('scan-copy').textContent='Buchung wird geprüft …';}
+  try{await callStamp('');}finally{if((state.mode==='nfc'&&!$('scan-view').classList.contains('hidden'))||(state.mode==='qr'&&!$('camera-view').classList.contains('hidden')))state.processing=false;}
 }
 
 function scanViewActive(){return !!state.action && !$('scan-view').classList.contains('hidden');}
@@ -112,7 +117,7 @@ document.addEventListener('keydown',handleHidKeydown,true);
 
 async function startScan(action){
   if(!navigator.onLine){result(false,'Keine Verbindung','Die Buchung wurde nicht gespeichert. Bitte Internetverbindung prüfen.');return;}
-  clearTimeout(hidTimer);hidBuffer='';state.action=action;state.token=null;state.uid=null;state.processing=false;
+  stopQrCamera();clearTimeout(hidTimer);hidBuffer='';state.action=action;state.token=null;state.uid=null;state.qrToken=null;state.mode='nfc';state.processing=false;
   $('scan-title').textContent='Bitte NFC-Transponder an das Gerät oder den USB-Leser halten.';
   $('scan-copy').textContent=action==='come'?'KOMMEN wird nach erfolgreicher Identifikation gebucht.':'GEHEN wird nach erfolgreicher Identifikation gebucht.';show('scan');
   if(!nfcSupported()){
@@ -135,6 +140,20 @@ async function startScan(action){
     if(scanViewActive())$('scan-copy').textContent=err?.name==='NotAllowedError'?'Interner NFC-Zugriff ist nicht erlaubt. Der externe USB-Leser kann weiterhin verwendet werden.':'Interner NFC-Leser konnte nicht gestartet werden. Der externe USB-Leser kann weiterhin verwendet werden.';
   }
 }
+
+async function startQrCamera(){
+  if(!state.action)return;if(!navigator.mediaDevices?.getUserMedia||typeof globalThis.jsQR!=='function'){toast('Dieser Browser unterstützt die benötigte Kameraerfassung nicht. NFC bleibt weiterhin nutzbar.','error');return;}
+  stopQrCamera();state.mode='qr';state.processing=false;$('camera-copy').textContent='Bitte den persönlichen QR-Code mittig vor die Kamera halten.';show('camera');
+  try{qrStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}},audio:false});const video=$('qr-video');video.srcObject=qrStream;await video.play();scanQrFrame();}
+  catch(err){console.error(err);stopQrCamera();show('scan');toast(err?.name==='NotAllowedError'?'Kamerazugriff wurde nicht erlaubt. Bitte die Browserberechtigung prüfen.':'Kamera konnte nicht gestartet werden. NFC kann weiterhin verwendet werden.','error');}
+}
+function scanQrFrame(){
+  if(!qrStream||$('camera-view').classList.contains('hidden'))return;const video=$('qr-video'),canvas=$('qr-canvas');if(video.readyState>=2&&video.videoWidth&&video.videoHeight&&!state.processing){const max=900,scale=Math.min(1,max/video.videoWidth),w=Math.max(1,Math.round(video.videoWidth*scale)),h=Math.max(1,Math.round(video.videoHeight*scale));canvas.width=w;canvas.height=h;const ctx=canvas.getContext('2d',{willReadFrequently:true});ctx.drawImage(video,0,0,w,h);const image=ctx.getImageData(0,0,w,h),code=globalThis.jsQR(image.data,w,h,{inversionAttempts:'dontInvert'}),value=String(code?.data||'').trim(),now=Date.now();if(value&&!(value===lastQrValue&&now-lastQrAt<2500)){lastQrValue=value;lastQrAt=now;if(!/^TPQ1:[A-Za-z0-9_-]{22}$/.test(value))$('camera-copy').textContent='Dieser QR-Code gehört nicht zur TP-Zeiterfassung. Bitte erneut scannen.';else submitCredential({qrToken:value});}}
+  qrFrame=requestAnimationFrame(scanQrFrame);
+}
+
+$('start-qr-scan').onclick=startQrCamera;
+$('cancel-qr-scan').onclick=()=>{stopQrCamera();state.mode='nfc';state.qrToken=null;state.processing=false;$('scan-title').textContent='Bitte NFC-Transponder an das Gerät oder den USB-Leser halten.';$('scan-copy').textContent=state.action==='come'?'KOMMEN wird nach erfolgreicher Identifikation gebucht.':'GEHEN wird nach erfolgreicher Identifikation gebucht.';show('scan')};
 
 document.querySelectorAll('.stamp-button').forEach(b=>b.onclick=()=>startScan(b.dataset.action));
 $('project-number').addEventListener('input',e=>{e.target.value=e.target.value.replace(/\D/g,'').slice(0,6);$('book-project').disabled=!/^\d{6}$/.test(e.target.value);});
