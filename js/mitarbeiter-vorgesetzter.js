@@ -99,7 +99,7 @@ async function renderSupervisorBookings(container, employee) {
     return;
   }
 
-  const bookingValues = calculateDailyTimeValues(records, employee.earliestStartTime || "", { includeOpen: true });
+  const bookingValues = calculateDailyTimeValues(records, employee, { includeOpen: true });
   const accountValues = calculateTimeAccountValues(records, employee, vacations, absences, { includeOpen: true });
 
   let month = new Date();

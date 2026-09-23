@@ -30,6 +30,20 @@ export function scheduledMinutesOn(user={},date=todayKey()){
   if(!schedule.workDays.includes(weekday))return 0;
   return Math.round((Number(schedule.weeklyHours)||0)*60/Math.max(1,schedule.workDays.length));
 }
+export function normalizedPauseRuleHistory(user={}){
+  const raw=Array.isArray(user.pauseRuleHistory)?user.pauseRuleHistory:[];
+  return raw.map((row,index)=>({
+    active:row?.active===true,
+    minutes:Math.max(30,Math.round(Number(row?.minutes)||30)),
+    validFrom:dateKey(row?.validFrom),
+    order:index
+  })).filter(row=>row.validFrom).sort((a,b)=>a.validFrom.localeCompare(b.validFrom)||a.order-b.order).slice(0,20);
+}
+export function pauseRuleOn(user={},date=todayKey()){
+  const key=dateKey(date)||todayKey();let active=null;
+  normalizedPauseRuleHistory(user).forEach(row=>{if(row.validFrom<=key)active=row});
+  return active?.active?active:null;
+}
 export function workDaysOn(user={},date=todayKey()){const schedule=workScheduleOn(user,date);return schedule.model==='individual'?Object.keys(schedule.dailyMinutes).filter(day=>schedule.dailyMinutes[day]>0):[...schedule.workDays];}
 export function normalizedVacationEntitlements(user={}){
   const raw=Array.isArray(user.vacationEntitlements)?user.vacationEntitlements:[];

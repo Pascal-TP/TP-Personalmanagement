@@ -1,4 +1,4 @@
-import { scheduledMinutesOn } from "./employment-utils.js";
+import { pauseRuleOn, scheduledMinutesOn } from "./employment-utils.js";
 
 // V2.9.2 – gemeinsame Zeitberechnung.
 // Echte Stempelzeiten bleiben unverändert; earliestStartTime begrenzt nur die anrechenbare Zeit.
@@ -72,7 +72,9 @@ function recordSortValue(record){
 // Liefert pro Buchung Brutto, Tagespause, Netto und den kumulierten Tages-Iststand.
 // Die Tagespause wird vollständig genau einer Buchung zugeordnet, in die sie zeitlich passt.
 // Damit erscheinen in der Oberfläche nur 30 bzw. 45 Minuten statt anteiliger Kleinstpausen.
-export function calculateDailyTimeValues(records,earliestStartTime='',{includeOpen=true,now=new Date()}={}){
+export function calculateDailyTimeValues(records,profileOrEarliest='',{includeOpen=true,now=new Date()}={}){
+  const profile=profileOrEarliest&&typeof profileOrEarliest==='object'?profileOrEarliest:null;
+  const earliestStartTime=profile?String(profile.earliestStartTime||''):String(profileOrEarliest||'');
   const result=new Map();
   const groups=new Map();
   (records||[]).forEach(record=>{
@@ -82,14 +84,15 @@ export function calculateDailyTimeValues(records,earliestStartTime='',{includeOp
     groups.get(key).push(record);
   });
 
-  for(const items of groups.values()){
+  for(const [dateKey,items] of groups.entries()){
     const regular=items.filter(r=>r.recordType!=='adjustment').map(r=>({
       record:r,
       gross:recordGrossMinutes(r,earliestStartTime,{includeOpen,now}),
       sort:recordSortValue(r)
     })).filter(x=>x.gross>0).sort((a,b)=>a.sort-b.sort);
     const totalGross=regular.reduce((sum,x)=>sum+x.gross,0);
-    const dayPause=dailyPauseMinutes(totalGross);
+    const fixedRule=profile?pauseRuleOn(profile,dateKey):null;
+    const dayPause=fixedRule?Math.min(totalGross,fixedRule.minutes):dailyPauseMinutes(totalGross);
 
     let pauseTarget=null;
     if(dayPause>0&&regular.length){
@@ -170,7 +173,7 @@ export function calculateTimeAccountValues(records,profile={},vacations=[],absen
   const items=(records||[]).filter(r=>timeRecordDateKey(r));
   if(!items.length)return result;
 
-  const dailyValues=calculateDailyTimeValues(items,profile?.earliestStartTime||'',{includeOpen,now});
+  const dailyValues=calculateDailyTimeValues(items,profile,{includeOpen,now});
   const byDay=new Map();
   items.forEach(r=>{
     const key=timeRecordDateKey(r);
@@ -209,7 +212,7 @@ export function calculateTimeAccountBalance(records,profile={},vacations=[],abse
   const items=(records||[]).filter(r=>timeRecordDateKey(r));
   if(!items.length)return 0;
 
-  const dailyValues=calculateDailyTimeValues(items,profile?.earliestStartTime||'',{includeOpen,now});
+  const dailyValues=calculateDailyTimeValues(items,profile,{includeOpen,now});
   const byDay=new Map();
   items.forEach(r=>{
     const key=timeRecordDateKey(r);

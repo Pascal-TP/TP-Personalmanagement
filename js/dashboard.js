@@ -45,6 +45,7 @@ function complianceAlertText(alert={}){
     const hours=`${Math.floor(mins/60)}:${String(mins%60).padStart(2,"0")} h`;
     return `<strong>Achtung: Arbeitszeit über 10 Stunden</strong><p>${name} hatte am ${date} eine erfasste Arbeitszeit von <strong>${hours}</strong>. Nach § 3 Arbeitszeitgesetz (ArbZG) darf die werktägliche Arbeitszeit grundsätzlich acht Stunden nicht überschreiten und nur unter den dort genannten Ausgleichsvoraussetzungen auf bis zu zehn Stunden verlängert werden. Eine Arbeitszeit von mehr als zehn Stunden überschreitet damit grundsätzlich die gesetzliche Höchstgrenze, sofern keine zulässige Ausnahme greift. Bitte prüfen Sie den Vorgang und weisen Sie auf die Einhaltung der Arbeitszeitvorgaben hin.</p>`;
   }
+  if(alert.type==="missing_time_record")return `<strong>Achtung: Zeitbuchung fehlt</strong><p>Für ${name} liegt am ${date} trotz geplanter Arbeitszeit keine Zeitbuchung und keine ganztägige Abwesenheit vor. Bitte prüfen Sie, ob eine Buchung oder Abwesenheit nachgetragen werden muss.</p>`;
   return `<strong>Achtung: Arbeitszeitende nicht gebucht</strong><p>${name} hat am ${date} vergessen, das Arbeitszeitende zu buchen. Das System hat die offene Buchung automatisch zum Tagesende um 24:00 Uhr geschlossen. Bitte prüfen Sie den Vorgang; falls die tatsächliche Endzeit abweicht, ist eine Korrektur zu veranlassen.</p>`;
 }
 
@@ -177,7 +178,7 @@ function currentMonthBalance(profile,timeRecords,vacations,absences=[]){
     const bookedDays=new Set(relevantRecords.filter(r=>r.recordType!=="adjustment"&&timeRecordStart(r)).map(r=>localDateKey(timeRecordStart(r))));
     actualMinutes=bookedDays.size*480;
   }else{
-    const timeValues=calculateDailyTimeValues(relevantRecords,profile.earliestStartTime||"",{includeOpen:true,now});
+    const timeValues=calculateDailyTimeValues(relevantRecords,profile,{includeOpen:true,now});
     actualMinutes=Math.round(relevantRecords.reduce((sum,r)=>sum+(timeValues.get(r.id)?.net||0),0));
   }
 
@@ -271,8 +272,8 @@ export async function renderDashboard(el,ctx){
     const token=await auth.currentUser?.getIdToken();
     if(token){const res=await getTeamMilestones({idToken:token});milestones=Array.isArray(res.data?.items)?res.data.items:[]}
   }catch(e){console.error("Geburtstags-/Jubiläumserinnerungen konnten nicht geladen werden",e)}}
-  if(p.role==="supervisor"){try{
-    const s=await getDocs(query(collection(db,"timeComplianceAlerts"),where("supervisorIds","array-contains",p.id)));
+  if(p.role==="supervisor"||(p.role==="admin"&&hasAdminPermission(p,"timeApprove"))){try{
+    const s=p.role==="admin"?await getDocs(collection(db,"timeComplianceAlerts")):await getDocs(query(collection(db,"timeComplianceAlerts"),where("supervisorIds","array-contains",p.id)));
     complianceAlerts=s.docs.map(d=>({id:d.id,...d.data()}));
   }catch(e){console.error("Arbeitszeit-Hinweise konnten nicht geladen werden",e)}
     complianceAlerts=complianceAlerts.filter(a=>a.status!=="resolved"&&!(Array.isArray(a.acknowledgedBy)&&a.acknowledgedBy.includes(p.id))).sort((a,b)=>String(b.workDate||"").localeCompare(String(a.workDate||"")));

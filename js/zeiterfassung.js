@@ -301,7 +301,7 @@ export async function renderZeiterfassung(el, ctx) {
   }
 
   const openRecord = entries.find(isOpen) || null;
-  const allocatedValues = calculateDailyTimeValues(entries, ctx.profile.earliestStartTime || "", {includeOpen:true});
+  const allocatedValues = calculateDailyTimeValues(entries, ctx.profile, {includeOpen:true});
   const accountValues = calculateTimeAccountValues(entries, ctx.profile, ownVacations, ownAbsences, {includeOpen:true});
   const flatDays = flatEightHourView ? flatEightHourDays(entries) : [];
   const pendingRecordIds = new Set(
