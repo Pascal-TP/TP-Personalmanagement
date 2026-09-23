@@ -57,7 +57,16 @@
       <div class="nfc-symbol">⌁</div>
       <h2 id="scan-title">Bitte NFC-Transponder an das Gerät halten.</h2>
       <p id="scan-copy">Der Transponder wird automatisch erkannt.</p>
+      <button class="terminal-action primary" id="start-qr-scan" type="button">QR-Code scannen</button>
       <button class="terminal-action secondary" id="cancel-scan" type="button">Abbrechen</button>
+    </section>
+
+    <section id="camera-view" class="terminal-card camera-card hidden">
+      <h2>QR-Code scannen</h2>
+      <p id="camera-copy">Kamera wird gestartet …</p>
+      <div class="camera-frame"><video id="qr-video" playsinline muted></video><div class="camera-target" aria-hidden="true"></div></div>
+      <canvas id="qr-canvas" class="hidden"></canvas>
+      <button class="terminal-action secondary" id="cancel-qr-scan" type="button">Zurück zu NFC</button>
     </section>
 
     <section id="project-view" class="terminal-card project-card hidden">
@@ -75,6 +84,7 @@
       <p id="result-message"></p>
     </section>
   </main>
+  <script src="js/vendor/jsqr.min.js"></script>
   <script type="module" src="js/terminal-app.js"></script>
 </body>
 </html>
