@@ -80,8 +80,17 @@ export function assignmentUnionForYear(user,year,now=new Date()){
   return {bereiche:[...areas],extraTrainings:[...extras],hasAssignment};
 }
 export function visibleTrainingsForYear(trainings,user,year,now=new Date()){
-  const assignment=assignmentUnionForYear(user,year,now);
-  if(!assignment.hasAssignment)return [];
+  const y=Number(year),currentYear=now.getFullYear();
+  const p=n=>String(n).padStart(2,'0');
+  const today=`${now.getFullYear()}-${p(now.getMonth()+1)}-${p(now.getDate())}`;
+  const yearEnd=`${y}-12-31`;
+  const employedFrom=dateKey(user?.startDate)||'1900-01-01';
+  const employedTo=dateKey(user?.endDate)||'9999-12-31';
+  let effectiveDate=y===currentYear&&today<yearEnd?today:yearEnd;
+  if(employedTo<effectiveDate)effectiveDate=employedTo;
+  if(employedFrom>effectiveDate)return [];
+  const assignment=assignmentForDate(user,effectiveDate);
+  if(!assignment)return [];
   return (Array.isArray(trainings)?trainings:[]).filter(t=>{
     if(t?.active===false)return false;
     const areas=arrayStrings(t?.bereiche);
