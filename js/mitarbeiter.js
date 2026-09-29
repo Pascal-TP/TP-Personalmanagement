@@ -18,6 +18,7 @@ import { drawPersonnelQr, printPersonnelQr } from "./qr-utils.js";
 
 const resetUsernamePassword = httpsCallable(functions, "resetPersonnelUsernamePassword");
 const ensureQrCredential = httpsCallable(functions, "ensurePersonnelQrCredential");
+const deleteTimeRecord = httpsCallable(functions, "deletePersonnelTimeRecord");
 function isStrongPassword(value){const p=String(value||'');return p.length>=8&&/[A-ZÄÖÜ]/.test(p)&&/[a-zäöüß]/.test(p)&&/[0-9]/.test(p)&&/[^A-Za-z0-9ÄÖÜäöüß]/.test(p);}
 
 const PUBLIC_HISTORY_FIELDS=[
@@ -131,7 +132,8 @@ export async function renderMitarbeiter(el,ctx){
   const canManagePermissions=hasAdminPermission(ctx.profile,'permissionsManage');
   const canResetPassword=hasAdminPermission(ctx.profile,'passwordReset');
   const canManageNfc=hasAdminPermission(ctx.profile,'terminalManage');
-  const canViewBookings=hasAnyAdminPermission(ctx.profile,['timeAdjustment','timeApprove','hoursExport','backup']);
+  const canDeleteTimeRecords=hasAdminPermission(ctx.profile,'timeRecordDelete');
+  const canViewBookings=hasAnyAdminPermission(ctx.profile,['timeAdjustment','timeRecordDelete','timeApprove','hoursExport','backup']);
   const canManageNotes=hasAdminPermission(ctx.profile,'employeeNotes');
   if(!hasAnyAdminPermission(ctx.profile,['employeesView','employeesCreate','employeesEdit','employeesDelete'])){
     el.innerHTML='<div class="error-card">Für diesen Admin-Zugang ist keine Berechtigung zur Mitarbeiterverwaltung freigeschaltet.</div>';
@@ -449,21 +451,42 @@ export async function renderMitarbeiter(el,ctx){
           <strong>${esc(bookingMonthLabel(month))}</strong>
         </div>
         <div class="table-wrap"><table class="employee-bookings-table">
-          <thead><tr><th>Datum</th><th>Projekt</th><th>KOMMEN</th><th>GEHEN</th><th>Arbeitszeit</th><th>Soll-Zeit</th><th>Zeitguthaben</th><th>Buchungsart</th><th>Terminal / Hinweis</th></tr></thead>
+          <thead><tr><th>Datum</th><th>Projekt</th><th>KOMMEN</th><th>GEHEN</th><th>Arbeitszeit</th><th>Soll-Zeit</th><th>Zeitguthaben</th><th>Buchungsart</th><th>Terminal / Hinweis</th>${canDeleteTimeRecords?'<th class="booking-action-column">Aktion</th>':''}</tr></thead>
           <tbody>${monthRecords.length?monthRecords.map(r=>{
             if(r.recordType==='adjustment'){
               const note=[r.adjustmentReason,r.adjustmentDetails].filter(Boolean).join(' · ');
-              return `<tr class="adjustment-row"><td>${esc(bookingDateKey(r).split('-').reverse().join('.'))}</td><td>${esc(r.projectNumber||'–')}</td><td colspan="2"><strong>Stundenkorrektur</strong></td><td><strong>${esc(bookingMinutesText(r.adjustmentMinutes,{signed:true}))}</strong></td><td><strong>${esc(bookingMinutesText((accountValues.get(r.id)||{}).targetMinutes||0))}</strong></td><td><strong>${esc(bookingMinutesText((accountValues.get(r.id)||{}).balance||0,{signed:true}))}</strong></td><td>${esc(bookingSourceLabel(r))}</td><td>${esc(note||r.createdByName||'Personalabteilung')}</td></tr>`;
+              return `<tr class="adjustment-row"><td>${esc(bookingDateKey(r).split('-').reverse().join('.'))}</td><td>${esc(r.projectNumber||'–')}</td><td colspan="2"><strong>Stundenkorrektur</strong></td><td><strong>${esc(bookingMinutesText(r.adjustmentMinutes,{signed:true}))}</strong></td><td><strong>${esc(bookingMinutesText((accountValues.get(r.id)||{}).targetMinutes||0))}</strong></td><td><strong>${esc(bookingMinutesText((accountValues.get(r.id)||{}).balance||0,{signed:true}))}</strong></td><td>${esc(bookingSourceLabel(r))}</td><td>${esc(note||r.createdByName||'Personalabteilung')}</td>${canDeleteTimeRecords?'<td class="booking-action-cell"><button class="btn secondary small booking-delete-disabled" type="button" disabled title="Stundenkorrekturen können hier nicht gelöscht werden." aria-label="Stundenkorrektur kann hier nicht gelöscht werden">🗑</button></td>':''}</tr>`;
             }
             const calc=bookingValues.get(r.id);const net=calc?calc.net:bookingNetMinutes(r);
             const terminal=[r.terminalName||r.terminalId,r.terminalEndId&&r.terminalEndId!==(r.terminalId||'')?`GEHEN: ${r.terminalEndId}`:''].filter(Boolean).join(' · ');
             const open=!bookingToDate(r.endAt)&&r.status!=='closed';
-            return `<tr><td>${esc(bookingDateKey(r).split('-').reverse().join('.'))}</td><td>${esc(r.projectNumber||'–')}</td><td>${esc(bookingTime(r,'start')||'–')}${wasStartLimited(r,employee.earliestStartTime||'')?`<small class="booking-note start-limit-note">anrechenbar ab ${esc(employee.earliestStartTime)} Uhr</small>`:''}</td><td>${esc(bookingTime(r,'end')||'–')}</td><td>${net===null?(open?'<span class="pill yellow">läuft</span>':'–'):esc(bookingMinutesText(net))}</td><td><strong>${esc(bookingMinutesText((accountValues.get(r.id)||{}).targetMinutes||0))}</strong></td><td><strong>${esc(bookingMinutesText((accountValues.get(r.id)||{}).balance||0,{signed:true}))}</strong></td><td>${esc(bookingSourceLabel(r))}</td><td>${esc(terminal|| (open?'offene Buchung':'–'))}</td></tr>`;
-          }).join(''):`<tr><td colspan="9" class="empty">Für ${esc(bookingMonthLabel(month))} sind keine Buchungen vorhanden.</td></tr>`}</tbody>
+            const completed=!!bookingToDate(r.startAt)&&!!bookingToDate(r.endAt)&&r.status!=='open';
+            const action=canDeleteTimeRecords?(completed?`<td class="booking-action-cell"><button class="btn danger small delete-time-record" type="button" data-id="${esc(r.id)}" title="Zeitbuchung löschen" aria-label="Zeitbuchung vom ${esc(bookingDateKey(r).split('-').reverse().join('.'))} löschen">🗑</button></td>`:'<td class="booking-action-cell"><button class="btn secondary small booking-delete-disabled" type="button" disabled title="Offene Buchungen können nicht gelöscht werden." aria-label="Offene Buchung kann nicht gelöscht werden">🗑</button></td>'):'';
+            return `<tr><td>${esc(bookingDateKey(r).split('-').reverse().join('.'))}</td><td>${esc(r.projectNumber||'–')}</td><td>${esc(bookingTime(r,'start')||'–')}${wasStartLimited(r,employee.earliestStartTime||'')?`<small class="booking-note start-limit-note">anrechenbar ab ${esc(employee.earliestStartTime)} Uhr</small>`:''}</td><td>${esc(bookingTime(r,'end')||'–')}</td><td>${net===null?(open?'<span class="pill yellow">läuft</span>':'–'):esc(bookingMinutesText(net))}</td><td><strong>${esc(bookingMinutesText((accountValues.get(r.id)||{}).targetMinutes||0))}</strong></td><td><strong>${esc(bookingMinutesText((accountValues.get(r.id)||{}).balance||0,{signed:true}))}</strong></td><td>${esc(bookingSourceLabel(r))}</td><td>${esc(terminal|| (open?'offene Buchung':'–'))}</td>${action}</tr>`;
+          }).join(''):`<tr><td colspan="${canDeleteTimeRecords?10:9}" class="empty">Für ${esc(bookingMonthLabel(month))} sind keine Buchungen vorhanden.</td></tr>`}</tbody>
         </table></div>`;
       box.querySelector('#bookings-prev').onclick=()=>{month=new Date(month.getFullYear(),month.getMonth()-1,1,12);renderMonth()};
       box.querySelector('#bookings-current').onclick=()=>{const n=new Date();month=new Date(n.getFullYear(),n.getMonth(),1,12);renderMonth()};
       box.querySelector('#bookings-next').onclick=()=>{month=new Date(month.getFullYear(),month.getMonth()+1,1,12);renderMonth()};
+      box.querySelectorAll('.delete-time-record').forEach(button=>button.onclick=async()=>{
+        const record=records.find(item=>item.id===button.dataset.id);
+        if(!record||record.recordType==='adjustment'||!bookingToDate(record.startAt)||!bookingToDate(record.endAt)||record.status==='open'){
+          toast('Offene oder unvollständige Buchungen können nicht gelöscht werden.');return;
+        }
+        const confirmed=await confirmDialog(`Zeitbuchung wirklich löschen?\n\n${bookingDateKey(record).split('-').reverse().join('.')}\nKOMMEN: ${bookingTime(record,'start')} Uhr\nGEHEN: ${bookingTime(record,'end')} Uhr\n\nDiese Buchung wird aus der Zeiterfassung entfernt. Die Arbeitszeit des Mitarbeiters wird anschließend entsprechend neu berechnet.`,{danger:true,acceptLabel:'Buchung löschen'});
+        if(!confirmed)return;
+        button.disabled=true;const oldText=button.textContent;button.textContent='…';
+        try{
+          const idToken=await ctx.user.getIdToken();
+          await deleteTimeRecord({idToken,recordId:record.id,employeeId:employee.id});
+          toast('Zeitbuchung wurde gelöscht.');
+          await renderBookingBox(employee,month);
+        }catch(err){
+          console.error('Zeitbuchung konnte nicht gelöscht werden',err);
+          toast(err?.message||'Zeitbuchung konnte nicht gelöscht werden.');
+          button.disabled=false;button.textContent=oldText;
+        }
+      });
     };
     renderMonth();
   }

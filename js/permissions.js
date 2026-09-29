@@ -8,6 +8,7 @@ export const ADMIN_PERMISSION_DEFS = [
   {key:'passwordReset',label:'Passwörter von Benutzername-Zugängen zurücksetzen',group:'Mitarbeiter',defaultEnabled:false},
   {key:'personnelDocuments',label:'Personalakten-Dokumente verwalten',group:'Mitarbeiter'},
   {key:'timeAdjustment',label:'Stundenkorrektur buchen',group:'Zeiterfassung & Urlaub'},
+  {key:'timeRecordDelete',label:'Zeitbuchungen löschen',group:'Zeiterfassung & Urlaub'},
   {key:'timeApprove',label:'Anträge zur Zeiterfassung freigeben',group:'Zeiterfassung & Urlaub'},
   {key:'vacationApprove',label:'Urlaubsanträge freigeben',group:'Zeiterfassung & Urlaub'},
   {key:'absenceManage',label:'Abwesenheiten / Krankheit buchen',group:'Zeiterfassung & Urlaub'},
@@ -65,4 +66,3 @@ export function normalizedSupervisorPermissions(profile){
 export function hasSupervisorPermission(profile,key){
   return profile?.role==='supervisor' && normalizedSupervisorPermissions(profile)[key]===true;
 }
-
