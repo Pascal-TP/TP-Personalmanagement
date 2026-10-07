@@ -2,7 +2,7 @@ import { firebaseConfig, db, functions } from "./firebase.js";
 import { initializeApp, deleteApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
 import { initializeAuth, inMemoryPersistence, createUserWithEmailAndPassword, deleteUser, signOut as secondarySignOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
 import { httpsCallable } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-functions.js";
-import { collection, getDocs, doc, serverTimestamp, writeBatch, updateDoc, setDoc, addDoc, query, where } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+import { collection, getDocs, getDoc, doc, serverTimestamp, writeBatch, updateDoc, setDoc, addDoc, query, where } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 import { setHead } from "./app.js";
 import { AREA_NAMES, esc, syntheticEmail, ROLE_LABELS, toast, initials, confirmDialog, inputDialog, validationNotice } from "./utils.js";
 import { renderPersonalakte } from "./personalakte.js";
@@ -14,6 +14,7 @@ import { calculateDailyTimeValues, calculateTimeAccountValues, wasStartLimited }
 import { parsePdsPersonalPdf, normalizePdsName } from "./pds-personal-import.js";
 import { normalizedVacationEntitlements, vacationEntitlementOn, normalizedPositionHistory, positionOn, normalizedWorkScheduleHistory, workScheduleOn } from "./employment-utils.js";
 import { drawPersonnelQr, printPersonnelQr } from "./qr-utils.js";
+import { cachedRead, invalidateCached } from "./read-cache.js";
 
 
 const resetUsernamePassword = httpsCallable(functions, "resetPersonnelUsernamePassword");
@@ -140,21 +141,28 @@ export async function renderMitarbeiter(el,ctx){
     el.innerHTML='<div class="error-card">Für diesen Admin-Zugang ist keine Berechtigung zur Mitarbeiterverwaltung freigeschaltet.</div>';
     return;
   }
-  const [uSnap,cSnap,tSnap,pSnap,hSnap,bSnap,rSnap,aSnap,nfcSnap]=await Promise.all([
-    getDocs(collection(db,'users')),getDocs(collection(db,'companies')),getDocs(collection(db,'trainings')),(canView||canEdit?getDocs(collection(db,'employeePrivate')):Promise.resolve({docs:[]})),getDocs(collection(db,'healthInsurers')),getDocs(collection(db,'banks')),getDocs(collection(db,'religionTaxCodes')),getDocs(collection(db,'businessAreas')),(canManageNfc?getDocs(collection(db,'nfcCredentials')):Promise.resolve({docs:[]}))
+  const [users,companies,trainings,insurersRaw,banksRaw,religionsRaw,businessAreasRaw]=await Promise.all([
+    cachedRead('users|all',async()=>{const s=await getDocs(collection(db,'users'));return s.docs.map(d=>({id:d.id,...d.data()}))}),
+    cachedRead('companies|all',async()=>{const s=await getDocs(collection(db,'companies'));return s.docs.map(d=>({id:d.id,...d.data()}))}),
+    cachedRead('trainings|all',async()=>{const s=await getDocs(collection(db,'trainings'));return s.docs.map(d=>({id:d.id,...d.data()}))}),
+    cachedRead('healthInsurers|all',async()=>{const s=await getDocs(collection(db,'healthInsurers'));return s.docs.map(d=>({id:d.id,...d.data()}))}),
+    cachedRead('banks|all',async()=>{const s=await getDocs(collection(db,'banks'));return s.docs.map(d=>({id:d.id,...d.data()}))}),
+    cachedRead('religionTaxCodes|all',async()=>{const s=await getDocs(collection(db,'religionTaxCodes'));return s.docs.map(d=>({id:d.id,...d.data()}))}),
+    cachedRead('businessAreas|all',async()=>{const s=await getDocs(collection(db,'businessAreas'));return s.docs.map(d=>({id:d.id,...d.data()}))})
   ]);
-  const users=uSnap.docs.map(d=>({id:d.id,...d.data()})),activeUsers=users.filter(u=>u.archived!==true),companies=cSnap.docs.map(d=>({id:d.id,...d.data()})),trainings=tSnap.docs.map(d=>({id:d.id,...d.data()}));
+  const activeUsers=users.filter(u=>u.archived!==true);
   try{await syncPortalDirectory(users)}catch(err){console.warn('Portal-Benutzerverzeichnis konnte nicht synchronisiert werden',err)}
   let photoUrls={};
   try{photoUrls=await getEmployeePhotoUrls(ctx,activeUsers.map(u=>u.id))}catch(err){console.warn('Mitarbeiterfotos konnten nicht geladen werden',err)}
-  const privateMap=new Map(pSnap.docs.map(d=>[d.id,{id:d.id,...d.data()}]));
-  const insurers=hSnap.docs.map(d=>({id:d.id,...d.data()})).filter(x=>x.active!==false).sort((a,b)=>(a.name||'').localeCompare(b.name||'','de'));
-  const banks=bSnap.docs.map(d=>({id:d.id,...d.data()})).filter(x=>x.active!==false).sort((a,b)=>(a.name||'').localeCompare(b.name||'','de'));
-  const religions=rSnap.docs.map(d=>({id:d.id,...d.data()})).filter(x=>x.active!==false).sort((a,b)=>String(a.code||a.name||'').localeCompare(String(b.code||b.name||''),'de'));
+  const privateMap=new Map();let allPrivateLoaded=false;
+  async function loadPrivate(userId){if(privateMap.has(userId))return privateMap.get(userId);const p=await cachedRead(`employeePrivate|user:${userId}`,async()=>{const s=await getDoc(doc(db,'employeePrivate',userId));return s.exists()?{id:s.id,...s.data()}:{};});privateMap.set(userId,p);return p}
+  async function loadAllPrivate(){if(allPrivateLoaded)return;const rows=await cachedRead('employeePrivate|all',async()=>{const s=await getDocs(collection(db,'employeePrivate'));return s.docs.map(d=>({id:d.id,...d.data()}));});rows.forEach(p=>privateMap.set(p.id,p));allPrivateLoaded=true}
+  const insurers=insurersRaw.filter(x=>x.active!==false).sort((a,b)=>(a.name||'').localeCompare(b.name||'','de'));
+  const banks=banksRaw.filter(x=>x.active!==false).sort((a,b)=>(a.name||'').localeCompare(b.name||'','de'));
+  const religions=religionsRaw.filter(x=>x.active!==false).sort((a,b)=>String(a.code||a.name||'').localeCompare(String(b.code||b.name||''),'de'));
   const supervisors=activeUsers.filter(u=>u.role==='supervisor'||u.role==='admin');
-  const businessAreas=aSnap.docs.map(d=>({id:d.id,...d.data()})).filter(x=>x.active!==false).sort((a,b)=>String(a.code||'').localeCompare(String(b.code||''),'de'));
+  const businessAreas=businessAreasRaw.filter(x=>x.active!==false).sort((a,b)=>String(a.code||'').localeCompare(String(b.code||''),'de'));
   const businessAreaMap=new Map(businessAreas.map(x=>[x.id,x]));
-  const nfcCredentials=nfcSnap.docs.map(d=>({id:d.id,...d.data()}));
 
   function printDate(value){
     if(!value)return '–';
@@ -403,7 +411,7 @@ export async function renderMitarbeiter(el,ctx){
   }
   if(pdsImportBtn&&pdsFile){
     pdsImportBtn.onclick=()=>pdsFile.click();
-    pdsFile.onchange=async()=>{const file=pdsFile.files?.[0];if(!file)return;pdsImportBtn.disabled=true;const old=pdsImportBtn.textContent;pdsImportBtn.textContent='PDF wird gelesen …';try{const parsed=await parsePdsPersonalPdf(file);showPdsPreview(pdsResolve(parsed))}catch(err){console.error('PDS-PDF konnte nicht gelesen werden',err);toast(err?.message||'PDS-PDF konnte nicht gelesen werden.')}finally{pdsImportBtn.disabled=false;pdsImportBtn.textContent=old;pdsFile.value=''}};
+    pdsFile.onchange=async()=>{const file=pdsFile.files?.[0];if(!file)return;pdsImportBtn.disabled=true;const old=pdsImportBtn.textContent;pdsImportBtn.textContent='PDF wird gelesen …';try{await loadAllPrivate();const parsed=await parsePdsPersonalPdf(file);showPdsPreview(pdsResolve(parsed))}catch(err){console.error('PDS-PDF konnte nicht gelesen werden',err);toast(err?.message||'PDS-PDF konnte nicht gelesen werden.')}finally{pdsImportBtn.disabled=false;pdsImportBtn.textContent=old;pdsFile.value=''}};
     el.querySelector('#pds-import-apply').onclick=()=>pendingPdsImport&&applyPdsImport(pendingPdsImport);
   }
 
@@ -495,7 +503,9 @@ export async function renderMitarbeiter(el,ctx){
   async function renderNfcBox(employee){
     const box=el.querySelector('#nfc-credential-box');if(!box)return;
     if(!employee){box.innerHTML='<span class="muted">Der NFC-Transponder kann nach dem Anlegen des Mitarbeiters zugewiesen werden.</span>';return;}
-    const active=nfcCredentials.filter(x=>x.userId===employee.id&&x.active!==false);
+    let nfcCredentials=[];
+    if(canManageNfc)try{nfcCredentials=await cachedRead(`nfcCredentials|user:${employee.id}`,async()=>{const s=await getDocs(query(collection(db,'nfcCredentials'),where('userId','==',employee.id)));return s.docs.map(d=>({id:d.id,...d.data()}))})}catch(err){console.warn('NFC-Zuordnung konnte nicht geladen werden',err)}
+    const active=nfcCredentials.filter(x=>x.active!==false);
     const uidReady=active.some(x=>Array.isArray(x.uidHashes)&&x.uidHashes.length);
     box.innerHTML=`<div class="nfc-status-row"><div><strong>${active.length?'NFC-Transponder aktiv':'Kein NFC-Transponder zugewiesen'}</strong><span>${active.length?(uidReady?'Der Mitarbeiter kann den Transponder am internen NFC-Leser und am externen USB-Leser verwenden.':'Der Transponder funktioniert am internen NFC-Leser. Für den externen USB-Leser bitte die Transponder-ID einmal ergänzen.'):'Für die Terminal-Zeiterfassung zunächst einen Transponder programmieren.'}</span></div><span class="pill ${active.length?'green':'yellow'}">${active.length?(uidReady?'intern + extern':'intern'):'nicht eingerichtet'}</span></div><div class="actions"><button class="btn primary small" type="button" id="assign-nfc">${active.length?'Neuen Transponder zuweisen':'Transponder zuweisen'}</button>${active.length&&!uidReady?'<button class="btn secondary small" type="button" id="capture-nfc-uid">Transponder-ID ergänzen</button>':''}${active.length?'<button class="btn danger small" type="button" id="disable-nfc">Transponder sperren</button>':''}</div><div id="nfc-progress" class="info-strip hidden" role="status" aria-live="polite"></div><small class="nfc-browser-note">${nfcSupported()?'Web NFC ist auf diesem Gerät verfügbar. Bei einer neuen Zuweisung werden Transponder-ID und TP-Schlüssel gemeinsam hinterlegt.':'Web NFC wird auf iPhone/iPad nicht unterstützt. Zum Programmieren oder mobilen NFC-Stempeln bitte Google Chrome auf einem NFC-fähigen Android-Gerät oder ein eingerichtetes PC-Terminal mit NFC-Leser verwenden.'}</small>`;
     async function uidHashesFromSerial(serial){
@@ -530,7 +540,7 @@ export async function renderMitarbeiter(el,ctx){
         const hash=await sha256Hex(token);const batch=writeBatch(db);
         active.forEach(c=>batch.update(doc(db,'nfcCredentials',c.id),{active:false,disabledAt:serverTimestamp(),updatedAt:serverTimestamp()}));
         batch.set(doc(db,'nfcCredentials',hash),{userId:employee.id,userName:employee.name||'',employeeNumber:employee.employeeNumber||'',uidHashes,uidCapturedAt:serverTimestamp(),active:true,createdAt:serverTimestamp(),createdBy:ctx.profile.id});
-        await batch.commit();if(progress)progress.innerHTML='<strong>NFC-Transponder erfolgreich zugewiesen ✓</strong>';toast(`NFC-Transponder für ${employee.name||'Mitarbeiter'} wurde erfolgreich zugewiesen.`);
+        await batch.commit();invalidateCached(`nfcCredentials|user:${employee.id}`);if(progress)progress.innerHTML='<strong>NFC-Transponder erfolgreich zugewiesen ✓</strong>';toast(`NFC-Transponder für ${employee.name||'Mitarbeiter'} wurde erfolgreich zugewiesen.`);
         box.innerHTML='<div class="success-box"><strong>NFC-Transponder zugewiesen</strong><span>Der Transponder ist jetzt für interne NFC-Leser und den externen USB-Leser freigeschaltet.</span></div>';
       }catch(err){console.error(err);if(progress){progress.classList.remove('hidden');progress.innerHTML='<strong>Kein Transponder erkannt bzw. Vorgang abgebrochen.</strong><br>Bitte erneut versuchen und den Transponder direkt nach dem Start an die NFC-Fläche halten.';}toast(err?.message||'NFC-Transponder konnte nicht programmiert werden.','error');assign.disabled=false;assign.textContent=active.length?'Neuen Transponder zuweisen':'Transponder zuweisen';}
       finally{unlockEmployeeForm();}
@@ -544,12 +554,12 @@ export async function renderMitarbeiter(el,ctx){
         const uidHashes=await uidHashesFromSerial(serial);
         const batch=writeBatch(db);
         active.forEach(c=>batch.update(doc(db,'nfcCredentials',c.id),{uidHashes,uidCapturedAt:serverTimestamp(),updatedAt:serverTimestamp()}));
-        await batch.commit();toast('Transponder-ID wurde ergänzt. Der vorhandene Transponder kann jetzt auch am externen USB-Leser verwendet werden.');
+        await batch.commit();invalidateCached(`nfcCredentials|user:${employee.id}`);toast('Transponder-ID wurde ergänzt. Der vorhandene Transponder kann jetzt auch am externen USB-Leser verwendet werden.');
         captureUid.textContent='Transponder-ID ergänzt ✓';
       }catch(err){console.error(err);toast(err?.message||'Transponder-ID konnte nicht ergänzt werden.');captureUid.disabled=false;captureUid.textContent='Transponder-ID ergänzen';}
       finally{unlockEmployeeForm();}
     };
-    const disable=box.querySelector('#disable-nfc');if(disable)disable.onclick=async()=>{if(!await confirmDialog('Den NFC-Transponder dieses Mitarbeiters wirklich sperren?'))return;try{const batch=writeBatch(db);active.forEach(c=>batch.update(doc(db,'nfcCredentials',c.id),{active:false,disabledAt:serverTimestamp(),updatedAt:serverTimestamp()}));await batch.commit();box.innerHTML='<div class="warning-box"><strong>Transponder gesperrt</strong><span>Der bisherige NFC-Transponder kann nicht mehr zum Stempeln verwendet werden.</span></div>';toast('NFC-Transponder wurde gesperrt.');}catch(err){console.error(err);toast('Transponder konnte nicht gesperrt werden.');}};
+    const disable=box.querySelector('#disable-nfc');if(disable)disable.onclick=async()=>{if(!await confirmDialog('Den NFC-Transponder dieses Mitarbeiters wirklich sperren?'))return;try{const batch=writeBatch(db);active.forEach(c=>batch.update(doc(db,'nfcCredentials',c.id),{active:false,disabledAt:serverTimestamp(),updatedAt:serverTimestamp()}));await batch.commit();invalidateCached(`nfcCredentials|user:${employee.id}`);box.innerHTML='<div class="warning-box"><strong>Transponder gesperrt</strong><span>Der bisherige NFC-Transponder kann nicht mehr zum Stempeln verwendet werden.</span></div>';toast('NFC-Transponder wurde gesperrt.');}catch(err){console.error(err);toast('Transponder konnte nicht gesperrt werden.');}};
   }
   async function renderQrBox(employee){
     const box=el.querySelector('#qr-credential-box');if(!box)return;
@@ -581,6 +591,7 @@ export async function renderMitarbeiter(el,ctx){
       batch.set(doc(db,'managementPortalUsers',u.id),{...portalDirectoryData({...u,active:false,archived:true}),active:false},{merge:true});
       batch.set(doc(collection(db,'employeeHistory')),historyRecord(ctx,u.id,{...u,active:false},'archive',changes));
       await batch.commit();
+      invalidateCached('users','dashboard:users','urlaub:users');
       toast('Mitarbeiter wurde entfernt und der Zugang deaktiviert.');
       await renderMitarbeiter(el,ctx);
     }catch(err){console.error(err);toast(err.message||'Mitarbeiter konnte nicht entfernt werden.')}
@@ -696,7 +707,7 @@ el.querySelectorAll('.reset-password').forEach(b=>b.onclick=async()=>{
   });
 
   el.querySelectorAll('.edit-user').forEach(b=>b.onclick=async()=>{
-    const u=users.find(x=>x.id===b.dataset.id),p=privateMap.get(u.id)||{};formMode='edit';editingUserId=u.id;form.reset();form.classList.add('existing-user');form.elements.password.required=false;if(pdsImportBtn)pdsImportBtn.classList.add('hidden');if(masterDataPrintBtn){masterDataPrintBtn.classList.remove('hidden');masterDataPrintBtn.onclick=()=>openEmployeeMasterDataSheet(u);}setVal(form,'id',u.id);setVal(form,'name',u.name);setVal(form,'companyId',u.companyId);const usernameMode=u.hasRealEmail===false||String(u.email||'').endsWith('@portal.local');setVal(form,'loginType',usernameMode?'username':'email');syncLoginField();setVal(form,'login',usernameMode?(u.username||String(u.email||'').replace(/@portal\.local$/,'')):(u.email||''));form.elements.loginType.disabled=true;form.elements.login.disabled=true;setVal(form,'role',u.role||'employee');setVal(form,'supervisorId',u.supervisorId||'');setVal(form,'supervisorId2',u.supervisorId2||'');setVal(form,'active',String(u.active!==false));form.elements.managementPortalAccess.checked=u.managementPortalAccess===true;form.elements.managementPortalDocumentAccess.checked=u.managementPortalDocumentAccess===true;syncManagementPortalPermissions();setVal(form,'startDate',u.startDate||'');setVal(form,'endDate',u.endDate||'');setVal(form,'weeklyHours',u.weeklyHours??40);const vacationRows=normalizedVacationEntitlements(u);renderVacationEntitlements(vacationRows.length?vacationRows:[{days:u.vacationDays??30,validFrom:''}]);const positionRows=normalizedPositionHistory(u);renderPositionHistory(positionRows.length?positionRows:[{position:u.position||'',validFrom:u.startDate||''}]);setVal(form,'employeeNumber',u.employeeNumber||'');let areaValue=u.businessAreaId||businessAreas.find(a=>a.code===u.companyAreaNumber)?.id||'';if(!areaValue&&u.companyAreaNumber){const select=form.elements.businessAreaId;select.add(new Option(`${u.companyAreaNumber} · bisheriger Wert`,`legacy:${u.companyAreaNumber}`));areaValue=`legacy:${u.companyAreaNumber}`;}setVal(form,'businessAreaId',areaValue);setVal(form,'projectTimeTracking',String(u.projectTimeTracking===true));form.elements.flatEightHourEmployeeView.checked=u.flatEightHourEmployeeView===true;form.elements.noTimeTracking.checked=u.noTimeTracking===true;setVal(form,'earliestStartTime',u.earliestStartTime||'');
+    const u=users.find(x=>x.id===b.dataset.id),p=await loadPrivate(u.id);formMode='edit';editingUserId=u.id;form.reset();form.classList.add('existing-user');form.elements.password.required=false;if(pdsImportBtn)pdsImportBtn.classList.add('hidden');if(masterDataPrintBtn){masterDataPrintBtn.classList.remove('hidden');masterDataPrintBtn.onclick=()=>openEmployeeMasterDataSheet(u);}setVal(form,'id',u.id);setVal(form,'name',u.name);setVal(form,'companyId',u.companyId);const usernameMode=u.hasRealEmail===false||String(u.email||'').endsWith('@portal.local');setVal(form,'loginType',usernameMode?'username':'email');syncLoginField();setVal(form,'login',usernameMode?(u.username||String(u.email||'').replace(/@portal\.local$/,'')):(u.email||''));form.elements.loginType.disabled=true;form.elements.login.disabled=true;setVal(form,'role',u.role||'employee');setVal(form,'supervisorId',u.supervisorId||'');setVal(form,'supervisorId2',u.supervisorId2||'');setVal(form,'active',String(u.active!==false));form.elements.managementPortalAccess.checked=u.managementPortalAccess===true;form.elements.managementPortalDocumentAccess.checked=u.managementPortalDocumentAccess===true;syncManagementPortalPermissions();setVal(form,'startDate',u.startDate||'');setVal(form,'endDate',u.endDate||'');setVal(form,'weeklyHours',u.weeklyHours??40);const vacationRows=normalizedVacationEntitlements(u);renderVacationEntitlements(vacationRows.length?vacationRows:[{days:u.vacationDays??30,validFrom:''}]);const positionRows=normalizedPositionHistory(u);renderPositionHistory(positionRows.length?positionRows:[{position:u.position||'',validFrom:u.startDate||''}]);setVal(form,'employeeNumber',u.employeeNumber||'');let areaValue=u.businessAreaId||businessAreas.find(a=>a.code===u.companyAreaNumber)?.id||'';if(!areaValue&&u.companyAreaNumber){const select=form.elements.businessAreaId;select.add(new Option(`${u.companyAreaNumber} · bisheriger Wert`,`legacy:${u.companyAreaNumber}`));areaValue=`legacy:${u.companyAreaNumber}`;}setVal(form,'businessAreaId',areaValue);setVal(form,'projectTimeTracking',String(u.projectTimeTracking===true));form.elements.flatEightHourEmployeeView.checked=u.flatEightHourEmployeeView===true;form.elements.noTimeTracking.checked=u.noTimeTracking===true;setVal(form,'earliestStartTime',u.earliestStartTime||'');
     ['department','contractType','probationEndDate','fixedTermEndDate','costCenter','firstAiderValidUntil','fireWardenValidUntil','forkliftPermitValidUntil','aerialLiftPermitValidUntil','drivingLicenseClasses','nextDrivingLicenseCheck','occupationalMedicalNotes'].forEach(k=>setVal(form,k,u[k]||''));['firstAider','fireWarden','forkliftPermit','aerialLiftPermit'].forEach(k=>boolVal(form,k,u[k]));
     const pauseRows=Array.isArray(u.pauseRuleHistory)?u.pauseRuleHistory.filter(x=>x?.validFrom).sort((a,b)=>String(a.validFrom).localeCompare(String(b.validFrom))):[];const currentPause=pauseRows[pauseRows.length-1]||null;form.elements.specialPauseActive.checked=currentPause?.active===true;setVal(form,'specialPauseMinutes',currentPause?.minutes||30);setVal(form,'specialPauseValidFrom','');
     const workSchedules=normalizedWorkScheduleHistory(u).map((row,index)=>({...row,validFrom:row.validFrom||(index===0?u.startDate||'1900-01-01':''),changeType:row.changeType||'change'}));renderWorkSchedules(workSchedules);
@@ -802,6 +813,7 @@ el.querySelectorAll('.reset-password').forEach(b=>b.onclick=async()=>{
           throw createErr;
         }
       }
+      invalidateCached('users','employeePrivate','dashboard:users','urlaub:users');
       toast(id?'Mitarbeiter gespeichert.':'Mitarbeiter und Zugang wurden angelegt.');await renderMitarbeiter(el,ctx);
     }catch(err){console.error(err);toast(err.message||'Mitarbeiter konnte nicht gespeichert werden.','error')}
   };

@@ -37,6 +37,7 @@ import { renderDatensicherung } from "./datensicherung.js";
 import { renderAenderungsantraege } from "./aenderungsantraege.js";
 import { hasAdminPermission, hasAnyAdminPermission } from "./permissions.js";
 import { beginPortalLoading, endPortalLoading } from "./loading-indicator.js";
+import { clearReadCache } from "./read-cache.js";
 
 export const ctx = {
   user: null,
@@ -487,6 +488,7 @@ window.addEventListener("resize", () => {
 });
 
 onAuthStateChanged(auth, async (user) => {
+  clearReadCache();
   ctx.user = user;
   if (!user) {
     ctx.profile = null;

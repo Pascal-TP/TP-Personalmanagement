@@ -9,9 +9,11 @@ import { progressForTrainingYear, visibleTrainingsForYear } from "./training-uti
 import { calculateDailyTimeValues, calculateTimeAccountBalance, timeRecordStart } from "./time-utils.js";
 import { getAssignedDocs } from "./supervisor-utils.js";
 import { scheduledMinutesOn } from "./employment-utils.js";
+import { cachedRead, invalidateCached } from "./read-cache.js";
 
 
 const getTeamMilestones=httpsCallable(functions,'getPersonnelTeamMilestones');
+const cachedDocs=(key,ref)=>cachedRead(`dashboard:${key}`,()=>getDocs(ref));
 
 
 const DASHBOARD_ABSENCE_LABELS={vacation:'Urlaub',sick:'Krank',child_sick:'Kind krank',special_leave:'Sonderurlaub',vocational_school:'Berufsschule',training:'Weiterbildung',university:'Uni',unpaid_leave:'Unbezahlter Urlaub',release:'Freistellung',parental_leave:'Elternzeit',other:'Sonstige Abwesenheit'};
@@ -263,30 +265,30 @@ export async function renderDashboard(el,ctx){
   const canApproveVacation=p.role==="supervisor"||hasAdminPermission(p,"vacationApprove");
   const canApproveTime=p.role==="supervisor"||hasAdminPermission(p,"timeApprove");
   let news=[],trainingProgress=[],allTrainingProgress=[],allTrainingDefinitions=[],vacations=[],absences=[],timeRequests=[],timeRecords=[],teamVacations=[],hrUsers=[],personalChangeRequests=[],milestones=[],tgaOvertimeRows=[],complianceAlerts=[];
-  try{const s=await getDocs(query(collection(db,"news"),orderBy("createdAt","desc"),limit(6)));news=s.docs.map(d=>({id:d.id,...d.data()})).filter(n=>n.active!==false&&(n.companyId==="all"||!n.companyId||n.companyId===p.companyId)&&(n.audience==="all"||!n.audience||n.audience===p.role))}catch{}
-  try{const s=await getDocs(query(collection(db,"trainingProgress"),where("userId","==",p.id)));trainingProgress=s.docs.map(d=>d.data())}catch{}
-  try{const s=await getDocs(collection(db,"trainings"));allTrainingDefinitions=s.docs.map(d=>({id:d.id,...d.data()}))}catch{}
-  try{const s=await getDocs(query(collection(db,"vacationRequests"),where("userId","==",p.id)));vacations=s.docs.map(d=>({id:d.id,...d.data()}))}catch{}
-  try{const s=await getDocs(query(collection(db,"absences"),where("userId","==",p.id)));absences=s.docs.map(d=>({id:d.id,...d.data()})).filter(a=>a.status!=='withdrawn')}catch{}
-  try{const s=await getDocs(query(collection(db,"timeRecords"),where("userId","==",p.id)));timeRecords=s.docs.map(d=>({id:d.id,...d.data()}))}catch{}
+  try{const s=await cachedDocs(`news|dashboard:${p.companyId||'all'}:${p.role}`,query(collection(db,"news"),orderBy("createdAt","desc"),limit(6)));news=s.docs.map(d=>({id:d.id,...d.data()})).filter(n=>n.active!==false&&(n.companyId==="all"||!n.companyId||n.companyId===p.companyId)&&(n.audience==="all"||!n.audience||n.audience===p.role))}catch{}
+  try{const s=await cachedDocs(`trainingProgress|user:${p.id}`,query(collection(db,"trainingProgress"),where("userId","==",p.id)));trainingProgress=s.docs.map(d=>d.data())}catch{}
+  try{const s=await cachedDocs('trainings|all',collection(db,"trainings"));allTrainingDefinitions=s.docs.map(d=>({id:d.id,...d.data()}))}catch{}
+  try{const s=await cachedDocs(`vacationRequests|user:${p.id}`,query(collection(db,"vacationRequests"),where("userId","==",p.id)));vacations=s.docs.map(d=>({id:d.id,...d.data()}))}catch{}
+  try{const s=await cachedDocs(`absences|user:${p.id}`,query(collection(db,"absences"),where("userId","==",p.id)));absences=s.docs.map(d=>({id:d.id,...d.data()})).filter(a=>a.status!=='withdrawn')}catch{}
+  try{const s=await cachedDocs(`timeRecords|user:${p.id}`,query(collection(db,"timeRecords"),where("userId","==",p.id)));timeRecords=s.docs.map(d=>({id:d.id,...d.data()}))}catch{}
   if(p.role==="admin"||p.role==="supervisor"){try{
     const token=await auth.currentUser?.getIdToken();
-    if(token){const res=await getTeamMilestones({idToken:token});milestones=Array.isArray(res.data?.items)?res.data.items:[]}
+    if(token){const res=await cachedRead(`dashboard:milestones|${p.id}`,()=>getTeamMilestones({idToken:token}));milestones=Array.isArray(res.data?.items)?res.data.items:[]}
   }catch(e){console.error("Geburtstags-/Jubiläumserinnerungen konnten nicht geladen werden",e)}}
   if(p.role==="supervisor"||(p.role==="admin"&&hasAdminPermission(p,"timeApprove"))){try{
-    const s=p.role==="admin"?await getDocs(collection(db,"timeComplianceAlerts")):await getDocs(query(collection(db,"timeComplianceAlerts"),where("supervisorIds","array-contains",p.id)));
+    const s=p.role==="admin"?await cachedDocs('timeComplianceAlerts|all',collection(db,"timeComplianceAlerts")):await cachedDocs(`timeComplianceAlerts|supervisor:${p.id}`,query(collection(db,"timeComplianceAlerts"),where("supervisorIds","array-contains",p.id)));
     complianceAlerts=s.docs.map(d=>({id:d.id,...d.data()}));
   }catch(e){console.error("Arbeitszeit-Hinweise konnten nicht geladen werden",e)}
     complianceAlerts=complianceAlerts.filter(a=>a.status!=="resolved"&&!(Array.isArray(a.acknowledgedBy)&&a.acknowledgedBy.includes(p.id))).sort((a,b)=>String(b.workDate||"").localeCompare(String(a.workDate||"")));
   }
   if(p.role==="admin"){
-    try{const s=await getDocs(collection(db,"users"));hrUsers=s.docs.map(d=>({id:d.id,...d.data()}))}catch(e){console.error("HR-Fristen konnten nicht geladen werden",e)}
-    if(hasAdminPermission(p,"trainingOverview")){try{const s=await getDocs(collection(db,"trainingProgress"));allTrainingProgress=s.docs.map(d=>({id:d.id,...d.data()}))}catch(e){console.error("Unternehmensweite Schulungsstände konnten nicht geladen werden",e)}}
-    if(hasAdminPermission(p,"personalDataChanges")){try{const s=await getDocs(collection(db,"personalDataChangeRequests"));personalChangeRequests=s.docs.map(d=>({id:d.id,...d.data()})).filter(x=>x.status==="pending")}catch(e){console.error("Stammdaten-Änderungsanträge konnten nicht geladen werden",e)}}
+    try{const s=await cachedDocs('users|all',collection(db,"users"));hrUsers=s.docs.map(d=>({id:d.id,...d.data()}))}catch(e){console.error("HR-Fristen konnten nicht geladen werden",e)}
+    if(hasAdminPermission(p,"trainingOverview")){try{const s=await cachedDocs('trainingProgress|all',collection(db,"trainingProgress"));allTrainingProgress=s.docs.map(d=>({id:d.id,...d.data()}))}catch(e){console.error("Unternehmensweite Schulungsstände konnten nicht geladen werden",e)}}
+    if(hasAdminPermission(p,"personalDataChanges")){try{const s=await cachedDocs('personalDataChangeRequests|all',collection(db,"personalDataChangeRequests"));personalChangeRequests=s.docs.map(d=>({id:d.id,...d.data()})).filter(x=>x.status==="pending")}catch(e){console.error("Stammdaten-Änderungsanträge konnten nicht geladen werden",e)}}
     if(hasAdminPermission(p,"hoursExport")){try{
       const [cs,trs,vs,as]=await Promise.all([
-        getDocs(collection(db,"companies")),getDocs(collection(db,"timeRecords")),
-        getDocs(collection(db,"vacationRequests")),getDocs(collection(db,"absences"))
+        cachedDocs('companies|all',collection(db,"companies")),cachedDocs('timeRecords|all',collection(db,"timeRecords")),
+        cachedDocs('vacationRequests|all',collection(db,"vacationRequests")),cachedDocs('absences|all',collection(db,"absences"))
       ]);
       const companies=cs.docs.map(d=>({id:d.id,...d.data()}));
       const tga=companies.find(c=>String(c.name||'').trim().toLocaleLowerCase('de').includes('tga systemtechnik'));
@@ -311,17 +313,17 @@ export async function renderDashboard(el,ctx){
     }catch(e){console.error("TGA-Überstundenhinweis konnte nicht geladen werden",e)}}
   }
   if(p.role==="employee"||canApproveTime){try{
-    if(p.role==="employee"){const s=await getDocs(query(collection(db,"timeCorrectionRequests"),where("userId","==",p.id)));timeRequests=s.docs.map(d=>({id:d.id,...d.data()}))}
-    else if(p.role==="supervisor") timeRequests=await getAssignedDocs(db,"timeCorrectionRequests",p.id);
-    else {const s=await getDocs(collection(db,"timeCorrectionRequests"));timeRequests=s.docs.map(d=>({id:d.id,...d.data()}))}
+    if(p.role==="employee"){const s=await cachedDocs(`timeCorrectionRequests|user:${p.id}`,query(collection(db,"timeCorrectionRequests"),where("userId","==",p.id)));timeRequests=s.docs.map(d=>({id:d.id,...d.data()}))}
+    else if(p.role==="supervisor") timeRequests=await cachedRead(`timeCorrectionRequests|supervisor:${p.id}`,()=>getAssignedDocs(db,"timeCorrectionRequests",p.id));
+    else {const s=await cachedDocs('timeCorrectionRequests|all',collection(db,"timeCorrectionRequests"));timeRequests=s.docs.map(d=>({id:d.id,...d.data()}))}
   }catch(e){console.error("Zeiterfassungsanträge konnten nicht geladen werden",e)}}
   if(canApproveVacation){
     try{
       if(p.role==="admin"){
-        const s=await getDocs(collection(db,"vacationRequests"));
+        const s=await cachedDocs('vacationRequests|all',collection(db,"vacationRequests"));
         teamVacations=s.docs.map(d=>({id:d.id,...d.data()})).filter(v=>v.status==="pending"||(v.status==="withdrawn"&&!v.withdrawalAcknowledgedAt));
       }else{
-        teamVacations=(await getAssignedDocs(db,"vacationRequests",p.id)).filter(v=>v.status==="pending"||(v.status==="withdrawn"&&!v.withdrawalAcknowledgedAt));
+        teamVacations=(await cachedRead(`vacationRequests|supervisor:${p.id}`,()=>getAssignedDocs(db,"vacationRequests",p.id))).filter(v=>v.status==="pending"||(v.status==="withdrawn"&&!v.withdrawalAcknowledgedAt));
       }
     }catch(e){console.error("Urlaubsfreigaben konnten nicht geladen werden",e)}
   }
@@ -414,6 +416,7 @@ export async function renderDashboard(el,ctx){
     btn.disabled=true;
     try{
       await updateDoc(doc(db,"timeComplianceAlerts",btn.dataset.id),{acknowledgedBy:arrayUnion(p.id),updatedAt:serverTimestamp()});
+      invalidateCached('dashboard:timeComplianceAlerts');
       toast("Hinweis wurde als zur Kenntnis genommen bestätigt.");
       renderDashboard(el,ctx);
     }catch(e){
@@ -436,6 +439,7 @@ export async function renderDashboard(el,ctx){
         const chunk=alerts.slice(start,start+chunkSize),batch=writeBatch(db);
         chunk.forEach(alert=>batch.update(doc(db,"timeComplianceAlerts",alert.id),{acknowledgedBy:arrayUnion(p.id),updatedAt:serverTimestamp()}));
         await batch.commit();
+        invalidateCached('dashboard:timeComplianceAlerts');
         processed+=chunk.length;
         acknowledgeAllButton.textContent=`${processed} von ${alerts.length} bestätigt …`;
       }
