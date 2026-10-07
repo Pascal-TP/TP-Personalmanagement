@@ -14,7 +14,7 @@ import { calculateDailyTimeValues, calculateTimeAccountValues, wasStartLimited }
 import { parsePdsPersonalPdf, normalizePdsName } from "./pds-personal-import.js";
 import { normalizedVacationEntitlements, vacationEntitlementOn, normalizedPositionHistory, positionOn, normalizedWorkScheduleHistory, workScheduleOn } from "./employment-utils.js";
 import { drawPersonnelQr, printPersonnelQr } from "./qr-utils.js";
-import { cachedRead, invalidateCached } from "./read-cache.js";
+import { cachedRead, updateCached, invalidateCached } from "./read-cache.js";
 
 
 const resetUsernamePassword = httpsCallable(functions, "resetPersonnelUsernamePassword");
@@ -49,7 +49,7 @@ const PRIVATE_HISTORY_FIELDS=[
 ];
 function comparable(value){if(Array.isArray(value))return [...value].map(String).sort();return value??null}
 function sameValue(a,b){return JSON.stringify(comparable(a))===JSON.stringify(comparable(b))}
-const REDACTED_HISTORY_FIELDS=new Set(["taxId","healthInsuranceNumber","socialSecurityNumber","iban"]);
+const REDACTED_HISTORY_FIELDS=new Set(["taxId","healthInsuranceNumber","socialSecurityNumber","iban","bic"]);
 function historyValue(field,value){if(REDACTED_HISTORY_FIELDS.has(field))return value?"[hinterlegt]":"[leer]";return comparable(value)}
 function changesFor(fields,before,after,prefix=""){return fields.filter(field=>!sameValue(before?.[field],after?.[field])).map(field=>({field:`${prefix}${field}`,oldValue:historyValue(field,before?.[field]),newValue:historyValue(field,after?.[field])}))}
 function historyRecord(ctx,employeeId,employee,action,changes=[]){return {employeeId,employeeName:employee.name||"",employeeEmail:employee.hasRealEmail===false?(employee.username||""):(employee.email||""),action,changes,actorId:ctx.user?.uid||"",actorName:ctx.profile?.name||"",actorEmail:ctx.profile?.email||ctx.user?.email||"",createdAt:serverTimestamp()}}
@@ -367,7 +367,42 @@ export async function renderMitarbeiter(el,ctx){
     if(option)option.classList.toggle('inactive',!enabled);
   }
   form.elements.managementPortalAccess.addEventListener('change',syncManagementPortalPermissions);
-  const PDS_FIELD_LABELS={name:'Name (Anzeige)',employeeNumber:'Mitarbeiternummer',birthDate:'Geburtsdatum',salutation:'Anrede',title:'Titel',firstName:'Vorname',lastName:'Nachname',gender:'Geschlecht',taxId:'Steuer-ID',healthInsuranceNumber:'Krankenversicherungsnummer',socialSecurityNumber:'Sozialversicherungsnummer',birthName:'Geburtsname',birthPlace:'Geburtsort',birthNationality:'Geburtsnationalität',street:'Straße / Hausnummer',postalCode:'PLZ',city:'Ort',privateEmail:'Private E-Mail',mobile:'Mobil',companyId:'Firma',department:'Abteilung',startDate:'Eintritt / Betriebszugehörigkeit seit',taxClass:'Steuerklasse',religion:'Religion / Kirchensteuer',childAllowance:'Kinderfreibetrag',healthInsuranceId:'Krankenkasse',emergencyContactName:'Notfallkontakt',emergencyContactPhone:'Telefon Notfallkontakt',iban:'IBAN',bic:'BIC',bankId:'Bank',accountHolder:'Kontoinhaber',login:'Geschäftliche E-Mail / Benutzername'};
+  const PDS_FIELD_DEFS=[
+    {key:'name',label:'Name (Anzeige)',scope:'public'},
+    {key:'employeeNumber',label:'Mitarbeiternummer',scope:'public',update:false},
+    {key:'birthDate',label:'Geburtsdatum',scope:'private'},
+    {key:'salutation',label:'Anrede',scope:'private'},
+    {key:'title',label:'Titel',scope:'private'},
+    {key:'firstName',label:'Vorname',scope:'private'},
+    {key:'lastName',label:'Nachname',scope:'private'},
+    {key:'gender',label:'Geschlecht',scope:'private'},
+    {key:'taxId',label:'Steuer-ID',scope:'private'},
+    {key:'healthInsuranceNumber',label:'Krankenversicherungsnummer',scope:'private'},
+    {key:'socialSecurityNumber',label:'Sozialversicherungsnummer',scope:'private'},
+    {key:'birthName',label:'Geburtsname',scope:'private'},
+    {key:'birthPlace',label:'Geburtsort',scope:'private'},
+    {key:'birthNationality',label:'Geburtsnationalität',scope:'private'},
+    {key:'street',label:'Straße / Hausnummer',scope:'private'},
+    {key:'postalCode',label:'PLZ',scope:'private'},
+    {key:'city',label:'Ort',scope:'private'},
+    {key:'privateEmail',label:'Private E-Mail',scope:'private'},
+    {key:'mobile',label:'Mobil',scope:'private'},
+    {key:'companyId',label:'Firma',scope:'public'},
+    {key:'department',label:'Abteilung',scope:'public'},
+    {key:'startDate',label:'Eintritt / Betriebszugehörigkeit seit',scope:'public'},
+    {key:'taxClass',label:'Steuerklasse',scope:'private'},
+    {key:'religion',label:'Religion / Kirchensteuer',scope:'private'},
+    {key:'childAllowance',label:'Kinderfreibetrag',scope:'private'},
+    {key:'healthInsuranceId',label:'Krankenkasse',scope:'private'},
+    {key:'emergencyContactName',label:'Notfallkontakt',scope:'private'},
+    {key:'emergencyContactPhone',label:'Telefon Notfallkontakt',scope:'private'},
+    {key:'iban',label:'IBAN',scope:'private'},
+    {key:'bic',label:'BIC',scope:'private'},
+    {key:'bankId',label:'Bank',scope:'private'},
+    {key:'accountHolder',label:'Kontoinhaber',scope:'private'},
+    {key:'login',label:'Geschäftliche E-Mail / Benutzername',scope:'create',update:false},
+    {key:'workSchedule',label:'Arbeitszeitregelung',scope:'create',update:false}
+  ];
   let pendingPdsImport=null;
   const normText=v=>String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]/g,'');
   function pdsFindCompany(text){const n=normText(text);return companies.find(c=>n&&(normText(c.name)===n||normText(c.short)===n||n.includes(normText(c.name))||normText(c.name).includes(n)))||null}
@@ -377,38 +412,62 @@ export async function renderMitarbeiter(el,ctx){
   function pdsFindReligion(text){const n=normText(text);if(!n)return null;return religions.find(x=>{const code=normText(x.code),name=normText(x.name);return (code&&n===code)||(name&&(n.includes(name)||name.includes(n)))})||null}
   function pdsResolve(parsed){
     const company=pdsFindCompany(parsed.companyText),insurer=pdsFindInsurer(parsed.healthInsuranceText),bank=pdsFindBank(parsed.bankText,parsed.bic),religion=pdsFindReligion(parsed.religionText);
-    const values={name:parsed.name||'',employeeNumber:parsed.employeeNumber||'',birthDate:parsed.birthDate||'',salutation:parsed.salutation||'',title:parsed.title||'',firstName:parsed.firstName||'',lastName:parsed.lastName||'',gender:parsed.gender||'',taxId:parsed.taxId||'',healthInsuranceNumber:parsed.healthInsuranceNumber||'',socialSecurityNumber:parsed.socialSecurityNumber||'',birthName:parsed.birthName||'',birthPlace:parsed.birthPlace||'',birthNationality:parsed.birthNationality||'',street:parsed.street||'',postalCode:parsed.postalCode||'',city:parsed.city||'',privateEmail:parsed.privateEmail||'',mobile:parsed.mobile||'',companyId:company?.id||'',department:parsed.department||'',startDate:parsed.startDate||'',taxClass:parsed.taxClass||'',religion:religion?.code||'',childAllowance:parsed.childAllowance??'',healthInsuranceId:insurer?.id||'',emergencyContactName:parsed.emergencyContactName||'',emergencyContactPhone:parsed.emergencyContactPhone||'',iban:parsed.iban||'',bic:parsed.bic||'',bankId:bank?.id||'',accountHolder:parsed.accountHolder||'',login:parsed.businessEmail||''};
-    return {parsed,values,company,insurer,bank,religion};
+    const values={name:parsed.name||'',employeeNumber:parsed.employeeNumber||'',birthDate:parsed.birthDate||'',salutation:parsed.salutation||'',title:parsed.title||'',firstName:parsed.firstName||'',lastName:parsed.lastName||'',gender:parsed.gender||'',taxId:parsed.taxId||'',healthInsuranceNumber:parsed.healthInsuranceNumber||'',socialSecurityNumber:parsed.socialSecurityNumber||'',birthName:parsed.birthName||'',birthPlace:parsed.birthPlace||'',birthNationality:parsed.birthNationality||'',street:parsed.street||'',postalCode:parsed.postalCode||'',city:parsed.city||'',privateEmail:parsed.privateEmail||'',mobile:parsed.mobile||'',companyId:company?.id||'',department:parsed.department||'',startDate:parsed.startDate||'',taxClass:parsed.taxClass||'',religion:religion?.code||'',childAllowance:parsed.childAllowance??'',healthInsuranceId:insurer?.id||'',emergencyContactName:parsed.emergencyContactName||'',emergencyContactPhone:parsed.emergencyContactPhone||'',iban:parsed.iban||'',bic:parsed.bic||'',bankId:bank?.id||'',accountHolder:parsed.accountHolder||'',login:parsed.businessEmail||'',workSchedule:(parsed.weeklyHours||Array.isArray(parsed.workDays))?{weeklyHours:Number(parsed.weeklyHours||40),workDays:Array.isArray(parsed.workDays)&&parsed.workDays.length?parsed.workDays:['1','2','3','4','5']}:null};
+    const number=String(values.employeeNumber||''),numberMatches=number?activeUsers.filter(u=>String(u.employeeNumber||'')===number):[];
+    return {parsed,values,company,insurer,bank,religion,existingEmployee:numberMatches.length===1?numberMatches[0]:null,employeeNumberAmbiguous:numberMatches.length>1};
   }
   function pdsDuplicateWarnings(resolved){
     const warnings=[],number=String(resolved.values.employeeNumber||''),name=normalizePdsName(resolved.values.name),birth=String(resolved.values.birthDate||'');
-    const byNumber=number?activeUsers.find(u=>String(u.employeeNumber||'')===number):null;if(byNumber)warnings.push(`Mitarbeiternummer ${number} ist bereits bei „${byNumber.name||'unbekannt'}“ vorhanden.`);
-    const byName=name?activeUsers.filter(u=>normalizePdsName(u.name)===name):[];for(const u of byName){const p=privateMap.get(u.id)||{};warnings.push(`Der Name „${u.name}“ ist bereits vorhanden${birth&&p.birthDate===birth?' und das Geburtsdatum stimmt ebenfalls überein':''}.`)}
+    if(resolved.employeeNumberAmbiguous)warnings.push(`Mitarbeiternummer ${number} ist mehreren Mitarbeitern zugeordnet. Eine automatische Aktualisierung ist aus Sicherheitsgründen nicht möglich.`);
+    const byName=name?activeUsers.filter(u=>normalizePdsName(u.name)===name&&u.id!==resolved.existingEmployee?.id):[];for(const u of byName){const p=privateMap.get(u.id)||{};warnings.push(`Der Name „${u.name}“ ist bereits vorhanden${birth&&p.birthDate===birth?' und das Geburtsdatum stimmt ebenfalls überein':''}.`)}
     return [...new Set(warnings)];
   }
-  function pdsDisplayValue(key,value,resolved){if(key==='companyId')return resolved.company?.name||resolved.parsed.companyText||'nicht zugeordnet';if(key==='healthInsuranceId')return resolved.insurer?.name||resolved.parsed.healthInsuranceText||'nicht zugeordnet';if(key==='religion')return resolved.religion?`${resolved.religion.code} · ${resolved.religion.name}`:(resolved.parsed.religionText||'nicht zugeordnet');if(key==='bankId')return resolved.bank?.name||resolved.parsed.bankText||'nicht zugeordnet';return value}
+  function pdsDisplayValue(key,value,resolved,{current=false}={}){
+    if(key==='workSchedule'){if(!value)return '–';return `${Number(value.weeklyHours)||0} Wochenstunden · Arbeitstage ${(value.workDays||[]).join(', ')}`}
+    if(key==='companyId')return current?(companies.find(x=>x.id===value)?.name||value||'–'):(resolved.company?.name||resolved.parsed.companyText||'nicht zugeordnet');
+    if(key==='healthInsuranceId')return current?(insurers.find(x=>x.id===value)?.name||value||'–'):(resolved.insurer?.name||resolved.parsed.healthInsuranceText||'nicht zugeordnet');
+    if(key==='religion')return current?((r=>r?`${r.code} · ${r.name}`:value||'–')(religions.find(x=>String(x.code||'')===String(value||'')))):(resolved.religion?`${resolved.religion.code} · ${resolved.religion.name}`:(resolved.parsed.religionText||'nicht zugeordnet'));
+    if(key==='bankId')return current?(banks.find(x=>x.id===value)?.name||value||'–'):(resolved.bank?.name||resolved.parsed.bankText||'nicht zugeordnet');
+    return value===null||value===undefined||value===''?'–':value;
+  }
+  function selectedPdsKeys(){return [...el.querySelectorAll('#pds-import-preview [data-pds-field]:checked')].map(input=>input.dataset.pdsField)}
   function showPdsPreview(resolved){
-    pendingPdsImport=resolved;const warnings=pdsDuplicateWarnings(resolved);const mappingWarnings=[];
+    pendingPdsImport=resolved;const warnings=pdsDuplicateWarnings(resolved),mappingWarnings=[];
     if(resolved.parsed.companyText&&!resolved.company)mappingWarnings.push(`Firma „${resolved.parsed.companyText}“ konnte keiner Firmen-Stammdatenposition zugeordnet werden.`);
     if(resolved.parsed.healthInsuranceText&&!resolved.insurer)mappingWarnings.push(`Krankenkasse „${resolved.parsed.healthInsuranceText}“ wurde nicht eindeutig in den Stammdaten gefunden. Bitte manuell auswählen.`);
     if(resolved.parsed.religionText&&!resolved.religion)mappingWarnings.push(`Konfession/Kirchensteuer „${resolved.parsed.religionText}“ konnte keinem TP-Stammdateneintrag zugeordnet werden. Bitte manuell auswählen.`);
     if(resolved.parsed.bankText&&!resolved.bank)mappingWarnings.push(`Bank „${resolved.parsed.bankText}“ wurde nicht eindeutig in den Stammdaten gefunden. Bitte manuell auswählen.`);
-    const warnBox=el.querySelector('#pds-import-warnings');warnBox.innerHTML=[...warnings,...mappingWarnings].length?`<div class="error-card compact"><strong>Bitte besonders prüfen:</strong><ul>${[...warnings,...mappingWarnings].map(w=>`<li>${esc(w)}</li>`).join('')}</ul></div>`:`<div class="info-strip compact">Keine Dublette über Mitarbeiternummer oder Namen erkannt. Bitte die Werte trotzdem vor der Übernahme prüfen.</div>`;
-    const previewValues={...resolved.values};
-    if(resolved.parsed.companyText&&!resolved.company)previewValues.companyId=resolved.parsed.companyText;
-    if(resolved.parsed.healthInsuranceText&&!resolved.insurer)previewValues.healthInsuranceId=resolved.parsed.healthInsuranceText;
-    if(resolved.parsed.religionText&&!resolved.religion)previewValues.religion=resolved.parsed.religionText;
-    if(resolved.parsed.bankText&&!resolved.bank)previewValues.bankId=resolved.parsed.bankText;
-    const rows=Object.entries(previewValues).filter(([,v])=>v!==''&&v!==null&&v!==undefined).map(([key,value])=>`<tr><th>${esc(PDS_FIELD_LABELS[key]||key)}</th><td>${esc(pdsDisplayValue(key,value,resolved))}</td></tr>`).join('');
-    el.querySelector('#pds-import-preview').innerHTML=`<div class="table-wrap"><table class="pds-import-table"><tbody>${rows||'<tr><td class="empty">Keine passenden Mitarbeiterdaten erkannt.</td></tr>'}</tbody></table></div><p class="muted small">Die PDF wird nur im Browser ausgelesen. Erst mit „Daten übernehmen“ werden die erkannten Werte in das Formular geschrieben; gespeichert wird weiterhin erst mit „Mitarbeiter speichern“.</p>`;
+    const target=resolved.existingEmployee,isUpdate=!!target;
+    const modeNotice=isUpdate?`<div class="success-box compact"><strong>Vorhandener Mitarbeiter erkannt: ${esc(target.name||target.email||target.id)} – Mitarbeiternummer ${esc(target.employeeNumber||resolved.values.employeeNumber)}</strong><span>Nur ausdrücklich ausgewählte Werte werden aktualisiert.</span></div>`:resolved.employeeNumberAmbiguous?'':`<div class="info-strip compact"><strong>Neuer Mitarbeiter</strong> · Ausgewählte Werte werden zunächst in das Anlageformular übernommen.</div>`;
+    const warnBox=el.querySelector('#pds-import-warnings');warnBox.innerHTML=modeNotice+([...warnings,...mappingWarnings].length?`<div class="error-card compact"><strong>Bitte besonders prüfen:</strong><ul>${[...warnings,...mappingWarnings].map(w=>`<li>${esc(w)}</li>`).join('')}</ul></div>`:'');
+    const invalidKeys=new Set([!resolved.company&&resolved.parsed.companyText?'companyId':'',!resolved.insurer&&resolved.parsed.healthInsuranceText?'healthInsuranceId':'',!resolved.religion&&resolved.parsed.religionText?'religion':'',!resolved.bank&&resolved.parsed.bankText?'bankId':''].filter(Boolean));
+    const currentPrivate=target?(privateMap.get(target.id)||{}):{},currentValues=target?{...target,...currentPrivate}:{};
+    const previewValues={...resolved.values};if(resolved.parsed.companyText&&!resolved.company)previewValues.companyId=resolved.parsed.companyText;if(resolved.parsed.healthInsuranceText&&!resolved.insurer)previewValues.healthInsuranceId=resolved.parsed.healthInsuranceText;if(resolved.parsed.religionText&&!resolved.religion)previewValues.religion=resolved.parsed.religionText;if(resolved.parsed.bankText&&!resolved.bank)previewValues.bankId=resolved.parsed.bankText;
+    const visibleFields=PDS_FIELD_DEFS.filter(field=>{const value=previewValues[field.key];return value!==''&&value!==null&&value!==undefined});
+    const rows=visibleFields.map(field=>{const value=previewValues[field.key],actual=resolved.values[field.key],selectable=!invalidKeys.has(field.key)&&actual!==''&&actual!==null&&actual!==undefined&&(!isUpdate||field.update!==false),checked=selectable?'checked':'',disabled=selectable?'':'disabled',hint=!selectable?(invalidKeys.has(field.key)?' title="Keine eindeutige Zuordnung zu den Stammdaten"':isUpdate&&field.update===false?' title="Dieses Feld wird beim direkten Update nicht geändert"':''):'';return `<tr><th>${esc(field.label)}</th>${isUpdate?`<td>${esc(pdsDisplayValue(field.key,currentValues[field.key],resolved,{current:true}))}</td>`:''}<td>${esc(pdsDisplayValue(field.key,value,resolved))}</td><td class="pds-import-select"><label class="inline-check compact"><input type="checkbox" data-pds-field="${esc(field.key)}" ${checked} ${disabled}${hint}><span>Übernehmen</span></label></td></tr>`}).join('');
+    el.querySelector('#pds-import-preview').innerHTML=`<div class="table-wrap"><table class="pds-import-table"><thead><tr><th>Feld</th>${isUpdate?'<th>Aktueller Wert</th>':''}<th>Wert aus PDF</th><th class="pds-import-select">Übernehmen</th></tr></thead><tbody>${rows||`<tr><td colspan="${isUpdate?4:3}" class="empty">Keine passenden Mitarbeiterdaten erkannt.</td></tr>`}</tbody></table></div><p class="muted small">${isUpdate?'Nicht ausgewählte, leere oder nicht eindeutig zugeordnete Werte bleiben unverändert.':'Nur ausgewählte Werte werden in das Formular übernommen; gespeichert wird weiterhin erst mit „Mitarbeiter speichern“.'}</p>`;
+    const applyButton=el.querySelector('#pds-import-apply');applyButton.textContent=isUpdate?'Mitarbeiter aktualisieren':'Auswahl übernehmen';applyButton.disabled=resolved.employeeNumberAmbiguous||(isUpdate?!canEdit:!canCreate);
     pdsDialog.showModal();
   }
-  function applyPdsImport(resolved){
-    for(const [key,value] of Object.entries(resolved.values)){if(value===''||value===null||value===undefined)continue;setVal(form,key,value)}
-    if(resolved.parsed.weeklyHours||Array.isArray(resolved.parsed.workDays)){renderWorkSchedules([{model:'uniform',validFrom:form.elements.startDate.value||new Date().toISOString().slice(0,10),weeklyHours:Number(resolved.parsed.weeklyHours||form.elements.weeklyHours.value||40),workDays:Array.isArray(resolved.parsed.workDays)&&resolved.parsed.workDays.length?resolved.parsed.workDays:['1','2','3','4','5'],changeType:'change',note:'Aus PDS-Personalstamm übernommen'}])}
-    if(resolved.parsed.businessEmail){setVal(form,'loginType','email');syncLoginField();setVal(form,'login',resolved.parsed.businessEmail)}
-    pdsDialog.close();toast('Mitarbeiterdaten aus PDS übernommen. Bitte alle Angaben prüfen und anschließend speichern.');
+  function applyNewPdsImport(resolved,selected){
+    for(const [key,value] of Object.entries(resolved.values)){if(!selected.has(key)||key==='workSchedule'||value===''||value===null||value===undefined)continue;setVal(form,key,value)}
+    if(selected.has('workSchedule')&&resolved.values.workSchedule){const schedule=resolved.values.workSchedule;renderWorkSchedules([{model:'uniform',validFrom:form.elements.startDate.value||new Date().toISOString().slice(0,10),weeklyHours:schedule.weeklyHours,workDays:schedule.workDays,changeType:'change',note:'Aus PDS-Personalstamm übernommen'}])}
+    if(selected.has('login')&&resolved.parsed.businessEmail){setVal(form,'loginType','email');syncLoginField();setVal(form,'login',resolved.parsed.businessEmail)}
+    pdsDialog.close();toast('Ausgewählte Mitarbeiterdaten aus PDS übernommen. Bitte alle Angaben prüfen und anschließend speichern.');
   }
+  async function updateExistingFromPds(resolved,selected){
+    const target=resolved.existingEmployee;if(!target||resolved.employeeNumberAmbiguous){toast('Der vorhandene Mitarbeiter konnte nicht eindeutig identifiziert werden.','error');return}if(!canEdit){toast('Keine Berechtigung zum Bearbeiten von Mitarbeitern.','error');return}
+    const selectedDefs=PDS_FIELD_DEFS.filter(field=>selected.has(field.key)&&field.update!==false&&['public','private'].includes(field.scope));if(!selectedDefs.length){toast('Bitte mindestens ein aktualisierbares Feld auswählen.');return}
+    const privateBefore=await loadPrivate(target.id),publicPatch={},privatePatch={};
+    for(const field of selectedDefs){let value=resolved.values[field.key];if(value===''||value===null||value===undefined)continue;if(field.key==='privateEmail')value=String(value).trim().toLowerCase();if(['iban','bic'].includes(field.key))value=String(value).replace(/\s+/g,'').toUpperCase();(field.scope==='public'?publicPatch:privatePatch)[field.key]=value}
+    const publicChanges=changesFor(Object.keys(publicPatch),target,publicPatch),privateChanges=changesFor(Object.keys(privatePatch),privateBefore,privatePatch,'private.'),changes=[...publicChanges,...privateChanges];
+    if(!changes.length){toast('Die ausgewählten Werte entsprechen bereits den vorhandenen Stammdaten.');return}
+    if(!await confirmDialog(`Die ausgewählten Stammdaten von ${target.name||target.email||'diesem Mitarbeiter'} werden aktualisiert. Fortfahren?`,{acceptLabel:'Mitarbeiter aktualisieren'}))return;
+    const batch=writeBatch(db);if(Object.keys(publicPatch).length)batch.update(doc(db,'users',target.id),{...publicPatch,updatedAt:serverTimestamp()});if(Object.keys(privatePatch).length)batch.set(doc(db,'employeePrivate',target.id),{...privatePatch,updatedAt:serverTimestamp()},{merge:true});batch.set(doc(collection(db,'employeeHistory')),historyRecord(ctx,target.id,{...target,...publicPatch},'pds_import_update',changes));await batch.commit();
+    Object.assign(target,publicPatch);const nextPrivate={...privateBefore,...privatePatch};privateMap.set(target.id,nextPrivate);updateCached('users|all',rows=>rows.map(row=>row.id===target.id?{...row,...publicPatch}:row));updateCached(`employeePrivate|user:${target.id}`,()=>nextPrivate);updateCached('employeePrivate|all',rows=>rows.map(row=>row.id===target.id?{...row,...privatePatch}:row));invalidateCached('dashboard:users','urlaub:users');
+    pdsDialog.close();toast('Die ausgewählten Stammdaten wurden aktualisiert und in der Mitarbeiterhistorie protokolliert.');await renderMitarbeiter(el,ctx);
+  }
+  async function applyPdsImport(resolved){const selected=new Set(selectedPdsKeys());if(!selected.size){toast('Bitte mindestens ein Feld zur Übernahme auswählen.');return}if(resolved.existingEmployee)return updateExistingFromPds(resolved,selected);applyNewPdsImport(resolved,selected)}
   if(pdsImportBtn&&pdsFile){
     pdsImportBtn.onclick=()=>pdsFile.click();
     pdsFile.onchange=async()=>{const file=pdsFile.files?.[0];if(!file)return;pdsImportBtn.disabled=true;const old=pdsImportBtn.textContent;pdsImportBtn.textContent='PDF wird gelesen …';try{await loadAllPrivate();const parsed=await parsePdsPersonalPdf(file);showPdsPreview(pdsResolve(parsed))}catch(err){console.error('PDS-PDF konnte nicht gelesen werden',err);toast(err?.message||'PDS-PDF konnte nicht gelesen werden.')}finally{pdsImportBtn.disabled=false;pdsImportBtn.textContent=old;pdsFile.value=''}};
