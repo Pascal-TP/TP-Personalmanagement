@@ -1,5 +1,5 @@
 import { db } from "./firebase.js";
-import { collection, addDoc, getDocs, query, where, updateDoc, deleteDoc, doc, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+import { collection, addDoc, getDocs, getDoc, query, where, updateDoc, deleteDoc, doc, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 import { setHead } from "./app.js";
 import { esc, fmtDate, fmtDateTime, statusPill, toast, confirmDialog } from "./utils.js";
 import { hasAdminPermission } from "./permissions.js";
@@ -7,6 +7,7 @@ import { getAssignedDocs, supervisorIdsOf } from "./supervisor-utils.js";
 import { vacationYearBalance } from "./vacation-utils.js";
 import { scheduledMinutesOn } from "./employment-utils.js";
 import { vacationEntitlementOn } from "./employment-utils.js";
+import { calculateTimeAccountBalance, flexTimeRequestMinutes, futureFlexTimeMinutes } from "./time-utils.js";
 import { cachedRead, updateCached, invalidateCached } from "./read-cache.js";
 
 const cachedRows=(key,ref)=>cachedRead(`urlaub:${key}`,async()=>{const s=await getDocs(ref);return s.docs.map(d=>({id:d.id,...d.data()}))});
@@ -68,6 +69,31 @@ export async function renderUrlaub(el,ctx){
   const pendingTeam=team.filter(v=>v.status==='pending');
   const withdrawnTeam=team.filter(v=>v.status==='withdrawn'&&!v.withdrawalAcknowledgedAt);
 
+  async function showFlexApprovalPlanning(request,target){
+    if(!request||request.type!=='Freizeitausgleich'||!target)return;
+    target.innerHTML='<span class="muted">Zeitguthaben wird berechnet …</span>';
+    try{
+      let employee=employees.find(u=>u.id===request.userId);
+      if(!employee)employee=await cachedRead(`urlaub:user|${request.userId}`,async()=>{const snap=await getDoc(doc(db,'users',request.userId));return snap.exists()?{id:snap.id,...snap.data()}:null});
+      if(!employee)throw new Error('Mitarbeiterprofil wurde nicht gefunden.');
+      const [records,vacations,employeeAbsences]=await Promise.all([
+        cachedRows(`timeRecords|user:${employee.id}`,query(collection(db,'timeRecords'),where('userId','==',employee.id))),
+        cachedRows(`vacationRequests|user:${employee.id}`,query(collection(db,'vacationRequests'),where('userId','==',employee.id))),
+        cachedRows(`absences|user:${employee.id}`,query(collection(db,'absences'),where('userId','==',employee.id)))
+      ]);
+      const now=new Date(),withoutCurrent=vacations.filter(v=>v.id!==request.id);
+      const current=calculateTimeAccountBalance(records,employee,withoutCurrent,employeeAbsences,{includeOpen:true,now,until:now});
+      const approvedFuture=futureFlexTimeMinutes(withoutCurrent,employee,now);
+      const requested=flexTimeRequestMinutes(request,employee);
+      const remaining=current-approvedFuture-requested;
+      const shortage=Math.abs(remaining);
+      const warning=remaining<0?`<div class="warning-box"><strong>Hinweis</strong><span>Bei Genehmigung übersteigt der gesamte geplante Freizeitausgleich das aktuelle Zeitguthaben um ${Math.floor(shortage/60)}:${String(shortage%60).padStart(2,'0')} Stunden. Die Genehmigung bleibt möglich.</span></div>`:'';
+      const signed=value=>`${value>0?'+':value<0?'−':''}${Math.floor(Math.abs(value)/60)}:${String(Math.abs(value)%60).padStart(2,'0')} h`;
+      target.innerHTML=`<div class="stat-list"><div class="stat-row"><span>Aktuelles Zeitguthaben</span><strong>${signed(current)}</strong></div><div class="stat-row"><span>Bereits genehmigter zukünftiger Freizeitausgleich</span><strong>${signed(-approvedFuture)}</strong></div><div class="stat-row"><span>Dieser Antrag</span><strong>${signed(-requested)}</strong></div><div class="stat-row"><span>Verbleibend bei Genehmigung</span><strong>${signed(remaining)}</strong></div></div>${warning}`;
+      target.dataset.ready='true';
+    }catch(error){console.error('Zeitguthaben für Gleittagsantrag konnte nicht geladen werden',error);target.innerHTML=`<div class="error-card compact">Zeitguthaben konnte nicht geladen werden: ${esc(error?.message||'Unbekannter Fehler')}</div>`;target.dataset.ready='error'}
+  }
+
   const hrBlock=canManageAbsences?`<article class="card"><div class="card-head"><div><h2>Abwesenheit buchen</h2><p>Urlaub, Krankheit und weitere Abwesenheiten direkt durch die Personalabteilung erfassen. Urlaub gilt sofort und benötigt keine zusätzliche Freigabe.</p></div></div>
     <form id="absence-form" class="form-grid">
       <label class="field"><span>Mitarbeiter</span><select name="userId" required><option value="">– auswählen –</option>${employees.map(u=>`<option value="${esc(u.id)}">${esc(u.name||u.email||u.id)}</option>`).join('')}</select></label>
@@ -88,7 +114,7 @@ export async function renderUrlaub(el,ctx){
     <article class="card"><div class="card-head"><div><h2>Meine Anträge</h2><p>Offene und genehmigte Anträge können zurückgezogen werden; der Vorgang bleibt dokumentiert.</p></div></div>${own.length?own.map(v=>`<div class="list-row vacation-request-row"><div><strong>${fmtDate(v.from)} – ${fmtDate(v.to)}</strong><span>${esc(v.type||'Urlaub')} · ${v.days||0} Tage${portionLabel(v)}</span>${vacationHistory(v)}</div><div class="actions">${vacationStatus(v)}${['pending','approved'].includes(v.status)?`<button class="btn small danger withdraw-vacation" type="button" data-id="${v.id}">Antrag zurückziehen</button>`:''}</div></div>`).join(""):`<div class="empty">Keine Anträge vorhanden.</div>`}</article></div>
     ${canApprove?`<article class="card"><div class="card-head"><div><h2>Urlaubsfreigaben</h2><p>Offene Anträge der zugeordneten Mitarbeiter sowie zurückgezogene Anträge zur Kenntnisnahme.</p></div></div><div id="approval-list">
       ${withdrawnTeam.length?`<div class="info-strip"><strong>${withdrawnTeam.length} zurückgezogene${withdrawnTeam.length===1?'r':''} Antrag${withdrawnTeam.length===1?'':'e'}</strong> wartet/warten auf Kenntnisnahme.</div>${withdrawnTeam.map(v=>`<div class="approval-row withdrawn-vacation-row"><div><strong>${esc(v.userName||v.userId)}</strong><span>${fmtDate(v.from)} – ${fmtDate(v.to)} · ${v.days||0} Tage${portionLabel(v)} · zurückgezogen</span>${vacationHistory(v)}</div><div class="actions"><button class="btn small secondary acknowledge-withdrawal" data-id="${v.id}">Zur Kenntnis genommen</button></div></div>`).join('')}`:''}
-      ${pendingTeam.length?pendingTeam.map(v=>`<div class="approval-row"><div><strong>${esc(v.userName||v.userId)}</strong><span>${fmtDate(v.from)} – ${fmtDate(v.to)} · ${v.days||0} Tage${portionLabel(v)}</span>${v.note?`<small>${esc(v.note)}</small>`:''}</div><div class="actions"><button class="btn small approve" data-id="${v.id}">Genehmigen</button><button class="btn small danger reject" data-id="${v.id}">Ablehnen</button></div></div>`).join(""):(withdrawnTeam.length?'':'<div class="empty">Keine offenen Freigaben.</div>')}
+      ${pendingTeam.length?pendingTeam.map(v=>`<div class="approval-row"><div><strong>${esc(v.userName||v.userId)}</strong><span>${fmtDate(v.from)} – ${fmtDate(v.to)} · ${v.days||0} Tage${portionLabel(v)}</span>${v.note?`<small>${esc(v.note)}</small>`:''}${v.type==='Freizeitausgleich'?`<div class="flex-approval-planning" data-flex-planning="${esc(v.id)}"><button class="btn small secondary load-flex-planning" type="button" data-id="${esc(v.id)}">Zeitguthaben prüfen</button></div>`:''}</div><div class="actions"><button class="btn small approve" data-id="${v.id}">Genehmigen</button><button class="btn small danger reject" data-id="${v.id}">Ablehnen</button></div></div>`).join(""):(withdrawnTeam.length?'':'<div class="empty">Keine offenen Freigaben.</div>')}
     </div></article>`:''}`;
 
   const vacForm=el.querySelector('#vac-form');
@@ -102,7 +128,13 @@ export async function renderUrlaub(el,ctx){
     cacheAdd(`vacationRequests|user:${ctx.profile.id}`,local);cacheAdd('vacationRequests|all',local);ownSupervisors.forEach(id=>cacheAdd(`vacationRequests|supervisor:${id}`,local));invalidateCached('dashboard:vacationRequests');
     toast('Urlaubsantrag gesendet.');renderUrlaub(el,ctx);
   };
+  el.querySelectorAll('.load-flex-planning').forEach(b=>b.onclick=()=>showFlexApprovalPlanning(pendingTeam.find(v=>v.id===b.dataset.id),el.querySelector(`[data-flex-planning="${b.dataset.id}"]`)));
   el.querySelectorAll('.approve,.reject').forEach(b=>b.onclick=async()=>{
+    const request=pendingTeam.find(v=>v.id===b.dataset.id),planning=request?.type==='Freizeitausgleich'?el.querySelector(`[data-flex-planning="${b.dataset.id}"]`):null;
+    if(b.classList.contains('approve')&&planning?.dataset.ready!=='true'){
+      await showFlexApprovalPlanning(request,planning);
+      if(planning?.dataset.ready==='true'){toast('Bitte die Zeitguthabensituation prüfen und anschließend erneut auf „Genehmigen“ klicken.');return}
+    }
     const changes={status:b.classList.contains('approve')?'approved':'rejected',decidedBy:ctx.profile.id,decidedByName:ctx.profile.name||ctx.profile.email||'',decidedAt:serverTimestamp()};
     await updateDoc(doc(db,'vacationRequests',b.dataset.id),changes);const local={...changes,decidedAt:new Date()};
     cachePatch('vacationRequests|all',b.dataset.id,local);cachePatch(`vacationRequests|supervisor:${ctx.profile.id}`,b.dataset.id,local);invalidateCached('dashboard:vacationRequests');toast('Antrag bearbeitet.');renderUrlaub(el,ctx);

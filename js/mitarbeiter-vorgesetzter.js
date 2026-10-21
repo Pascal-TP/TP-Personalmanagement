@@ -12,7 +12,7 @@ import { httpsCallable } from "https://www.gstatic.com/firebasejs/11.6.1/firebas
 import { setHead } from "./app.js";
 import { esc } from "./utils.js";
 import { getEmployeePhotoUrls } from "./employee-photos.js";
-import { calculateDailyTimeValues, calculateTimeAccountValues, wasStartLimited } from "./time-utils.js";
+import { calculateDailyTimeValues, calculateTimeAccountValues, reachedFlexTimeRecords, wasStartLimited } from "./time-utils.js";
 import { getAssignedUsers } from "./supervisor-utils.js";
 import { hasSupervisorPermission } from "./permissions.js";
 
@@ -101,7 +101,9 @@ async function renderSupervisorBookings(container, employee) {
   }
 
   const bookingValues = calculateDailyTimeValues(records, employee, { includeOpen: true });
-  const accountValues = calculateTimeAccountValues(records, employee, vacations, absences, { includeOpen: true });
+  const reachedFlexRecords = reachedFlexTimeRecords(vacations,employee);
+  const bookingRecords = [...records,...reachedFlexRecords];
+  const accountValues = calculateTimeAccountValues(bookingRecords, employee, vacations, absences, { includeOpen: true });
 
   let month = new Date();
   month = new Date(month.getFullYear(), month.getMonth(), 1, 12);
@@ -109,7 +111,7 @@ async function renderSupervisorBookings(container, employee) {
   const renderMonth = () => {
     const year = month.getFullYear(),
       monthNo = month.getMonth() + 1;
-    const monthRecords = records
+    const monthRecords = bookingRecords
       .filter((r) =>
         bookingDateKey(r).startsWith(`${year}-${bookingPad(monthNo)}-`),
       )
@@ -135,6 +137,9 @@ async function renderSupervisorBookings(container, employee) {
             monthRecords.length
               ? monthRecords
                   .map((r) => {
+                    if(r.virtualFlexTime){
+                      return `<tr class="adjustment-row flex-time-row"><td>${esc(bookingDateKey(r).split("-").reverse().join("."))}</td><td>–</td><td colspan="2"><strong>Freizeitausgleich / Gleittag</strong></td><td><strong>${esc(bookingMinutesText(-r.flexMinutes,{signed:true}))}</strong></td><td><strong>${esc(bookingMinutesText(r.flexMinutes))}</strong></td><td><strong>${esc(bookingMinutesText((accountValues.get(r.id)||{}).balance||0,{signed:true}))}</strong></td><td>Freizeitausgleich</td><td>Genehmigt · virtuelle Anzeige</td></tr>`;
+                    }
                     if (r.recordType === "adjustment") {
                       const note = [r.adjustmentReason, r.adjustmentDetails]
                         .filter(Boolean)

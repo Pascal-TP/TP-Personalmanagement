@@ -14,7 +14,7 @@ import {
 import { setHead } from "./app.js";
 import { esc, fmtDate, fmtDateTime, statusPill, toast, confirmDialog, validationNotice } from "./utils.js";
 import { hasAdminPermission } from "./permissions.js";
-import { calculateDailyTimeValues, calculateTimeAccountValues, wasStartLimited } from "./time-utils.js";
+import { calculateDailyTimeValues, calculateTimeAccountValues, reachedFlexTimeRecords, wasStartLimited } from "./time-utils.js";
 import { getAssignedDocs, getAssignedUsers } from "./supervisor-utils.js";
 
 
@@ -302,7 +302,10 @@ export async function renderZeiterfassung(el, ctx) {
 
   const openRecord = entries.find(isOpen) || null;
   const allocatedValues = calculateDailyTimeValues(entries, ctx.profile, {includeOpen:true});
-  const accountValues = calculateTimeAccountValues(entries, ctx.profile, ownVacations, ownAbsences, {includeOpen:true});
+  const reachedFlexRecords = reachedFlexTimeRecords(ownVacations,ctx.profile);
+  const accountRecords = [...entries,...reachedFlexRecords];
+  const accountValues = calculateTimeAccountValues(accountRecords, ctx.profile, ownVacations, ownAbsences, {includeOpen:true});
+  const bookingEntries = [...accountRecords].sort((a,b)=>String(recordDateKey(b)).localeCompare(String(recordDateKey(a)))||((recordStartDate(b)?.getTime?.()||0)-(recordStartDate(a)?.getTime?.()||0)));
   const flatDays = flatEightHourView ? flatEightHourDays(entries) : [];
   const pendingRecordIds = new Set(
     ownRequests.filter(r => r.status === "pending" && r.requestType === "correction").map(r => r.recordId)
@@ -389,7 +392,17 @@ export async function renderZeiterfassung(el, ctx) {
         </tbody>` : `
         <thead><tr><th>Datum</th><th>Projekt</th><th>Beginn</th><th>Ende</th><th>Pause</th><th>Arbeitszeit</th><th>Soll-Zeit</th><th>Zeitguthaben</th><th>Status</th><th>Aktion</th></tr></thead>
         <tbody>
-          ${entries.length ? entries.map(r => {
+          ${bookingEntries.length ? bookingEntries.map(r => {
+            if(r.virtualFlexTime){
+              return `<tr class="adjustment-row flex-time-row">
+                <td>${fmtDate(r.adjustmentDate)}</td><td>–</td>
+                <td colspan="3"><strong>Freizeitausgleich / Gleittag</strong><small class="booking-note">Genehmigter Gleittag · keine bearbeitbare Zeitbuchung</small></td>
+                <td><strong class="adjustment-value negative">${signedHm(-r.flexMinutes)}</strong></td>
+                <td><strong>${hm(r.flexMinutes)}</strong></td>
+                <td><strong>${signedHm((accountValues.get(r.id)||{}).balance||0)}</strong></td>
+                <td>${statusPill("Genehmigt","green")}</td><td><span class="muted-small">automatisch aus Freizeitausgleich</span></td>
+              </tr>`;
+            }
             if (r.recordType === "adjustment") {
               const reason = [r.adjustmentReason, r.adjustmentDetails].filter(Boolean).join(" · ");
               return `<tr class="adjustment-row">

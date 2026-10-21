@@ -157,10 +157,48 @@ function coveredDateFractions(items,{approvedOnly=false}={}){
   (items||[]).forEach(item=>{
     if(item?.status==='withdrawn')return;
     if(approvedOnly&&item?.status!=='approved')return;
+    // Freizeitausgleich ist keine Sollzeitbefreiung: Das historisch gültige
+    // Tagessoll bleibt bestehen und reduziert dadurch das Zeitkonto am Gleittag.
+    if(approvedOnly&&item?.type==='Freizeitausgleich')return;
     const half=item?.from===item?.to&&['morning','afternoon'].includes(item?.dayPortion);
     dateRangeKeys(item?.from,item?.to).forEach(key=>map.set(key,Math.max(map.get(key)||0,half?0.5:1)));
   });
   return map;
+}
+
+// Gemeinsame Fachlogik für erreichte und zukünftige Gleittage. Pro Kalendertag
+// wird höchstens ein genehmigter Freizeitausgleich berücksichtigt, auch wenn
+// sich versehentlich mehrere Anträge überschneiden.
+export function approvedFlexTimeDays(vacations=[],profile={}, {from='',to=''}={}){
+  const byDate=new Map();
+  (vacations||[]).filter(v=>v?.status==='approved'&&v?.type==='Freizeitausgleich').forEach(v=>{
+    dateRangeKeys(v.from,v.to).forEach(key=>{
+      if((from&&key<from)||(to&&key>to)||byDate.has(key))return;
+      byDate.set(key,{date:key,minutes:scheduledMinutesOn(profile,key),requestId:String(v.id||'')});
+    });
+  });
+  return [...byDate.values()].sort((a,b)=>a.date.localeCompare(b.date));
+}
+
+export function flexTimeRequestMinutes(request={},profile={}){
+  if(request?.type!=='Freizeitausgleich')return 0;
+  return dateRangeKeys(request.from,request.to).reduce((sum,key)=>sum+scheduledMinutesOn(profile,key),0);
+}
+
+export function futureFlexTimeMinutes(vacations=[],profile={},today=new Date()){
+  const todayKey=timeDateKey(today);
+  return approvedFlexTimeDays(vacations,profile,{from:dateRangeKeys(todayKey,todayKey)[0]||todayKey})
+    .filter(day=>day.date>todayKey).reduce((sum,day)=>sum+day.minutes,0);
+}
+
+export function reachedFlexTimeRecords(vacations=[],profile={},today=new Date()){
+  const todayKey=timeDateKey(today);
+  return approvedFlexTimeDays(vacations,profile,{to:todayKey}).map(day=>({
+    id:`flex_time_${day.requestId||'request'}_${day.date}`,
+    userId:profile?.id||'',recordType:'adjustment',virtualFlexTime:true,
+    adjustmentDate:day.date,adjustmentMinutes:0,flexMinutes:day.minutes,
+    status:'approved',source:'approved_flex_time'
+  }));
 }
 
 // V2.9.2.1 – laufendes Zeitguthaben / Minusstundenkonto.

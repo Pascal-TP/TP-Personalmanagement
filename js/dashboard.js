@@ -6,7 +6,7 @@ import { esc, fmtDate, statusPill, toast, confirmDialog } from "./utils.js";
 import { beginPortalLoading, endPortalLoading } from "./loading-indicator.js";
 import { hasAdminPermission } from "./permissions.js";
 import { progressForTrainingYear, visibleTrainingsForYear } from "./training-utils.js";
-import { calculateDailyTimeValues, calculateTimeAccountBalance, timeRecordStart } from "./time-utils.js";
+import { calculateDailyTimeValues, calculateTimeAccountBalance, futureFlexTimeMinutes, timeRecordStart } from "./time-utils.js";
 import { getAssignedDocs } from "./supervisor-utils.js";
 import { scheduledMinutesOn } from "./employment-utils.js";
 import { cachedRead, invalidateCached } from "./read-cache.js";
@@ -357,10 +357,15 @@ export async function renderDashboard(el,ctx){
       ? timeRequests.filter(x=>x.status==="pending"&&(x.supervisorId===p.id||x.supervisorId2===p.id)).length
       : 0;
   const pendingTime=canApproveTime?pendingTeamTime:pendingOwnTime;
-  const yesterday=new Date();yesterday.setDate(yesterday.getDate()-1);yesterday.setHours(23,59,59,999);
-  const accountBalance=calculateTimeAccountBalance(timeRecords,p,vacations,absences,{includeOpen:false,now:yesterday,until:yesterday});
+  const balanceNow=new Date();
+  const accountBalance=calculateTimeAccountBalance(timeRecords,p,vacations,absences,{includeOpen:true,now:balanceNow,until:balanceNow});
+  const plannedFlexMinutes=futureFlexTimeMinutes(vacations,p,balanceNow);
+  const availableBalance=accountBalance-plannedFlexMinutes;
   const balanceClass=accountBalance>0?'positive':accountBalance<0?'negative':'neutral';
-  const balanceDate=new Intl.DateTimeFormat('de-DE').format(yesterday);
+  const availableClass=availableBalance>0?'positive':availableBalance<0?'negative':'neutral';
+  const balanceDate=new Intl.DateTimeFormat('de-DE').format(balanceNow);
+  const flexWarning=p.role!=="admin"&&p.noTimeTracking!==true&&plannedFlexMinutes>0&&plannedFlexMinutes>accountBalance
+    ? `<div class="warning-box"><strong>Geplanter Freizeitausgleich</strong><span>Dein geplanter Freizeitausgleich übersteigt Dein aktuelles Zeitguthaben um ${hm(plannedFlexMinutes-accountBalance)}.</span><span>Der Hinweis ist rein informativ; genehmigte Anträge bleiben unverändert.</span></div>`:"";
   const monthName=new Intl.DateTimeFormat("de-DE",{month:"long"}).format(new Date());
 
   const trainingAction=p.role==="admin"?(globalTrainingCountAvailable&&openTrainings>0):openTrainings>0;
@@ -377,8 +382,8 @@ export async function renderDashboard(el,ctx){
       <div class="kpi is-clickable ${trainingAction?"needs-action":""}" data-nav="trainings" role="button" tabindex="0"><span>Offene Schulungen</span><strong>${p.role==="admin"&&!globalTrainingCountAvailable?"–":openTrainings}</strong><small>${p.role==="admin"?(globalTrainingCountAvailable?(trainingAction?"offene Zuordnungen im Unternehmen":"keine offenen Zuordnungen"):"Schulungsübersicht nicht freigeschaltet"):(trainingAction?"Bearbeitung erforderlich":"keine offene Aufgabe")}</small></div>
       <div class="kpi is-clickable ${vacationAction?"needs-action":""}" data-nav="vacation" role="button" tabindex="0"><span>Urlaubsanträge</span><strong>${p.role==="admin"&&!canApproveVacation?"–":vacationCount}</strong><small>${p.role==="admin"?(canApproveVacation?(vacationAction?"offen im Unternehmen":"keine offenen Anträge"):"Urlaubsübersicht nicht freigeschaltet"):(canApproveVacation?(vacationAction?"zur Freigabe":"keine offene Freigabe"):"aktuell in Bearbeitung")}</small></div>
       ${(p.role==='employee'&&p.noTimeTracking===true)?'':`<div class="kpi is-clickable ${timeAction?"needs-action":""}" data-nav="time" role="button" tabindex="0"><span>Zeiterfassungsanträge</span><strong>${p.role==="admin"&&!canApproveTime?"–":pendingTime}</strong><small>${p.role==="admin"?(canApproveTime?(timeAction?"offen im Unternehmen":"keine offenen Anträge"):"Zeitfreigaben nicht freigeschaltet"):(canApproveTime?(timeAction?"zur Freigabe":"keine offene Freigabe"):"eigene offene Anträge")}</small></div>`}
-      ${p.role!=="admin"&&p.noTimeTracking!==true?`<div class="kpi hours-kpi is-clickable" data-nav="time" role="button" tabindex="0"><span>Stundenkonto</span><strong>${hm(accountBalance,{signed:true})}</strong><small class="hours-balance ${balanceClass}">Stand: ${esc(balanceDate)} · Abschluss Vortag</small></div>`:""}
-    </div>${changeRequestHint}${adminHint}${renderComplianceAlerts(complianceAlerts)}${tgaOvertimeHtml}${milestoneHtml}${hrReminderHtml}
+      ${p.role!=="admin"&&p.noTimeTracking!==true?`<div class="kpi hours-kpi is-clickable" data-nav="time" role="button" tabindex="0"><span>Aktuelles Zeitguthaben</span><strong>${hm(accountBalance,{signed:true})}</strong><small class="hours-balance ${balanceClass}">Stand: ${esc(balanceDate)} · einschließlich heute</small></div><div class="kpi hours-kpi is-clickable" data-nav="vacation" role="button" tabindex="0"><span>Geplanter Freizeitausgleich</span><strong>${hm(-plannedFlexMinutes,{signed:true})}</strong><small>genehmigte zukünftige Gleittage</small></div><div class="kpi hours-kpi is-clickable" data-nav="time" role="button" tabindex="0"><span>Voraussichtlich verfügbar</span><strong>${hm(availableBalance,{signed:true})}</strong><small class="hours-balance ${availableClass}">ohne zukünftige Mehrarbeit</small></div>`:""}
+    </div>${flexWarning}${changeRequestHint}${adminHint}${renderComplianceAlerts(complianceAlerts)}${tgaOvertimeHtml}${milestoneHtml}${hrReminderHtml}
     <div class="two-col">
       <article class="card"><div class="card-head"><div><h2>News & Hinweise</h2><p>Aktuelle Informationen der Personalabteilung</p></div></div>
         <div class="news-list">${news.length?news.map(n=>`<div class="news-card ${n.priority==='important'?'important':''}"><div class="news-icon">${n.priority==='important'?'!':'i'}</div><div><h3>${esc(n.title||'Hinweis')}</h3><div class="rich-content">${n.html||esc(n.text||'')}</div><span>${n.validTo?`gültig bis ${fmtDate(n.validTo)}`:'interne Mitteilung'}</span></div></div>`).join(""):`<div class="empty">Aktuell liegen keine Hinweise vor.</div>`}</div>

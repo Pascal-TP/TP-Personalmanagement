@@ -4,7 +4,7 @@ import { httpsCallable } from "https://www.gstatic.com/firebasejs/11.6.1/firebas
 import { setHead } from "./app.js";
 import { esc, toast, confirmDialog } from "./utils.js";
 import { hasAdminPermission } from "./permissions.js";
-import { calculateDailyTimeValues, recordGrossMinutes, timeRecordDateKey, timeRecordEnd, timeRecordStart } from "./time-utils.js";
+import { calculateDailyTimeValues, reachedFlexTimeRecords, recordGrossMinutes, timeRecordDateKey, timeRecordEnd, timeRecordStart } from "./time-utils.js";
 import { vacationYearBalance, vacationCarryoverDocId } from "./vacation-utils.js";
 import { getAssignedUsers, getAssignedDocs } from "./supervisor-utils.js";
 import { positionOn, scheduledMinutesOn } from "./employment-utils.js";
@@ -128,7 +128,26 @@ function planningPrintHtml(users,monday,vacations,absences,plans,supervisorName)
 function minutesText(value){const n=Math.round(Number(value)||0),sign=n<0?'-':'';return `${sign}${String(Math.floor(Math.abs(n)/60)).padStart(2,'0')}:${String(Math.abs(n)%60).padStart(2,'0')}`}
 function clockText(value){const d=toDate(value);return d?new Intl.DateTimeFormat('de-DE',{hour:'2-digit',minute:'2-digit'}).format(d):'–'}
 function employeeBookingsReportCard(users){return `<article class="card employee-time-report"><div class="card-head"><div><h2>Zeitbuchungen Mitarbeiter</h2><p>Buchungen und tägliche Soll-Zeit eines berechtigten Mitarbeiters prüfen.</p></div></div><form class="form-grid"><label class="field"><span>Mitarbeiter</span><select id="employee-time-user"><option value="">– auswählen –</option>${users.map(u=>`<option value="${esc(u.id)}">${esc(u.name||u.email||u.id)}</option>`).join('')}</select></label><label class="field"><span>Von</span><input id="employee-time-from" type="date"></label><label class="field"><span>Bis</span><input id="employee-time-to" type="date"></label><div class="field actions"><button type="button" class="btn primary" id="employee-time-show">Buchungen anzeigen</button></div></form><div id="employee-time-result"><div class="empty">Mitarbeiter und Zeitraum auswählen.</div></div></article>`}
-function bindEmployeeBookingsReport(root,users,loadRecords){const select=root.querySelector('#employee-time-user');if(!select)return;const now=new Date(),from=new Date(now.getFullYear(),now.getMonth(),1);root.querySelector('#employee-time-from').value=dateKey(from);root.querySelector('#employee-time-to').value=dateKey(now);root.querySelector('#employee-time-show').onclick=async()=>{const user=users.find(u=>u.id===select.value),a=root.querySelector('#employee-time-from').value,b=root.querySelector('#employee-time-to').value,result=root.querySelector('#employee-time-result'),button=root.querySelector('#employee-time-show');if(!user||!a||!b||a>b){toast('Bitte Mitarbeiter und gültigen Zeitraum auswählen.','error');return}button.disabled=true;result.innerHTML='<div class="loading">Zeitbuchungen werden geladen …</div>';try{const records=await withReportLoading('Zeitbuchungen werden geladen …',()=>loadRecords(user.id));if(!root.isConnected)return;const rows=records.filter(r=>r.userId===user.id&&timeRecordDateKey(r)>=a&&timeRecordDateKey(r)<=b).sort((x,y)=>String(timeRecordDateKey(y)).localeCompare(String(timeRecordDateKey(x)))||(timeRecordStart(y)?.getTime()||0)-(timeRecordStart(x)?.getTime()||0)),values=calculateDailyTimeValues(rows,user,{includeOpen:true});result.innerHTML=`<div class="table-wrap"><table><thead><tr><th>Datum</th><th>Von</th><th>Bis</th><th>Projekt</th><th>Pause</th><th>Ist-Zeit</th><th>Soll-Zeit</th><th>Status</th></tr></thead><tbody>${rows.length?rows.map(r=>{const key=timeRecordDateKey(r),v=values.get(r.id)||{};return `<tr><td>${esc(key.split('-').reverse().join('.'))}</td><td>${r.recordType==='adjustment'?'Korrektur':clockText(timeRecordStart(r))}</td><td>${r.recordType==='adjustment'?'–':clockText(timeRecordEnd(r))}</td><td>${esc(r.projectNumber||'–')}</td><td>${minutesText(v.pause)}</td><td>${minutesText(v.net)}</td><td>${minutesText(scheduledMinutesOn(user,key))}</td><td>${esc(r.status||'–')}</td></tr>`}).join(''):'<tr><td colspan="8" class="empty">Keine Buchungen im gewählten Zeitraum.</td></tr>'}</tbody></table></div>`}catch(err){console.error(err);result.innerHTML=`<div class="error-card"><strong>Zeitbuchungen konnten nicht geladen werden.</strong><p>${esc(err?.message||'')}</p></div>`}finally{if(root.isConnected)button.disabled=false}}}
+function bindEmployeeBookingsReport(root,users,loadRecords,loadVacations){
+  const select=root.querySelector('#employee-time-user');if(!select)return;
+  const now=new Date(),from=new Date(now.getFullYear(),now.getMonth(),1);
+  root.querySelector('#employee-time-from').value=dateKey(from);root.querySelector('#employee-time-to').value=dateKey(now);
+  root.querySelector('#employee-time-show').onclick=async()=>{
+    const user=users.find(u=>u.id===select.value),a=root.querySelector('#employee-time-from').value,b=root.querySelector('#employee-time-to').value,result=root.querySelector('#employee-time-result'),button=root.querySelector('#employee-time-show');
+    if(!user||!a||!b||a>b){toast('Bitte Mitarbeiter und gültigen Zeitraum auswählen.','error');return}
+    button.disabled=true;result.innerHTML='<div class="loading">Zeitbuchungen werden geladen …</div>';
+    try{
+      const [records,vacations]=await withReportLoading('Zeitbuchungen werden geladen …',()=>Promise.all([loadRecords(user.id),loadVacations(user.id)]));
+      if(!root.isConnected)return;
+      const virtual=reachedFlexTimeRecords(vacations,user).filter(r=>r.adjustmentDate>=a&&r.adjustmentDate<=b);
+      const real=records.filter(r=>r.userId===user.id&&timeRecordDateKey(r)>=a&&timeRecordDateKey(r)<=b);
+      const rows=[...real,...virtual].sort((x,y)=>String(timeRecordDateKey(y)).localeCompare(String(timeRecordDateKey(x)))||(timeRecordStart(y)?.getTime()||0)-(timeRecordStart(x)?.getTime()||0));
+      const values=calculateDailyTimeValues(real,user,{includeOpen:true});
+      result.innerHTML=`<div class="table-wrap"><table><thead><tr><th>Datum</th><th>Von</th><th>Bis</th><th>Projekt</th><th>Pause</th><th>Ist-Zeit</th><th>Soll-Zeit</th><th>Status</th></tr></thead><tbody>${rows.length?rows.map(r=>{const key=timeRecordDateKey(r),v=values.get(r.id)||{};if(r.virtualFlexTime)return `<tr class="adjustment-row flex-time-row"><td>${esc(key.split('-').reverse().join('.'))}</td><td colspan="2"><strong>Freizeitausgleich / Gleittag</strong></td><td>–</td><td>00:00</td><td><strong>${minutesText(-r.flexMinutes)}</strong></td><td>${minutesText(r.flexMinutes)}</td><td>Genehmigt</td></tr>`;return `<tr><td>${esc(key.split('-').reverse().join('.'))}</td><td>${r.recordType==='adjustment'?'Korrektur':clockText(timeRecordStart(r))}</td><td>${r.recordType==='adjustment'?'–':clockText(timeRecordEnd(r))}</td><td>${esc(r.projectNumber||'–')}</td><td>${minutesText(v.pause)}</td><td>${minutesText(v.net)}</td><td>${minutesText(scheduledMinutesOn(user,key))}</td><td>${esc(r.status||'–')}</td></tr>`}).join(''):'<tr><td colspan="8" class="empty">Keine Buchungen im gewählten Zeitraum.</td></tr>'}</tbody></table></div>`;
+    }catch(err){console.error(err);result.innerHTML=`<div class="error-card"><strong>Zeitbuchungen konnten nicht geladen werden.</strong><p>${esc(err?.message||'')}</p></div>`}
+    finally{if(root.isConnected)button.disabled=false}
+  };
+}
 
 async function renderSupervisorAttendance(el,ctx){
   setHead('Auswertungen','Anwesenheits-, Abwesenheits- und Wochenplanung für die zugeordneten Mitarbeiter.');
@@ -178,7 +197,7 @@ async function renderSupervisorAttendance(el,ctx){
   </div>`;
 
   const todayKey=dateKey(new Date());
-  bindEmployeeBookingsReport(el,users,loadUserTimeRecords);
+  bindEmployeeBookingsReport(el,users,loadUserTimeRecords,userId=>Promise.resolve(vacations.filter(v=>v.userId===userId)));
   const awayToday=new Set();
   absences.filter(a=>a.status!=='withdrawn').forEach(a=>{if(rangeContains(a.from,a.to,todayKey))awayToday.add(a.userId)});
   vacations.forEach(v=>{if(v.status==='approved'&&rangeContains(v.from,v.to,todayKey))awayToday.add(v.userId)});
@@ -516,7 +535,7 @@ export async function renderAuswertungen(el,ctx){
   const loadAllAdjustments=()=>cachedRows('urlaub:vacationAdjustments|all',collection(db,'vacationAdjustments')).catch(()=>[]);
 
   if(canAnnual){const af=el.querySelector('#annual-form'),ar=el.querySelector('#annual-result'),pb=el.querySelector('#annual-print'),show=el.querySelector('#annual-show');show.onclick=async()=>{const user=users.find(x=>x.id===af.elements.userId.value),year=Number(af.elements.year.value);if(!user||year<2020||year>2100){toast('Bitte Mitarbeiter und gültiges Jahr auswählen.','error');return}show.disabled=true;ar.innerHTML='<div class="loading">Jahresübersicht wird geladen …</div>';try{const [vacations,absences,carryoverSettings,vacationAdjustments]=await withReportLoading('Jahresübersicht wird geladen …',()=>Promise.all([cachedRows(`urlaub:vacationRequests|user:${user.id}`,query(collection(db,'vacationRequests'),where('userId','==',user.id))),cachedRows(`urlaub:absences|user:${user.id}`,query(collection(db,'absences'),where('userId','==',user.id))),cachedRows(`urlaub:vacationCarryoverSettings|user:${user.id}`,query(collection(db,'vacationCarryoverSettings'),where('userId','==',user.id))).catch(()=>[]),cachedRows(`urlaub:vacationAdjustments|user:${user.id}`,query(collection(db,'vacationAdjustments'),where('userId','==',user.id))).catch(()=>[])]));if(!el.isConnected)return;ar.innerHTML=annualHtml(user,year,vacations,absences,carryoverSettings,vacationAdjustments);pb.disabled=false}catch(err){console.error(err);ar.innerHTML=`<div class="error-card"><strong>Jahresübersicht konnte nicht geladen werden.</strong><p>${esc(err?.message||'')}</p></div>`}finally{if(el.isConnected)show.disabled=false}};pb.onclick=()=>printReport('annual')}
-  if(canHoursExport)bindEmployeeBookingsReport(el,users,loadUserTimeRecords);
+  if(canHoursExport)bindEmployeeBookingsReport(el,users,loadUserTimeRecords,userId=>cachedRows(`urlaub:vacationRequests|user:${userId}`,query(collection(db,'vacationRequests'),where('userId','==',userId))));
   if(canHrReports){
     const vf=el.querySelector('#vacation-balance-form'),vr=el.querySelector('#vacation-balance-result'),vp=el.querySelector('#vacation-balance-print');
     const ca=el.querySelector('#vacation-carryover-admin');

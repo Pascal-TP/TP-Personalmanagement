@@ -10,7 +10,7 @@ import { ADMIN_PERMISSION_DEFS, DEFAULT_ADMIN_PERMISSIONS, SUPERVISOR_PERMISSION
 import { randomToken, sha256Hex, nfcSupported, writeEmployeeNfcTag, readEmployeeNfcSerialNumber, nfcSerialAliases } from "./nfc-utils.js";
 import { getEmployeePhotoUrls, uploadEmployeePhoto, deleteEmployeePhoto } from "./employee-photos.js";
 import { sameTrainingSelection, upsertTrainingAssignmentHistory } from "./training-utils.js";
-import { calculateDailyTimeValues, calculateTimeAccountValues, wasStartLimited } from "./time-utils.js";
+import { calculateDailyTimeValues, calculateTimeAccountValues, reachedFlexTimeRecords, wasStartLimited } from "./time-utils.js";
 import { parsePdsPersonalPdf, normalizePdsName } from "./pds-personal-import.js";
 import { normalizedVacationEntitlements, vacationEntitlementOn, normalizedPositionHistory, positionOn, normalizedWorkScheduleHistory, workScheduleOn } from "./employment-utils.js";
 import { drawPersonnelQr, printPersonnelQr } from "./qr-utils.js";
@@ -497,11 +497,13 @@ export async function renderMitarbeiter(el,ctx){
       return;
     }
     const bookingValues=calculateDailyTimeValues(records,employee,{includeOpen:true});
-    const accountValues=calculateTimeAccountValues(records,employee,vacations,absences,{includeOpen:true});
+    const reachedFlexRecords=reachedFlexTimeRecords(vacations,employee);
+    const bookingRecords=[...records,...reachedFlexRecords];
+    const accountValues=calculateTimeAccountValues(bookingRecords,employee,vacations,absences,{includeOpen:true});
     let month=new Date(initialMonth.getFullYear(),initialMonth.getMonth(),1,12);
     const renderMonth=()=>{
       const year=month.getFullYear(),monthNo=month.getMonth()+1;
-      const monthRecords=records.filter(r=>{
+      const monthRecords=bookingRecords.filter(r=>{
         const key=bookingDateKey(r);
         return key.startsWith(`${year}-${bookingPad(monthNo)}-`);
       }).sort((a,b)=>{
@@ -521,6 +523,9 @@ export async function renderMitarbeiter(el,ctx){
         <div class="table-wrap"><table class="employee-bookings-table">
           <thead><tr><th>Datum</th><th>Projekt</th><th>KOMMEN</th><th>GEHEN</th><th>Arbeitszeit</th><th>Soll-Zeit</th><th>Zeitguthaben</th><th>Buchungsart</th><th>Terminal / Hinweis</th>${canDeleteTimeRecords?'<th class="booking-action-column">Aktion</th>':''}</tr></thead>
           <tbody>${monthRecords.length?monthRecords.map(r=>{
+            if(r.virtualFlexTime){
+              return `<tr class="adjustment-row flex-time-row"><td>${esc(bookingDateKey(r).split('-').reverse().join('.'))}</td><td>–</td><td colspan="2"><strong>Freizeitausgleich / Gleittag</strong></td><td><strong>${esc(bookingMinutesText(-r.flexMinutes,{signed:true}))}</strong></td><td><strong>${esc(bookingMinutesText(r.flexMinutes))}</strong></td><td><strong>${esc(bookingMinutesText((accountValues.get(r.id)||{}).balance||0,{signed:true}))}</strong></td><td>Freizeitausgleich</td><td>Genehmigt · virtuelle Anzeige</td>${canDeleteTimeRecords?'<td class="booking-action-cell"><button class="btn secondary small booking-delete-disabled" type="button" disabled title="Gleittage werden über den Antrag verwaltet." aria-label="Gleittag kann hier nicht gelöscht werden">🗑</button></td>':''}</tr>`;
+            }
             if(r.recordType==='adjustment'){
               const note=[r.adjustmentReason,r.adjustmentDetails].filter(Boolean).join(' · ');
               return `<tr class="adjustment-row"><td>${esc(bookingDateKey(r).split('-').reverse().join('.'))}</td><td>${esc(r.projectNumber||'–')}</td><td colspan="2"><strong>Stundenkorrektur</strong></td><td><strong>${esc(bookingMinutesText(r.adjustmentMinutes,{signed:true}))}</strong></td><td><strong>${esc(bookingMinutesText((accountValues.get(r.id)||{}).targetMinutes||0))}</strong></td><td><strong>${esc(bookingMinutesText((accountValues.get(r.id)||{}).balance||0,{signed:true}))}</strong></td><td>${esc(bookingSourceLabel(r))}</td><td>${esc(note||r.createdByName||'Personalabteilung')}</td>${canDeleteTimeRecords?'<td class="booking-action-cell"><button class="btn secondary small booking-delete-disabled" type="button" disabled title="Stundenkorrekturen können hier nicht gelöscht werden." aria-label="Stundenkorrektur kann hier nicht gelöscht werden">🗑</button></td>':''}</tr>`;
