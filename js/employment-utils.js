@@ -19,9 +19,12 @@ export function normalizedWorkScheduleHistory(user={}){
   return rows.sort((a,b)=>(a.validFrom||'').localeCompare(b.validFrom||'')||a.order-b.order).slice(0,20);
 }
 export function workScheduleOn(user={},date=todayKey()){
-  const key=dateKey(date)||todayKey(),rows=normalizedWorkScheduleHistory(user);let active=rows[0];
-  rows.forEach((row,index)=>{if(index===0||!row.validFrom||row.validFrom<=key)active=row;});
-  return active;
+  const key=dateKey(date)||todayKey(),rows=normalizedWorkScheduleHistory(user);let active=null;
+  rows.forEach(row=>{if(!row.validFrom||row.validFrom<=key)active=row;});
+  // Vor der ersten ausdrücklich datierten Regelung bestand noch keine aus
+  // dieser Regelung ableitbare Arbeitspflicht. Das verhindert insbesondere,
+  // dass die erste heutige Regel rückwirkend auf frühere Zeiträume wirkt.
+  return active||{model:'uniform',validFrom:'',weeklyHours:0,workDays:[],dailyMinutes:normalizedDailyMinutes(),changeType:'change',note:'',inactive:true};
 }
 export function scheduledMinutesOn(user={},date=todayKey()){
   const key=dateKey(date)||todayKey(),day=new Date(`${key}T12:00:00`);if(Number.isNaN(day.getTime()))return 0;

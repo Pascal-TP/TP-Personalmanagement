@@ -201,15 +201,31 @@ export function reachedFlexTimeRecords(vacations=[],profile={},today=new Date())
   }));
 }
 
-// V2.9.2.1 – laufendes Zeitguthaben / Minusstundenkonto.
-// Das Konto startet mit dem ersten vorhandenen Zeit- oder Korrekturdatensatz und
-// läuft danach minutengenau weiter. Pro Arbeitstag wird das Tagessoll einmal
-// abgezogen; genehmigter Urlaub und gebuchte Abwesenheiten reduzieren das Soll
-// des betreffenden Tages auf 0. Stundenkorrekturen wirken direkt auf das Konto.
-export function calculateTimeAccountValues(records,profile={},vacations=[],absences=[],{includeOpen=true,now=new Date()}={}){
+function accountDateKey(value){
+  if(value instanceof Date&&!Number.isNaN(value.getTime()))return timeDateKey(value);
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(value||''))?String(value):'';
+}
+
+function accountPeriod(items,profile,endKey=''){
+  // Virtuelle Gleittagszeilen dokumentieren einen bereits erreichten Tag,
+  // dürfen den Beginn des Arbeitszeitkontos aber nicht vor die erste echte
+  // Zeit- oder Korrekturbuchung verschieben.
+  const realKeys=items.filter(r=>!r?.virtualFlexTime).map(timeRecordDateKey).filter(Boolean).sort();
+  if(!realKeys.length)return null;
+  let firstKey=realKeys[0];
+  const employmentStart=accountDateKey(profile?.startDate);
+  if(employmentStart&&employmentStart>firstKey)firstKey=employmentStart;
+  const allKeys=items.map(timeRecordDateKey).filter(Boolean).sort();
+  let lastKey=endKey||allKeys[allKeys.length-1]||firstKey;
+  const employmentEnd=accountDateKey(profile?.endDate);
+  if(employmentEnd&&employmentEnd<lastKey)lastKey=employmentEnd;
+  return firstKey<=lastKey?{firstKey,lastKey}:null;
+}
+
+function calculateTimeAccount(records,profile,vacations,absences,{includeOpen=true,now=new Date(),until=null,values=false}={}){
   const result=new Map();
   const items=(records||[]).filter(r=>timeRecordDateKey(r));
-  if(!items.length)return result;
+  if(!items.length)return values?result:0;
 
   const dailyValues=calculateDailyTimeValues(items,profile,{includeOpen,now});
   const byDay=new Map();
@@ -219,27 +235,37 @@ export function calculateTimeAccountValues(records,profile={},vacations=[],absen
     byDay.get(key).push(r);
   });
 
-  const keys=[...byDay.keys()].sort();
-  let firstKey=keys[0],lastKey=keys[keys.length-1];
-  if(profile?.startDate&&/^\d{4}-\d{2}-\d{2}$/.test(String(profile.startDate))&&profile.startDate>firstKey)firstKey=profile.startDate;
+  const itemKeys=items.map(timeRecordDateKey).filter(Boolean).sort();
+  const requestedEnd=values
+    ? itemKeys[itemKeys.length-1]||''
+    : accountDateKey(until instanceof Date?until:now);
+  const period=accountPeriod(items,profile,requestedEnd);
+  if(!period)return values?result:0;
 
   const leaveFractions=coveredDateFractions(vacations,{approvedOnly:true});
   const absenceFractions=coveredDateFractions(absences);
-
   let balance=0;
-  for(const key of dateRangeKeys(firstKey,lastKey)){
+  for(const key of dateRangeKeys(period.firstKey,period.lastKey)){
     const dailyTargetMinutes=scheduledMinutesOn(profile,key);
-    const scheduled=dailyTargetMinutes>0;
     const relief=Math.max(leaveFractions.get(key)||0,absenceFractions.get(key)||0);
-    if(scheduled)balance-=Math.round(dailyTargetMinutes*(1-relief));
-
+    const targetMinutes=dailyTargetMinutes>0?Math.round(dailyTargetMinutes*(1-relief)):0;
+    balance-=targetMinutes;
     const dayItems=[...(byDay.get(key)||[])].sort((a,b)=>recordSortValue(a)-recordSortValue(b));
     for(const r of dayItems){
       balance+=Math.round(Number(dailyValues.get(r.id)?.net)||0);
-      result.set(r.id,{balance,targetMinutes:scheduled?Math.round(dailyTargetMinutes*(1-relief)):0});
+      if(values)result.set(r.id,{balance,targetMinutes});
     }
   }
-  return result;
+  return values?result:balance;
+}
+
+// V2.9.2.1 – laufendes Zeitguthaben / Minusstundenkonto.
+// Das Konto startet mit dem ersten vorhandenen Zeit- oder Korrekturdatensatz und
+// läuft danach minutengenau weiter. Pro Arbeitstag wird das Tagessoll einmal
+// abgezogen; genehmigter Urlaub und gebuchte Abwesenheiten reduzieren das Soll
+// des betreffenden Tages auf 0. Stundenkorrekturen wirken direkt auf das Konto.
+export function calculateTimeAccountValues(records,profile={},vacations=[],absences=[],{includeOpen=true,now=new Date()}={}){
+  return calculateTimeAccount(records,profile,vacations,absences,{includeOpen,now,values:true});
 }
 
 
@@ -247,35 +273,5 @@ export function calculateTimeAccountValues(records,profile={},vacations=[],absen
 // Im Unterschied zur buchungsbezogenen Historie wird das Soll bis zum gewünschten
 // Stichtag fortgeschrieben, auch wenn an einem Arbeitstag keine Buchung vorliegt.
 export function calculateTimeAccountBalance(records,profile={},vacations=[],absences=[],{includeOpen=true,now=new Date(),until=null}={}){
-  const items=(records||[]).filter(r=>timeRecordDateKey(r));
-  if(!items.length)return 0;
-
-  const dailyValues=calculateDailyTimeValues(items,profile,{includeOpen,now});
-  const byDay=new Map();
-  items.forEach(r=>{
-    const key=timeRecordDateKey(r);
-    if(!byDay.has(key))byDay.set(key,[]);
-    byDay.get(key).push(r);
-  });
-
-  const keys=[...byDay.keys()].sort();
-  let firstKey=keys[0];
-  if(profile?.startDate&&/^\d{4}-\d{2}-\d{2}$/.test(String(profile.startDate))&&profile.startDate>firstKey)firstKey=profile.startDate;
-
-  const endDate=until instanceof Date?until:now;
-  const lastKey=timeDateKey(endDate);
-  if(firstKey>lastKey)return 0;
-
-  const leaveFractions=coveredDateFractions(vacations,{approvedOnly:true});
-  const absenceFractions=coveredDateFractions(absences);
-
-  let balance=0;
-  for(const key of dateRangeKeys(firstKey,lastKey)){
-    const dailyTargetMinutes=scheduledMinutesOn(profile,key);
-    const scheduled=dailyTargetMinutes>0;
-    const relief=Math.max(leaveFractions.get(key)||0,absenceFractions.get(key)||0);
-    if(scheduled)balance-=Math.round(dailyTargetMinutes*(1-relief));
-    for(const r of byDay.get(key)||[])balance+=Math.round(Number(dailyValues.get(r.id)?.net)||0);
-  }
-  return balance;
+  return calculateTimeAccount(records,profile,vacations,absences,{includeOpen,now,until,values:false});
 }
