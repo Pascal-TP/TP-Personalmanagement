@@ -87,6 +87,6 @@ export async function renderHistorie(el,ctx){
 
   el.innerHTML=`<article class="card"><div class="card-head"><div><h2>Mitarbeiter-Historie</h2><p>${entries.length} protokollierte Vorgänge. Neueste Änderungen stehen oben.</p></div></div>
     <div class="info-strip">Die Historie protokolliert Neuanlagen und Änderungen an Mitarbeiterstammdaten. Passwörter werden nicht gespeichert.</div>
-    <div class="table-wrap"><table class="history-table"><thead><tr><th>Zeitpunkt</th><th>Mitarbeiter</th><th>Vorgang</th><th>Änderungen</th><th>Geändert von</th></tr></thead><tbody>${rows||'<tr><td colspan="5" class="empty">Noch keine Änderungen protokolliert.</td></tr>'}</tbody></table></div>
+    <div class="table-wrap"><table class="history-table" data-paginate="employee-history"><thead><tr><th>Zeitpunkt</th><th>Mitarbeiter</th><th>Vorgang</th><th>Änderungen</th><th>Geändert von</th></tr></thead><tbody>${rows||'<tr><td colspan="5" class="empty">Noch keine Änderungen protokolliert.</td></tr>'}</tbody></table></div>
   </article>`;
 }

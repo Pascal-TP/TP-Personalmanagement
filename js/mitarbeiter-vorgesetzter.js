@@ -130,7 +130,7 @@ async function renderSupervisorBookings(container, employee) {
         </div>
         <strong>${esc(bookingMonthLabel(month))}</strong>
       </div>
-      <div class="table-wrap"><table class="employee-bookings-table">
+      <div class="table-wrap"><table class="employee-bookings-table" data-paginate="supervisor-employee-bookings">
         <thead><tr><th>Datum</th><th>Projekt</th><th>KOMMEN</th><th>GEHEN</th><th>Arbeitszeit</th><th>Soll-Zeit</th><th>Zeitguthaben</th><th>Buchungsart</th><th>Terminal / Hinweis</th></tr></thead>
         <tbody>
           ${

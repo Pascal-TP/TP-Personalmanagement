@@ -38,6 +38,7 @@ import { renderAenderungsantraege } from "./aenderungsantraege.js";
 import { hasAdminPermission, hasAnyAdminPermission } from "./permissions.js";
 import { beginPortalLoading, endPortalLoading } from "./loading-indicator.js";
 import { clearReadCache } from "./read-cache.js";
+import { installTablePagination } from "./pagination.js";
 
 export const ctx = {
   user: null,
@@ -47,6 +48,7 @@ export const ctx = {
 };
 const content = document.getElementById("content"),
   nav = document.getElementById("main-nav");
+installTablePagination(content);
 const loginPage = document.getElementById("login-page"),
   shell = document.getElementById("app-shell");
 

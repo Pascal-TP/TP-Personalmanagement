@@ -377,7 +377,7 @@ export async function renderZeiterfassung(el, ctx) {
     <article class="card ${isAdmin?"admin-self-hidden":""}">
       <div class="card-head"><div><h2>Meine Buchungen</h2>${flatEightHourView ? "" : `<p>Gespeicherte Arbeitszeiten und Stundenkorrekturen. „Zeitguthaben“ zeigt den minutengenauen Stand des Stundenkontos nach der jeweiligen Buchung.</p>`}</div></div>
       ${flatEightHourView ? "" : (ctx.profile.earliestStartTime ? `<div class="info-strip"><strong>Vorgegebener Arbeitsbeginn:</strong> Arbeitszeit wird frühestens ab <strong>${esc(ctx.profile.earliestStartTime)} Uhr</strong> angerechnet. Ein früherer echter KOMMEN-Zeitstempel bleibt zur Dokumentation sichtbar.</div>` : "")}
-      <div class="table-wrap"><table>
+      <div class="table-wrap"><table data-paginate="own-time-records">
         ${flatEightHourView ? `
         <thead><tr><th>Datum</th><th>Beginn</th><th>Ende</th><th>Pause</th><th>Arbeitszeit</th><th>Status</th></tr></thead>
         <tbody>

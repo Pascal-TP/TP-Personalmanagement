@@ -63,7 +63,7 @@ export async function renderDatensicherung(el,ctx){
       const res=await listBackups({idToken:await token()});
       const rows=res.data?.backups||[];
       if(!rows.length){listEl.innerHTML='<div class="empty">Noch keine Datensicherung vorhanden.</div>';return;}
-      listEl.innerHTML=`<div class="table-wrap"><table><thead><tr><th>Erstellt</th><th>Bezeichnung</th><th>Firestore</th><th>Dateien</th><th>Dateigröße</th><th>Erstellt von</th><th></th></tr></thead><tbody>${rows.map(r=>`<tr>
+      listEl.innerHTML=`<div class="table-wrap"><table data-paginate="backup-overview"><thead><tr><th>Erstellt</th><th>Bezeichnung</th><th>Firestore</th><th>Dateien</th><th>Dateigröße</th><th>Erstellt von</th><th></th></tr></thead><tbody>${rows.map(r=>`<tr>
         <td>${esc(fmtDate(r.createdAt))}</td>
         <td><strong>${esc(r.label||r.backupId)}</strong><small class="booking-note">${esc(r.backupId)}</small></td>
         <td>${Number(r.firestoreDocuments||0)}</td>
