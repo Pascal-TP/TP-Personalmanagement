@@ -42,6 +42,7 @@ function attach(root){
   if(controllers.has(root))return controllers.get(root);
   const key=root.dataset.paginate||`pagination-${Math.random().toString(36).slice(2)}`;
   const state=stateFor(key),controls=controlsFor(root,key);
+  if(root.dataset.paginationResetPage==='true')state.page=1;
   const select=controls.querySelector('select'),count=controls.querySelector('.table-page-count');
   const navigation=controls.querySelector('.table-page-navigation'),pageNumber=controls.querySelector('.table-page-number');
   const previous=controls.querySelector('.table-page-prev'),next=controls.querySelector('.table-page-next');
@@ -50,13 +51,14 @@ function attach(root){
   const render=({reset=false}={})=>{
     if(reset)state.page=1;
     const rows=dataRows(root),window=paginationWindow(rows.length,state.size,state.page);
+    const singular=root.dataset.paginationSingular||'Eintrag',plural=root.dataset.paginationPlural||'Einträge',dativePlural=root.dataset.paginationDativePlural||'Einträgen';
     const {total,pages,page,start,end,all}=window;state.page=page;
     rows.forEach((row,index)=>{
       const visible=all||(index>=start&&index<end);
       row.hidden=!visible;
       if(!visible)row.dataset.paginationHidden='true';
     });
-    count.textContent=total===0?'0 Einträge':all?`${total} ${total===1?'Eintrag':'Einträge'}`:`${start+1}–${end} von ${total} ${total===1?'Eintrag':'Einträgen'}`;
+    count.textContent=total===0?`0 ${plural}`:all?`${total} ${total===1?singular:plural}`:`${start+1}–${end} von ${total} ${total===1?singular:dativePlural}`;
     const showNavigation=!all&&pages>1;
     navigation.hidden=!showNavigation;
     pageNumber.textContent=`Seite ${state.page} von ${pages}`;

@@ -6,6 +6,7 @@ import { AREA_NAMES, esc, fmtDateTime, toast, confirmDialog } from "./utils.js";
 import { hasAdminPermission } from "./permissions.js";
 import { progressForTrainingYear, trainingProgressDocId, visibleTrainingsForYear } from "./training-utils.js";
 import { getAssignedUsers } from "./supervisor-utils.js";
+import { refreshPagination } from "./pagination.js";
 
 const uploadProof=httpsCallable(functions,'uploadPersonnelTrainingProof'),deleteProof=httpsCallable(functions,'deletePersonnelTrainingProof'),proofUrl=httpsCallable(functions,'getPersonnelTrainingProofDownloadUrl'),employeeProofs=httpsCallable(functions,'getPersonnelEmployeeProofDownloads'),createTrainingSession=httpsCallable(functions,'createPersonnelTrainingSession'),verifyTrainingSession=httpsCallable(functions,'verifyPersonnelTrainingSession');
 const PENDING_KEY='tpPersonnelTrainingPendingSessions';
@@ -66,6 +67,9 @@ function proofLabel(p){
   if(p?.completionSource==='integrated_training')return 'Digital bestätigt';
   if(p?.completionSource==='admin_manual'||p?.manualAdminCompleted===true)return 'Als erledigt gekennzeichnet durch Admin';
   return '–';
+}
+function normalizeEmployeeSearch(value){
+  return String(value||'').trim().toLocaleLowerCase('de').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/ß/g,'ss').replace(/ae/g,'a').replace(/oe/g,'o').replace(/ue/g,'u');
 }
 
 async function ownView(ctx,year){
@@ -144,8 +148,8 @@ export async function renderSchulungen(el,ctx){
 
   async function proofs(){
     const [us,ts]=await Promise.all([relevantUsers(),allTrainings()]);
-    target.innerHTML=`<article class="card"><div class="card-head"><div><h2>Nachweise je Mitarbeiter · ${selectedYear}</h2><p>Abgeschlossene Schulungen und vorhandene Schulungsnachweise des gewählten Jahres</p></div></div><div id="proof-list"></div></article>`;
-    const box=target.querySelector('#proof-list');
+    target.innerHTML=`<article class="card"><div class="card-head"><div><h2>Nachweise je Mitarbeiter · ${selectedYear}</h2><p>Abgeschlossene Schulungen und vorhandene Schulungsnachweise des gewählten Jahres</p></div></div><div class="proof-list-filter"><label class="field"><span>Mitarbeiter suchen</span><input id="proof-employee-search" type="search" placeholder="Name eingeben …" autocomplete="off"></label></div><div id="proof-list" data-paginate="employee-training-proofs" data-pagination-items=":scope > .employee-proof-block" data-pagination-singular="Mitarbeiter" data-pagination-plural="Mitarbeiter" data-pagination-dative-plural="Mitarbeitern" data-pagination-reset-page="true"></div><div id="proof-list-empty" class="empty" hidden></div></article>`;
+    const box=target.querySelector('#proof-list'),empty=target.querySelector('#proof-list-empty'),search=target.querySelector('#proof-employee-search');
     for(const u of us){
       const allPs=progressForTrainingYear(await progress(u.id),selectedYear);
       const ps=allPs.filter(p=>{
@@ -155,9 +159,17 @@ export async function renderSchulungen(el,ctx){
       });
       const hasCurrentAssignment=visibleTrainingsForYear(ts,u,selectedYear).length>0;
       if(!hasCurrentAssignment&&!ps.length)continue;
-      box.insertAdjacentHTML('beforeend',`<div class="employee-proof-block"><div class="employee-proof-head"><strong>${esc(u.name||u.email)}</strong><button class="btn secondary small all-proofs" data-id="${u.id}">Alle Nachweise ${selectedYear}</button></div>${ps.length?ps.map(p=>`<div class="list-row"><div><strong>${esc(p.trainingTitle||'Schulung')}</strong><span>${p.proofName?`Nachweis: ${esc(p.proofName)}`:p.completionSource==='integrated_training'?'✓ Digital bestätigt':'Kein Nachweis'}</span></div>${p.proofPath?`<button class="btn secondary small one-proof" data-user="${u.id}" data-training="${p.trainingId}">Download</button>`:''}</div>`).join(''):'<div class="muted small">Noch keine abgeschlossenen Schulungen mit Nachweis in diesem Jahr.</div>'}</div>`);
+      box.insertAdjacentHTML('beforeend',`<div class="employee-proof-block" data-employee-name="${esc(normalizeEmployeeSearch(u.name||u.email||u.id))}"><div class="employee-proof-head"><strong>${esc(u.name||u.email)}</strong><button class="btn secondary small all-proofs" data-id="${u.id}">Alle Nachweise ${selectedYear}</button></div>${ps.length?ps.map(p=>`<div class="list-row"><div><strong>${esc(p.trainingTitle||'Schulung')}</strong><span>${p.proofName?`Nachweis: ${esc(p.proofName)}`:p.completionSource==='integrated_training'?'✓ Digital bestätigt':'Kein Nachweis'}</span></div>${p.proofPath?`<button class="btn secondary small one-proof" data-user="${u.id}" data-training="${p.trainingId}">Download</button>`:''}</div>`).join(''):'<div class="muted small">Noch keine abgeschlossenen Schulungen mit Nachweis in diesem Jahr.</div>'}</div>`);
     }
-    if(!box.children.length)box.innerHTML='<div class="empty">Für dieses Schulungsjahr sind keine zugewiesenen Schulungen oder vorhandenen Nachweise verfügbar.</div>';
+    const blocks=[...box.querySelectorAll('.employee-proof-block')];
+    const applySearch=()=>{
+      const term=normalizeEmployeeSearch(search.value);let matches=0;
+      blocks.forEach(block=>{const visible=!term||block.dataset.employeeName.includes(term);block.style.display=visible?'':'none';if(visible)matches++});
+      empty.hidden=matches>0;
+      empty.textContent=blocks.length?'Keine Mitarbeiter für die gewählten Filter gefunden.':'Für dieses Schulungsjahr sind keine zugewiesenen Schulungen oder vorhandenen Nachweise verfügbar.';
+      refreshPagination(box,{reset:true});
+    };
+    search.addEventListener('input',applySearch);applySearch();
     box.querySelectorAll('.one-proof').forEach(b=>b.onclick=async()=>{try{const idToken=await auth.currentUser.getIdToken();const r=await proofUrl({idToken,employeeId:b.dataset.user,trainingId:b.dataset.training,year:selectedYear});if(r.data?.url)window.open(r.data.url,'_blank','noopener')}catch(e){console.error(e);toast('Download nicht möglich.')}});
     box.querySelectorAll('.all-proofs').forEach(b=>b.onclick=async()=>{try{const idToken=await auth.currentUser.getIdToken();const r=await employeeProofs({idToken,employeeId:b.dataset.id,year:selectedYear});for(const f of r.data?.files||[])window.open(f.url,'_blank','noopener')}catch(e){console.error(e);toast('Sammeldownload nicht möglich.')}})
   }
