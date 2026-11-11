@@ -16,6 +16,7 @@ import { esc, fmtDate, fmtDateTime, statusPill, toast, confirmDialog, validation
 import { hasAdminPermission } from "./permissions.js";
 import { calculateDailyTimeValues, calculateTimeAccountValues, reachedFlexTimeRecords, wasStartLimited } from "./time-utils.js";
 import { getAssignedDocs, getAssignedUsers } from "./supervisor-utils.js";
+import { refreshPagination } from "./pagination.js";
 
 
 function validProjectNumber(value) {
@@ -140,6 +141,32 @@ function statusLabel(status) {
   if (status === "approved") return statusPill("Genehmigt", "green");
   if (status === "rejected") return statusPill("Abgelehnt", "red");
   return statusPill("Beantragt", "yellow");
+}
+
+function normalizeListSearch(value) {
+  return String(value || "")
+    .trim()
+    .toLocaleLowerCase("de")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/ß/g, "ss")
+    .replace(/ae/g, "a")
+    .replace(/oe/g, "o")
+    .replace(/ue/g, "u");
+}
+
+function requestStatusFilterLabel(status) {
+  if (status === "pending") return "Offen";
+  if (status === "approved") return "Genehmigt";
+  if (status === "rejected") return "Abgelehnt";
+  return String(status || "Unbekannt");
+}
+
+function adjustmentYear(record) {
+  const direct = String(record?.adjustmentDate || "").match(/^(\d{4})-/);
+  if (direct) return direct[1];
+  const fallback = toDate(record?.createdAt);
+  return fallback ? String(fallback.getFullYear()) : "";
 }
 
 function requestedTimesText(req) {
@@ -293,8 +320,7 @@ export async function renderZeiterfassung(el, ctx) {
           const aa = a.adjustmentDate ? new Date(`${a.adjustmentDate}T12:00:00`).getTime() : toDate(a.createdAt)?.getTime() || 0;
           const bb = b.adjustmentDate ? new Date(`${b.adjustmentDate}T12:00:00`).getTime() : toDate(b.createdAt)?.getTime() || 0;
           return bb-aa;
-        })
-        .slice(0, 10);
+        });
     } catch (e) {
       console.error("Mitarbeiterliste/Korrekturbuchungen konnten nicht geladen werden", e);
     }
@@ -310,6 +336,15 @@ export async function renderZeiterfassung(el, ctx) {
   const pendingRecordIds = new Set(
     ownRequests.filter(r => r.status === "pending" && r.requestType === "correction").map(r => r.recordId)
   );
+  const ownRequestStatuses = [...new Set(ownRequests.map(r => String(r.status || "pending")))]
+    .sort((a, b) => {
+      const order = ["pending", "approved", "rejected"];
+      const aa = order.indexOf(a), bb = order.indexOf(b);
+      return (aa < 0 ? order.length : aa) - (bb < 0 ? order.length : bb) || a.localeCompare(b, "de");
+    });
+  const currentYear = String(new Date().getFullYear());
+  const adjustmentYears = [...new Set([...recentAdjustments.map(adjustmentYear).filter(Boolean), currentYear])]
+    .sort((a, b) => Number(b) - Number(a));
 
   const openText = openRecord
     ? (projectTracking && validProjectNumber(openRecord.projectNumber)
@@ -325,10 +360,14 @@ export async function renderZeiterfassung(el, ctx) {
         <button class="btn secondary" type="button" id="open-missing-request">+ Nachträgliche Zeiterfassung beantragen</button>
         ${missingRequestForm(ctx, projectTracking)}
         ${correctionRequestForm(projectTracking)}
-        <div class="request-list-head"><strong>Meine Anträge</strong><span>${ownRequests.length} Einträge</span></div>
-        <div class="request-list">
-          ${ownRequests.length ? ownRequests.map(r => `
-            <div class="request-row">
+        <div class="request-list-head"><strong>Meine Anträge</strong><span id="own-request-filter-count">${ownRequests.length} Einträge</span></div>
+        <div class="time-list-filters">
+          <label class="field"><span>Anträge suchen</span><input id="own-request-search" type="search" placeholder="Suchbegriff eingeben …" autocomplete="off"></label>
+          <label class="field"><span>Status</span><select id="own-request-status"><option value="">Alle Status</option>${ownRequestStatuses.map(status => `<option value="${esc(status)}">${esc(requestStatusFilterLabel(status))}</option>`).join("")}</select></label>
+        </div>
+        <div class="request-list" id="own-request-list" data-paginate="own-time-requests" data-pagination-items=":scope > .request-row" data-pagination-reset-page="true">
+          ${ownRequests.map(r => `
+            <div class="request-row" data-request-status="${esc(r.status || "pending")}" data-request-search="${esc(normalizeListSearch([requestLabel(r), r.projectName, r.projectNumber, r.reason, r.decisionNote].filter(Boolean).join(" ")))}">
               <div>
                 <strong>${requestLabel(r)}</strong>
                 <span>${requestedTimesText(r)}</span>
@@ -337,8 +376,9 @@ export async function renderZeiterfassung(el, ctx) {
                 ${r.decisionNote ? `<small>Rückmeldung: ${esc(r.decisionNote)}</small>` : ""}
               </div>
               ${statusLabel(r.status)}
-            </div>`).join("") : `<div class="empty compact-empty">Noch keine Zeitanträge vorhanden.</div>`}
+            </div>`).join("")}
         </div>
+        <div class="empty compact-empty ${ownRequests.length ? "hidden" : ""}" id="own-request-empty">${ownRequests.length ? "Keine Einträge für die gewählten Filter gefunden." : "Noch keine Zeitanträge vorhanden."}</div>
       </article>
 
       <article class="card stamp-card">
@@ -369,9 +409,14 @@ export async function renderZeiterfassung(el, ctx) {
         <label class="field full"><span>Bemerkung / Erläuterung</span><textarea name="reasonDetails" placeholder="Optional ergänzende Erläuterung; bei 'Sonstiges' erforderlich."></textarea></label>
         <div class="field full"><button class="btn primary" type="submit">Stundenkorrektur buchen</button></div>
       </form>
-      <div class="request-list-head"><strong>Letzte Korrekturbuchungen</strong><span>${recentAdjustments.length} angezeigt</span></div>
-      <div class="request-list">${recentAdjustments.length ? recentAdjustments.map(r => `
-        <div class="request-row"><div><strong>${esc(r.userName || r.userId)} · ${signedHm(r.adjustmentMinutes)}</strong><span>${fmtDate(r.adjustmentDate)}${validProjectNumber(r.projectNumber) ? ` · Projekt ${esc(r.projectNumber)}` : ""} · ${esc(r.adjustmentReason || "Stundenkorrektur")}</span>${r.adjustmentDetails ? `<small>${esc(r.adjustmentDetails)}</small>` : ""}</div>${statusPill("gebucht", "blue")}</div>`).join("") : `<div class="empty compact-empty">Noch keine Stundenkorrekturen gebucht.</div>`}</div>
+      <div class="request-list-head"><strong>Letzte Korrekturbuchungen</strong><span id="adjustment-filter-count">${recentAdjustments.length} Einträge</span></div>
+      <div class="time-list-filters">
+        <label class="field"><span>Mitarbeiter suchen</span><input id="adjustment-employee-search" type="search" placeholder="Name eingeben …" autocomplete="off"></label>
+        <label class="field"><span>Jahr</span><select id="adjustment-year-filter"><option value="">Alle Jahre</option>${adjustmentYears.map(year => `<option value="${year}" ${year === currentYear ? "selected" : ""}>${year}</option>`).join("")}</select></label>
+      </div>
+      <div class="request-list" id="adjustment-list" data-paginate="recent-time-adjustments" data-pagination-items=":scope > .request-row" data-pagination-reset-page="true">${recentAdjustments.map(r => `
+        <div class="request-row" data-employee-search="${esc(normalizeListSearch(r.userName || r.userId))}" data-adjustment-year="${esc(adjustmentYear(r))}"><div><strong>${esc(r.userName || r.userId)} · ${signedHm(r.adjustmentMinutes)}</strong><span>${fmtDate(r.adjustmentDate)}${validProjectNumber(r.projectNumber) ? ` · Projekt ${esc(r.projectNumber)}` : ""} · ${esc(r.adjustmentReason || "Stundenkorrektur")}</span>${r.adjustmentDetails ? `<small>${esc(r.adjustmentDetails)}</small>` : ""}</div>${statusPill("gebucht", "blue")}</div>`).join("")}</div>
+      <div class="empty compact-empty hidden" id="adjustment-filter-empty"></div>
     </article>` : ""}
 
     <article class="card ${isAdmin?"admin-self-hidden":""}">
@@ -456,6 +501,64 @@ export async function renderZeiterfassung(el, ctx) {
         </div>
       </article>` : ""}
   `;
+
+  const ownRequestList = document.getElementById("own-request-list");
+  const ownRequestSearch = document.getElementById("own-request-search");
+  const ownRequestStatus = document.getElementById("own-request-status");
+  const ownRequestEmpty = document.getElementById("own-request-empty");
+  const ownRequestCount = document.getElementById("own-request-filter-count");
+  const applyOwnRequestFilters = () => {
+    if (!ownRequestList) return;
+    const term = normalizeListSearch(ownRequestSearch?.value);
+    const status = ownRequestStatus?.value || "";
+    let visible = 0;
+    ownRequestList.querySelectorAll(":scope > .request-row").forEach(row => {
+      const matches = (!term || row.dataset.requestSearch.includes(term))
+        && (!status || row.dataset.requestStatus === status);
+      row.style.display = matches ? "" : "none";
+      if (matches) visible += 1;
+    });
+    if (ownRequestCount) ownRequestCount.textContent = `${visible} ${visible === 1 ? "Eintrag" : "Einträge"}`;
+    if (ownRequestEmpty) {
+      ownRequestEmpty.textContent = ownRequests.length
+        ? "Keine Einträge für die gewählten Filter gefunden."
+        : "Noch keine Zeitanträge vorhanden.";
+      ownRequestEmpty.classList.toggle("hidden", visible > 0);
+    }
+    refreshPagination(ownRequestList, { reset: true });
+  };
+  ownRequestSearch?.addEventListener("input", applyOwnRequestFilters);
+  ownRequestStatus?.addEventListener("change", applyOwnRequestFilters);
+  applyOwnRequestFilters();
+
+  const adjustmentList = document.getElementById("adjustment-list");
+  const adjustmentEmployeeSearch = document.getElementById("adjustment-employee-search");
+  const adjustmentYearFilter = document.getElementById("adjustment-year-filter");
+  const adjustmentFilterEmpty = document.getElementById("adjustment-filter-empty");
+  const adjustmentCount = document.getElementById("adjustment-filter-count");
+  const applyAdjustmentFilters = () => {
+    if (!adjustmentList) return;
+    const term = normalizeListSearch(adjustmentEmployeeSearch?.value);
+    const year = adjustmentYearFilter?.value || "";
+    let visible = 0;
+    adjustmentList.querySelectorAll(":scope > .request-row").forEach(row => {
+      const matches = (!term || row.dataset.employeeSearch.includes(term))
+        && (!year || row.dataset.adjustmentYear === year);
+      row.style.display = matches ? "" : "none";
+      if (matches) visible += 1;
+    });
+    if (adjustmentCount) adjustmentCount.textContent = `${visible} ${visible === 1 ? "Eintrag" : "Einträge"}`;
+    if (adjustmentFilterEmpty) {
+      adjustmentFilterEmpty.textContent = recentAdjustments.length
+        ? "Keine Einträge für die gewählten Filter gefunden."
+        : "Noch keine Stundenkorrekturen gebucht.";
+      adjustmentFilterEmpty.classList.toggle("hidden", visible > 0);
+    }
+    refreshPagination(adjustmentList, { reset: true });
+  };
+  adjustmentEmployeeSearch?.addEventListener("input", applyAdjustmentFilters);
+  adjustmentYearFilter?.addEventListener("change", applyAdjustmentFilters);
+  applyAdjustmentFilters();
 
   const adminAdjustmentForm = document.getElementById("admin-hours-adjustment-form");
   if (adminAdjustmentForm) {
