@@ -402,3 +402,6 @@ dialog.tp-notice::backdrop{background:rgba(12,31,49,.46)}
   z-index: 2;
   background: #f8fafc;
 }
+
+/* V2.15.35 Hotfix: Paginierte Flex-Listenzeilen zuverlässig ausblenden. */
+.request-row[data-pagination-hidden="true"]{display:none!important}
