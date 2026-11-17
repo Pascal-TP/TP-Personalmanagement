@@ -69,9 +69,71 @@ function recordSortValue(record){
   return timeRecordStart(record)?.getTime()||0;
 }
 
-// Liefert pro Buchung Brutto, Tagespause, Netto und den kumulierten Tages-Iststand.
-// Die Tagespause wird vollständig genau einer Buchung zugeordnet, in die sie zeitlich passt.
-// Damit erscheinen in der Oberfläche nur 30 bzw. 45 Minuten statt anteiliger Kleinstpausen.
+// Unterbrechungen außerhalb der Buchungen zählen nur bei Mitarbeitern ohne
+// Projektzeiterfassung und nur dann, wenn der einzelne Zeitraum mindestens
+// 15 Minuten umfasst. Überlappungen erzeugen keine künstlichen Pausenzeiten.
+function qualifyingBreakMinutes(regular){
+  let total=0,latestEnd=null;
+  regular.forEach(item=>{
+    if(latestEnd&&item.start>latestEnd){
+      const gap=Math.max(0,Math.floor((item.start-latestEnd)/60000));
+      if(gap>=15)total+=gap;
+    }
+    if(!latestEnd||item.end>latestEnd)latestEnd=item.end;
+  });
+  return total;
+}
+
+// Teilt den minutengenauen Tagesabzug auf die Buchungen auf.
+// Projektzeiten verwenden das größte-Reste-Verfahren: erst Abrundung der
+// exakten Anteile, anschließend deterministische Resteverteilung nach
+// Nachkommaanteil und Dokument-ID. Dadurch bleibt die Summe exakt erhalten.
+function allocatePauseMinutes(regular,dayPause,proportional=false){
+  const allocation=new Map(),pause=Math.max(0,Math.round(Number(dayPause)||0));
+  regular.forEach(item=>allocation.set(item.record.id,0));
+  if(!pause||!regular.length)return allocation;
+
+  if(proportional){
+    const totalGross=regular.reduce((sum,item)=>sum+item.gross,0);
+    if(!totalGross)return allocation;
+    const shares=regular.map(item=>{
+      const exact=pause*item.gross/totalGross,base=Math.min(item.gross,Math.floor(exact));
+      allocation.set(item.record.id,base);
+      return {item,remainder:exact-Math.floor(exact),key:String(item.record.id||'')};
+    });
+    let remaining=pause-[...allocation.values()].reduce((sum,value)=>sum+value,0);
+    shares.sort((a,b)=>b.remainder-a.remainder||a.key.localeCompare(b.key));
+    for(const share of shares){
+      if(remaining<=0)break;
+      const current=allocation.get(share.item.record.id)||0;
+      if(current<share.item.gross){
+        allocation.set(share.item.record.id,current+1);
+        remaining--;
+      }
+    }
+    return allocation;
+  }
+
+  // Bestehende Zuordnung möglichst erhalten: die späteste passende Buchung
+  // trägt den vollständigen Abzug. Reicht keine allein aus, wird rückwärts
+  // über mehrere Buchungen verteilt, ohne eine Buchung negativ zu machen.
+  const fitting=regular.filter(item=>item.gross>=pause);
+  const target=fitting[fitting.length-1]||null;
+  if(target){
+    allocation.set(target.record.id,pause);
+    return allocation;
+  }
+  let remaining=pause;
+  for(let index=regular.length-1;index>=0&&remaining>0;index--){
+    const item=regular[index],portion=Math.min(remaining,item.gross);
+    allocation.set(item.record.id,portion);
+    remaining-=portion;
+  }
+  return allocation;
+}
+
+// Liefert pro Buchung Brutto, Pausenabzug, Netto und den kumulierten
+// Tages-Iststand. Projektbuchungen erhalten einen proportionalen Pausenanteil.
 export function calculateDailyTimeValues(records,profileOrEarliest='',{includeOpen=true,now=new Date()}={}){
   const profile=profileOrEarliest&&typeof profileOrEarliest==='object'?profileOrEarliest:null;
   const earliestStartTime=profile?String(profile.earliestStartTime||''):String(profileOrEarliest||'');
@@ -85,24 +147,21 @@ export function calculateDailyTimeValues(records,profileOrEarliest='',{includeOp
   });
 
   for(const [dateKey,items] of groups.entries()){
-    const regular=items.filter(r=>r.recordType!=='adjustment').map(r=>({
-      record:r,
-      gross:recordGrossMinutes(r,earliestStartTime,{includeOpen,now}),
-      sort:recordSortValue(r)
-    })).filter(x=>x.gross>0).sort((a,b)=>a.sort-b.sort);
+    const regular=items.filter(r=>r.recordType!=='adjustment').map(r=>{
+      const start=effectiveRecordStart(r,earliestStartTime);
+      let end=timeRecordEnd(r);
+      if(!end&&includeOpen&&timeRecordStart(r)&&r?.status!=='closed')end=now;
+      return {record:r,gross:recordGrossMinutes(r,earliestStartTime,{includeOpen,now}),sort:recordSortValue(r),start,end};
+    }).filter(x=>x.gross>0&&x.start&&x.end&&x.end>x.start).sort((a,b)=>a.sort-b.sort);
     const totalGross=regular.reduce((sum,x)=>sum+x.gross,0);
     const fixedRule=profile?pauseRuleOn(profile,dateKey):null;
-    const dayPause=fixedRule?Math.min(totalGross,fixedRule.minutes):dailyPauseMinutes(totalGross);
-
-    let pauseTarget=null;
-    if(dayPause>0&&regular.length){
-      // Bevorzugt die späteste Buchung, in die die vollständige Pause hineinpasst.
-      const fitting=regular.filter(x=>x.gross>=dayPause);
-      pauseTarget=(fitting.length?fitting[fitting.length-1]:[...regular].sort((a,b)=>b.gross-a.gross)[0])||null;
-    }
+    const requiredPause=fixedRule?Math.min(totalGross,fixedRule.minutes):dailyPauseMinutes(totalGross);
+    const creditedBreak=profile&&profile.projectTimeTracking!==true?Math.min(requiredPause,qualifyingBreakMinutes(regular)):0;
+    const dayPause=Math.max(0,requiredPause-creditedBreak);
+    const pauseByRecord=allocatePauseMinutes(regular,dayPause,profile?.projectTimeTracking===true);
 
     regular.forEach(x=>{
-      const pause=pauseTarget?.record?.id===x.record.id?Math.min(dayPause,x.gross):0;
+      const pause=pauseByRecord.get(x.record.id)||0;
       result.set(x.record.id,{gross:x.gross,pause,net:Math.max(0,x.gross-pause),dayPause,totalGross,cumulative:0});
     });
     // Auch Buchungen ohne anrechenbare Minuten sollen in der Map vorhanden sein.
