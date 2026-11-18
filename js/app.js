@@ -1,4 +1,4 @@
-import { auth, db } from "./firebase.js";
+import { auth, db, functions } from "./firebase.js";
 import {
   onAuthStateChanged,
   signInWithEmailAndPassword,
@@ -12,6 +12,7 @@ import {
   updateDoc,
   serverTimestamp,
 } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+import { httpsCallable } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-functions.js";
 import {
   normalizeLogin,
   ROLE_LABELS,
@@ -39,6 +40,7 @@ import { hasAdminPermission, hasAnyAdminPermission } from "./permissions.js";
 import { beginPortalLoading, endPortalLoading } from "./loading-indicator.js";
 import { clearReadCache } from "./read-cache.js";
 import { installTablePagination } from "./pagination.js";
+import { hasPersonnelAccess } from "./employment-utils.js";
 
 export const ctx = {
   user: null,
@@ -51,6 +53,16 @@ const content = document.getElementById("content"),
 installTablePagination(content);
 const loginPage = document.getElementById("login-page"),
   shell = document.getElementById("app-shell");
+const getPersonnelAccessStatus=httpsCallable(functions,'getPersonnelAccessStatus');
+let employmentEndTimer=null;
+
+function scheduleEmploymentEndLogout(profile){
+  if(employmentEndTimer){clearTimeout(employmentEndTimer);employmentEndTimer=null}
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(String(profile?.endDate||'')))return;
+  const deadline=new Date(`${profile.endDate}T00:00:00`),delay=deadline.getTime()-Date.now();
+  if(delay<=0)return;
+  employmentEndTimer=setTimeout(async()=>{if(hasPersonnelAccess(profile)){scheduleEmploymentEndLogout(profile);return}toast("Ihr Beschäftigungsverhältnis ist beendet. Der Zugang ist nicht mehr möglich. Bitte wenden Sie sich bei Fragen an die Personalabteilung.","error");await signOut(auth)},Math.min(delay,2147483647));
+}
 
 const views = {
   dashboard: {
@@ -100,6 +112,7 @@ const views = {
       "employeesCreate",
       "employeesEdit",
       "employeesDelete",
+      "employeesArchive",
     ],
     render: async (el, ctx) =>
       ctx.profile?.role === "supervisor"
@@ -172,18 +185,21 @@ const views = {
 };
 
 export async function refreshProfile() {
+  const access=await getPersonnelAccessStatus({idToken:await ctx.user.getIdToken()});
+  if(access.data?.allowed!==true)throw new Error(access.data?.reason||"Dieser Zugang ist nicht mehr freigeschaltet.");
   const snap = await getDoc(doc(db, "users", ctx.user.uid));
   if (!snap.exists())
     throw new Error(
       "Für diesen Zugang wurde noch kein Mitarbeiterprofil in Firestore angelegt.",
     );
   ctx.profile = { id: snap.id, ...snap.data() };
-  if (ctx.profile.active === false)
-    throw new Error("Dieser Benutzer ist deaktiviert.");
+  if (!hasPersonnelAccess(ctx.profile))
+    throw new Error("Ihr Beschäftigungsverhältnis ist beendet. Der Zugang ist nicht mehr möglich. Bitte wenden Sie sich bei Fragen an die Personalabteilung.");
   if (ctx.profile.companyId) {
     const c = await getDoc(doc(db, "companies", ctx.profile.companyId));
     ctx.company = c.exists() ? { id: c.id, ...c.data() } : null;
   } else ctx.company = null;
+  scheduleEmploymentEndLogout(ctx.profile);
 }
 export function setHead(title, subtitle = "") {
   document.getElementById("page-title").textContent = title;
@@ -493,6 +509,7 @@ onAuthStateChanged(auth, async (user) => {
   clearReadCache();
   ctx.user = user;
   if (!user) {
+    if(employmentEndTimer){clearTimeout(employmentEndTimer);employmentEndTimer=null}
     ctx.profile = null;
     closeMobileUserMenu();
     loginPage.classList.remove("hidden");

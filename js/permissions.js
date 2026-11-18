@@ -3,6 +3,7 @@ export const ADMIN_PERMISSION_DEFS = [
   {key:'employeesCreate',label:'Mitarbeiter anlegen',group:'Mitarbeiter'},
   {key:'employeesEdit',label:'Mitarbeiter bearbeiten',group:'Mitarbeiter'},
   {key:'employeesDelete',label:'Mitarbeiter entfernen',group:'Mitarbeiter'},
+  {key:'employeesArchive',label:'Mitarbeiter archivieren / wiederherstellen',group:'Mitarbeiter',defaultEnabled:false},
   {key:'terminalManage',label:'NFC-Terminals & Transponder verwalten',group:'Mitarbeiter'},
   {key:'permissionsManage',label:'Rollen & Berechtigungen verwalten',group:'Mitarbeiter'},
   {key:'passwordReset',label:'Passwörter von Benutzername-Zugängen zurücksetzen',group:'Mitarbeiter',defaultEnabled:false},

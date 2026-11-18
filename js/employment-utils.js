@@ -1,5 +1,20 @@
 function dateKey(value){return /^\d{4}-\d{2}-\d{2}$/.test(String(value||''))?String(value):''}
 function todayKey(){const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`}
+export function employmentDateKey(value){return dateKey(value)}
+export function isEmploymentEnded(user={},date=todayKey()){
+  const end=dateKey(user?.endDate),key=dateKey(date)||todayKey();
+  return !!end&&end<=key;
+}
+export function hasPersonnelAccess(user={},date=todayKey()){
+  return user?.active!==false&&user?.archived!==true&&!isEmploymentEnded(user,date);
+}
+export function berlinMidnightUtcDate(value){
+  const key=dateKey(value);if(!key)return null;
+  const [year,month,day]=key.split('-').map(Number),target=Date.UTC(year,month-1,day,0,0,0);let utc=target;
+  const formatter=new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/Berlin',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'});
+  for(let i=0;i<2;i++){const parts=Object.fromEntries(formatter.formatToParts(new Date(utc)).map(part=>[part.type,part.value]));const represented=Date.UTC(Number(parts.year),Number(parts.month)-1,Number(parts.day),Number(parts.hour),Number(parts.minute),Number(parts.second));utc=target-(represented-utc)}
+  return new Date(utc);
+}
 const DEFAULT_WORK_DAYS=['1','2','3','4','5'];
 function normalizedWorkDays(value){const source=Array.isArray(value)&&value.length?value:DEFAULT_WORK_DAYS;return [...new Set(source.map(String).filter(x=>['0','1','2','3','4','5','6'].includes(x)))];}
 function normalizedDailyMinutes(value={}){const out={};for(const day of ['0','1','2','3','4','5','6'])out[day]=Math.max(0,Math.round(Number(value?.[day])||0));return out;}

@@ -5,7 +5,7 @@ import { esc, fmtDate, ROLE_LABELS } from "./utils.js";
 import { hasAdminPermission } from "./permissions.js";
 
 const FIELD_LABELS = {
-  name:"Name", companyId:"Firma", email:"E-Mail / Login", username:"Benutzername", hasRealEmail:"Login-Art", role:"Rolle", adminPermissions:"Admin-Berechtigungen", supervisorPermissions:"Vorgesetzten-Berechtigungen", supervisorId:"1. Vorgesetzter", supervisorId2:"2. Vorgesetzter", active:"Status",
+  name:"Name", companyId:"Firma", email:"E-Mail / Login", username:"Benutzername", hasRealEmail:"Login-Art", role:"Rolle", adminPermissions:"Admin-Berechtigungen", supervisorPermissions:"Vorgesetzten-Berechtigungen", supervisorId:"1. Vorgesetzter", supervisorId2:"2. Vorgesetzter", active:"Status", archived:"Archivstatus",
   startDate:"Eintritt", endDate:"Austritt", weeklyHours:"Wochenstunden", workScheduleHistory:"Arbeitszeitregelungen – Verlauf", vacationDays:"Aktueller Urlaubsanspruch/Jahr", vacationEntitlements:"Urlaubsanspruch – Stufen", employeeNumber:"Mitarbeiternummer", businessAreaId:"Geschäftsbereich", companyAreaNumber:"Geschäftsbereich-Nr.", projectTimeTracking:"Zeiterfassung auf Projekte", noTimeTracking:"Mitarbeiter ohne Zeiterfassung",
   department:"Abteilung", position:"Aktuelle Position / Tätigkeit", positionHistory:"Position / Tätigkeit – Karriereverlauf", contractType:"Beschäftigungsart", probationEndDate:"Probezeit bis", fixedTermEndDate:"Befristung bis", costCenter:"Kostenstelle", workDays:"Arbeitstage",
   firstAider:"Ersthelfer", firstAiderValidUntil:"Ersthelfer gültig bis", fireWarden:"Brandschutzhelfer", fireWardenValidUntil:"Brandschutzhelfer gültig bis", forkliftPermit:"Staplerschein", forkliftPermitValidUntil:"Staplerschein gültig bis", aerialLiftPermit:"Hubarbeitsbühne", aerialLiftPermitValidUntil:"Hubarbeitsbühne gültig bis", drivingLicenseClasses:"Führerscheinklassen", nextDrivingLicenseCheck:"Nächste Führerscheinkontrolle", occupationalMedicalNotes:"Arbeitsmedizinische Vorsorgen / Hinweise",
@@ -35,6 +35,7 @@ function displayValue(key,value,companies,userMap,trainingMap,religionMap,areaMa
   if(key==="role") return ROLE_LABELS[value] || value;
   if(key==="adminPermissions"||key==="supervisorPermissions"){if(!value||typeof value!=="object")return "Standard (alle Rechte)";const active=Object.entries(value).filter(([,v])=>v===true).length;return `${active} Berechtigungen aktiv`;}
   if(key==="active") return value===false ? "inaktiv" : "aktiv";
+  if(key==="archived") return value===true ? "archiviert" : "nicht archiviert";
   if(key==="hasRealEmail") return value===false ? "Benutzername" : "E-Mail-Adresse";
   if(key==="projectTimeTracking" || ["firstAider","fireWarden","forkliftPermit","aerialLiftPermit"].includes(key)) return value===true ? "Ja" : "Nein";
   if(key==="private.religion"){const r=religionMap?.get(String(value));return r?`${r.code} · ${r.name}`:String(value);}
@@ -82,7 +83,7 @@ export async function renderHistorie(el,ctx){
       : changes.length
         ? `${entry.action==='pds_import_update'?'<div class="small muted">Stammdaten über PDS-Lohn-Stammblatt aktualisiert</div>':''}<div class="history-changes">${changes.map(ch=>`<div><strong>${esc(FIELD_LABELS[ch.field]||ch.field)}</strong><span>${esc(displayValue(ch.field,ch.oldValue,companies,userMap,trainingMap,religionMap,areaMap))} → ${esc(displayValue(ch.field,ch.newValue,companies,userMap,trainingMap,religionMap,areaMap))}</span></div>`).join("")}</div>`
         : '<span class="muted">Änderung ohne Detailangabe.</span>';
-    return `<tr><td>${esc(dateTime(entry.createdAt))}</td><td><strong>${esc(employeeName)}</strong><div class="small muted">${esc(entry.employeeEmail||"")}</div></td><td><span class="pill ${entry.action==='create'?'green':'blue'}">${entry.action==='create'?'angelegt':entry.action==='password_reset'?'Passwort zurückgesetzt':entry.action==='change_request_applied'?'Antrag übernommen':entry.action==='time_record_deleted'?'Buchung gelöscht':entry.action==='pds_import_update'?'PDS-Import':'geändert'}</span></td><td>${details}</td><td>${esc(actor)}</td></tr>`;
+    return `<tr><td>${esc(dateTime(entry.createdAt))}</td><td><strong>${esc(employeeName)}</strong><div class="small muted">${esc(entry.employeeEmail||"")}</div></td><td><span class="pill ${entry.action==='create'?'green':'blue'}">${entry.action==='create'?'angelegt':entry.action==='archive'?'archiviert':entry.action==='restore'?'wiederhergestellt':entry.action==='password_reset'?'Passwort zurückgesetzt':entry.action==='change_request_applied'?'Antrag übernommen':entry.action==='time_record_deleted'?'Buchung gelöscht':entry.action==='pds_import_update'?'PDS-Import':'geändert'}</span></td><td>${details}</td><td>${esc(actor)}</td></tr>`;
   }).join("");
 
   el.innerHTML=`<article class="card"><div class="card-head"><div><h2>Mitarbeiter-Historie</h2><p>${entries.length} protokollierte Vorgänge. Neueste Änderungen stehen oben.</p></div></div>

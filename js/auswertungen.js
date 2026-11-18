@@ -4,6 +4,7 @@ import { httpsCallable } from "https://www.gstatic.com/firebasejs/11.6.1/firebas
 import { setHead } from "./app.js";
 import { esc, toast, confirmDialog } from "./utils.js";
 import { hasAdminPermission } from "./permissions.js";
+import { isEmploymentEnded } from "./employment-utils.js";
 import { calculateDailyTimeValues, reachedFlexTimeRecords, recordGrossMinutes, timeRecordDateKey, timeRecordEnd, timeRecordStart } from "./time-utils.js";
 import { vacationYearBalance, vacationCarryoverDocId } from "./vacation-utils.js";
 import { getAssignedUsers, getAssignedDocs } from "./supervisor-utils.js";
@@ -389,7 +390,7 @@ function splitBirthdayName(value){
 }
 function birthdayRows(users,privateMap,companies){
   const companyMap=new Map(companies.map(c=>[c.id,c]));
-  return users.filter(u=>u.active!==false&&u.archived!==true).map(u=>{
+  return users.filter(u=>u.active!==false&&u.archived!==true&&!isEmploymentEnded(u)).map(u=>{
     const p=privateMap.get(u.id)||{};
     if(p.birthdayList!==true||!/^\d{4}-\d{2}-\d{2}$/.test(String(p.birthDate||'')))return null;
     const [,m,d]=p.birthDate.split('-').map(Number);
