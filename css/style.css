@@ -405,3 +405,9 @@ dialog.tp-notice::backdrop{background:rgba(12,31,49,.46)}
 
 /* V2.15.35 Hotfix: Paginierte Flex-Listenzeilen zuverlässig ausblenden. */
 .request-row[data-pagination-hidden="true"]{display:none!important}
+
+/* V2.15.37: Filterleisten der Mitarbeiter- und Archivübersicht. */
+.employee-table-filters{display:grid;grid-template-columns:minmax(220px,2fr) minmax(180px,1fr) auto;gap:14px;align-items:end;margin:0 0 18px}
+.employee-table-filters .field{margin:0}
+.employee-table-filters>.muted{padding-bottom:12px;white-space:nowrap}
+@media(max-width:700px){.employee-table-filters{grid-template-columns:1fr}.employee-table-filters>.muted{padding-bottom:0}}
