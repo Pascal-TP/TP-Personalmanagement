@@ -67,7 +67,7 @@ export function normalizedVacationEntitlements(user={}){
   const raw=Array.isArray(user.vacationEntitlements)?user.vacationEntitlements:[];
   const rows=raw.map((x,i)=>({days:Number(x?.days),validFrom:dateKey(x?.validFrom),order:i})).filter(x=>Number.isFinite(x.days)&&x.days>=0);
   if(!rows.length)rows.push({days:Number(user.vacationDays||0),validFrom:'',order:0});
-  return rows.slice(0,4);
+  return rows.sort((a,b)=>(a.validFrom||'').localeCompare(b.validFrom||'')||a.order-b.order);
 }
 export function vacationEntitlementOn(user={},date=todayKey()){
   const key=dateKey(date)||todayKey(), rows=normalizedVacationEntitlements(user);
@@ -79,10 +79,29 @@ export function normalizedPositionHistory(user={}){
   const raw=Array.isArray(user.positionHistory)?user.positionHistory:[];
   const rows=raw.map((x,i)=>({position:String(x?.position||'').trim(),validFrom:dateKey(x?.validFrom),order:i})).filter(x=>x.position);
   if(!rows.length&&String(user.position||'').trim())rows.push({position:String(user.position).trim(),validFrom:dateKey(user.startDate),order:0});
-  return rows.slice(0,4);
+  return rows.sort((a,b)=>(a.validFrom||'').localeCompare(b.validFrom||'')||a.order-b.order);
 }
 export function positionOn(user={},date=todayKey()){
   const key=dateKey(date)||todayKey(),rows=normalizedPositionHistory(user);let active='';
   rows.forEach((x,i)=>{if(i===0||!x.validFrom||x.validFrom<=key)active=x.position});
   return active||String(user.position||'').trim();
+}
+export function normalizedSalaryHistory(rows=[]){
+  return (Array.isArray(rows)?rows:[]).map((row,index)=>({
+    ...row,
+    grossSalary:row?.grossSalary===null||row?.grossSalary===undefined||row?.grossSalary===''?null:Number(row.grossSalary),
+    hourlyRate:row?.hourlyRate===null||row?.hourlyRate===undefined||row?.hourlyRate===''?null:Number(row.hourlyRate),
+    validFrom:dateKey(row?.validFrom),
+    order:index
+  })).filter(row=>row.validFrom&&(Number.isFinite(row.grossSalary)||Number.isFinite(row.hourlyRate)))
+    .sort((a,b)=>a.validFrom.localeCompare(b.validFrom)||salaryHistoryTimestamp(a.createdAt)-salaryHistoryTimestamp(b.createdAt)||a.order-b.order);
+}
+function salaryHistoryTimestamp(value){
+  if(value?.toMillis)return value.toMillis();
+  const parsed=Date.parse(String(value||''));return Number.isFinite(parsed)?parsed:0;
+}
+export function salaryEntryOn(rows=[],date=todayKey()){
+  const key=dateKey(date)||todayKey();let active=null;
+  normalizedSalaryHistory(rows).forEach(row=>{if(row.validFrom<=key)active=row});
+  return active;
 }
