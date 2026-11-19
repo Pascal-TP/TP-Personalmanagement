@@ -1,4 +1,4 @@
-import { pauseRuleOn, scheduledMinutesOn } from "./employment-utils.js";
+import { pauseRuleOn, requiredPauseMinutes, scheduledMinutesOn } from "./employment-utils.js";
 
 // V2.9.2 – gemeinsame Zeitberechnung.
 // Echte Stempelzeiten bleiben unverändert; earliestStartTime begrenzt nur die anrechenbare Zeit.
@@ -38,8 +38,7 @@ export function timeRecordDateKey(record){
 }
 
 export function dailyPauseMinutes(totalGrossMinutes){
-  const gross=Math.max(0,Math.round(Number(totalGrossMinutes)||0));
-  return gross>540?45:gross>360?30:0;
+  return requiredPauseMinutes(totalGrossMinutes,'standard');
 }
 
 export function effectiveRecordStart(record,earliestStartTime=''){
@@ -154,8 +153,8 @@ export function calculateDailyTimeValues(records,profileOrEarliest='',{includeOp
       return {record:r,gross:recordGrossMinutes(r,earliestStartTime,{includeOpen,now}),sort:recordSortValue(r),start,end};
     }).filter(x=>x.gross>0&&x.start&&x.end&&x.end>x.start).sort((a,b)=>a.sort-b.sort);
     const totalGross=regular.reduce((sum,x)=>sum+x.gross,0);
-    const fixedRule=profile?pauseRuleOn(profile,dateKey):null;
-    const requiredPause=fixedRule?Math.min(totalGross,fixedRule.minutes):dailyPauseMinutes(totalGross);
+    const pauseRule=profile?pauseRuleOn(profile,dateKey):{model:'standard'};
+    const requiredPause=requiredPauseMinutes(totalGross,pauseRule);
     const creditedBreak=profile&&profile.projectTimeTracking!==true?Math.min(requiredPause,qualifyingBreakMinutes(regular)):0;
     const dayPause=Math.max(0,requiredPause-creditedBreak);
     const pauseByRecord=allocatePauseMinutes(regular,dayPause,profile?.projectTimeTracking===true);

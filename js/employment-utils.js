@@ -50,17 +50,23 @@ export function scheduledMinutesOn(user={},date=todayKey()){
 }
 export function normalizedPauseRuleHistory(user={}){
   const raw=Array.isArray(user.pauseRuleHistory)?user.pauseRuleHistory:[];
-  return raw.map((row,index)=>({
-    active:row?.active===true,
-    minutes:Math.max(30,Math.round(Number(row?.minutes)||30)),
-    validFrom:dateKey(row?.validFrom),
-    order:index
-  })).filter(row=>row.validFrom).sort((a,b)=>a.validFrom.localeCompare(b.validFrom)||a.order-b.order).slice(0,20);
+  const rows=raw.map((row,index)=>{
+    const explicit=String(row?.model||''),model=['standard','fixed','youth'].includes(explicit)?explicit:(row?.active===true?'fixed':'standard');
+    return {model,active:model==='fixed',minutes:model==='fixed'?Math.max(30,Math.round(Number(row?.minutes)||30)):0,validFrom:dateKey(row?.validFrom),order:index};
+  }).filter(row=>row.validFrom||row.order===0).sort((a,b)=>(a.validFrom||'').localeCompare(b.validFrom||'')||a.order-b.order);
+  if(!rows.some(row=>!row.validFrom))rows.unshift({model:'standard',active:false,minutes:0,validFrom:'',order:-1,legacyDefault:true});
+  return rows;
 }
 export function pauseRuleOn(user={},date=todayKey()){
-  const key=dateKey(date)||todayKey();let active=null;
-  normalizedPauseRuleHistory(user).forEach(row=>{if(row.validFrom<=key)active=row});
-  return active?.active?active:null;
+  const key=dateKey(date)||todayKey(),rows=normalizedPauseRuleHistory(user);let active=rows[0]||{model:'standard',active:false,minutes:0,validFrom:''};
+  rows.forEach(row=>{if(!row.validFrom||row.validFrom<=key)active=row});
+  return active;
+}
+export function requiredPauseMinutes(totalGrossMinutes,ruleOrModel='standard'){
+  const gross=Math.max(0,Math.round(Number(totalGrossMinutes)||0)),rule=typeof ruleOrModel==='string'?{model:ruleOrModel}:ruleOrModel||{},model=['standard','fixed','youth'].includes(rule.model)?rule.model:(rule.active===true?'fixed':'standard');
+  if(model==='fixed')return Math.min(gross,Math.max(30,Math.round(Number(rule.minutes)||30)));
+  if(model==='youth')return gross>360?60:gross>270?30:0;
+  return gross>540?45:gross>360?30:0;
 }
 export function workDaysOn(user={},date=todayKey()){const schedule=workScheduleOn(user,date);return schedule.model==='individual'?Object.keys(schedule.dailyMinutes).filter(day=>schedule.dailyMinutes[day]>0):[...schedule.workDays];}
 export function normalizedVacationEntitlements(user={}){
