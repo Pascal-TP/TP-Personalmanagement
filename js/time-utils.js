@@ -1,4 +1,5 @@
 import { pauseRuleOn, requiredPauseMinutes, scheduledMinutesOn } from "./employment-utils.js";
+import { employerGiftMinutes } from "./special-day-utils.js";
 
 // V2.9.2 – gemeinsame Zeitberechnung.
 // Echte Stempelzeiten bleiben unverändert; earliestStartTime begrenzt nur die anrechenbare Zeit.
@@ -280,9 +281,9 @@ function accountPeriod(items,profile,endKey=''){
   return firstKey<=lastKey?{firstKey,lastKey}:null;
 }
 
-function calculateTimeAccount(records,profile,vacations,absences,{includeOpen=true,now=new Date(),until=null,values=false}={}){
+function calculateTimeAccount(records,profile,vacations,absences,{includeOpen=true,now=new Date(),until=null,values=false,specialDaySettings=[]}={}){
   const result=new Map();
-  const items=(records||[]).filter(r=>timeRecordDateKey(r));
+  const items=(records||[]).filter(r=>timeRecordDateKey(r)&&!r.cancelledAt&&!r.canceledAt);
   if(!items.length)return values?result:0;
 
   const dailyValues=calculateDailyTimeValues(items,profile,{includeOpen,now});
@@ -306,7 +307,8 @@ function calculateTimeAccount(records,profile,vacations,absences,{includeOpen=tr
   for(const key of dateRangeKeys(period.firstKey,period.lastKey)){
     const dailyTargetMinutes=scheduledMinutesOn(profile,key);
     const relief=Math.max(leaveFractions.get(key)||0,absenceFractions.get(key)||0);
-    const targetMinutes=dailyTargetMinutes>0?Math.round(dailyTargetMinutes*(1-relief)):0;
+    const gift=employerGiftMinutes(profile,key,specialDaySettings);
+    const targetMinutes=dailyTargetMinutes>0?Math.max(0,Math.round(dailyTargetMinutes*(1-relief))-gift):0;
     balance-=targetMinutes;
     const dayItems=[...(byDay.get(key)||[])].sort((a,b)=>recordSortValue(a)-recordSortValue(b));
     for(const r of dayItems){
@@ -322,14 +324,14 @@ function calculateTimeAccount(records,profile,vacations,absences,{includeOpen=tr
 // läuft danach minutengenau weiter. Pro Arbeitstag wird das Tagessoll einmal
 // abgezogen; genehmigter Urlaub und gebuchte Abwesenheiten reduzieren das Soll
 // des betreffenden Tages auf 0. Stundenkorrekturen wirken direkt auf das Konto.
-export function calculateTimeAccountValues(records,profile={},vacations=[],absences=[],{includeOpen=true,now=new Date()}={}){
-  return calculateTimeAccount(records,profile,vacations,absences,{includeOpen,now,values:true});
+export function calculateTimeAccountValues(records,profile={},vacations=[],absences=[],{includeOpen=true,now=new Date(),specialDaySettings=[]}={}){
+  return calculateTimeAccount(records,profile,vacations,absences,{includeOpen,now,values:true,specialDaySettings});
 }
 
 
 // V2.11 – aktueller, minutengenauer Stand des Zeitkontos.
 // Im Unterschied zur buchungsbezogenen Historie wird das Soll bis zum gewünschten
 // Stichtag fortgeschrieben, auch wenn an einem Arbeitstag keine Buchung vorliegt.
-export function calculateTimeAccountBalance(records,profile={},vacations=[],absences=[],{includeOpen=true,now=new Date(),until=null}={}){
-  return calculateTimeAccount(records,profile,vacations,absences,{includeOpen,now,until,values:false});
+export function calculateTimeAccountBalance(records,profile={},vacations=[],absences=[],{includeOpen=true,now=new Date(),until=null,specialDaySettings=[]}={}){
+  return calculateTimeAccount(records,profile,vacations,absences,{includeOpen,now,until,values:false,specialDaySettings});
 }

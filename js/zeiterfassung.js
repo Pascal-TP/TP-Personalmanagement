@@ -1,4 +1,4 @@
-import { db } from "./firebase.js";
+import { db, functions } from "./firebase.js";
 import {
   collection,
   addDoc,
@@ -17,6 +17,7 @@ import { hasAdminPermission } from "./permissions.js";
 import { calculateDailyTimeValues, calculateTimeAccountValues, reachedFlexTimeRecords, wasStartLimited } from "./time-utils.js";
 import { getAssignedDocs, getAssignedUsers } from "./supervisor-utils.js";
 import { refreshPagination } from "./pagination.js";
+import { httpsCallable } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-functions.js";
 
 
 function validProjectNumber(value) {
@@ -276,12 +277,15 @@ export async function renderZeiterfassung(el, ctx) {
   let ownAbsences = [];
   let adjustmentEmployees = [];
   let recentAdjustments = [];
+  let specialDaySettings = [];
   const canBookAdjustments = ctx.profile.role === "supervisor" || hasAdminPermission(ctx.profile, "timeAdjustment");
+  const canCancelAdjustments = isAdmin && hasAdminPermission(ctx.profile, "timeAdjustment");
   const canApproveTime = ctx.profile.role === "supervisor" || hasAdminPermission(ctx.profile, "timeApprove");
   try { entries = await loadOwnRecords(ctx.profile.id); } catch (e) { console.error("Zeitdaten konnten nicht geladen werden", e); }
   try { ownRequests = await loadOwnRequests(ctx.profile.id); } catch (e) { console.error("Zeitanträge konnten nicht geladen werden", e); }
   try { const s = await getDocs(query(collection(db, "vacationRequests"), where("userId", "==", ctx.profile.id))); ownVacations = s.docs.map(d => ({ id:d.id, ...d.data() })); } catch (e) { console.error("Urlaubsdaten für Stundenkonto konnten nicht geladen werden", e); }
   try { const s = await getDocs(query(collection(db, "absences"), where("userId", "==", ctx.profile.id))); ownAbsences = s.docs.map(d => ({ id:d.id, ...d.data() })); } catch (e) { console.error("Abwesenheiten für Stundenkonto konnten nicht geladen werden", e); }
+  try { const s=await getDocs(collection(db,'personnelSpecialDaySettings'));specialDaySettings=s.docs.map(d=>({id:d.id,...d.data()})); } catch(e) { console.warn('Sondertag-Regelungen konnten nicht geladen werden',e); }
   if (canApproveTime) { try { teamRequests = await loadTeamRequests(ctx); } catch (e) { console.error("Team-Zeitanträge konnten nicht geladen werden", e); } }
   if (canBookAdjustments) {
     try {
@@ -330,7 +334,7 @@ export async function renderZeiterfassung(el, ctx) {
   const allocatedValues = calculateDailyTimeValues(entries, ctx.profile, {includeOpen:true});
   const reachedFlexRecords = reachedFlexTimeRecords(ownVacations,ctx.profile);
   const accountRecords = [...entries,...reachedFlexRecords];
-  const accountValues = calculateTimeAccountValues(accountRecords, ctx.profile, ownVacations, ownAbsences, {includeOpen:true});
+  const accountValues = calculateTimeAccountValues(accountRecords, ctx.profile, ownVacations, ownAbsences, {includeOpen:true,specialDaySettings});
   const bookingEntries = [...accountRecords].sort((a,b)=>String(recordDateKey(b)).localeCompare(String(recordDateKey(a)))||((recordStartDate(b)?.getTime?.()||0)-(recordStartDate(a)?.getTime?.()||0)));
   const flatDays = flatEightHourView ? flatEightHourDays(entries) : [];
   const pendingRecordIds = new Set(
@@ -415,7 +419,7 @@ export async function renderZeiterfassung(el, ctx) {
         <label class="field"><span>Jahr</span><select id="adjustment-year-filter"><option value="">Alle Jahre</option>${adjustmentYears.map(year => `<option value="${year}" ${year === currentYear ? "selected" : ""}>${year}</option>`).join("")}</select></label>
       </div>
       <div class="request-list" id="adjustment-list" data-paginate="recent-time-adjustments" data-pagination-items=":scope > .request-row" data-pagination-reset-page="true">${recentAdjustments.map(r => `
-        <div class="request-row" data-employee-search="${esc(normalizeListSearch(r.userName || r.userId))}" data-adjustment-year="${esc(adjustmentYear(r))}"><div><strong>${esc(r.userName || r.userId)} · ${signedHm(r.adjustmentMinutes)}</strong><span>${fmtDate(r.adjustmentDate)}${validProjectNumber(r.projectNumber) ? ` · Projekt ${esc(r.projectNumber)}` : ""} · ${esc(r.adjustmentReason || "Stundenkorrektur")}</span>${r.adjustmentDetails ? `<small>${esc(r.adjustmentDetails)}</small>` : ""}</div>${statusPill("gebucht", "blue")}</div>`).join("")}</div>
+        <div class="request-row ${(r.cancelledAt||r.canceledAt)?'cancelled-adjustment':''}" data-employee-search="${esc(normalizeListSearch(r.userName || r.userId))}" data-adjustment-year="${esc(adjustmentYear(r))}"><div><strong>${esc(r.userName || r.userId)} · ${signedHm(r.adjustmentMinutes)}</strong><span>${fmtDate(r.adjustmentDate)}${validProjectNumber(r.projectNumber) ? ` · Projekt ${esc(r.projectNumber)}` : ""} · ${esc(r.adjustmentReason || "Stundenkorrektur")}</span>${r.adjustmentDetails ? `<small>${esc(r.adjustmentDetails)}</small>` : ""}</div><div class="actions">${(r.cancelledAt||r.canceledAt)?statusPill("storniert", "gray"):`${statusPill("gebucht", "blue")}${canCancelAdjustments?`<button type="button" class="btn danger small cancel-time-adjustment" data-id="${esc(r.id)}">Stornieren</button>`:''}`}</div></div>`).join("")}</div>
       <div class="empty compact-empty hidden" id="adjustment-filter-empty"></div>
     </article>` : ""}
 
@@ -559,6 +563,13 @@ export async function renderZeiterfassung(el, ctx) {
   adjustmentEmployeeSearch?.addEventListener("input", applyAdjustmentFilters);
   adjustmentYearFilter?.addEventListener("change", applyAdjustmentFilters);
   applyAdjustmentFilters();
+  adjustmentList?.querySelectorAll('.cancel-time-adjustment').forEach(button=>button.onclick=async()=>{
+    const row=recentAdjustments.find(item=>item.id===button.dataset.id);if(!row)return;
+    if(!await confirmDialog(`Stundenkorrektur wirklich stornieren?\n\nMitarbeiter: ${row.userName||row.userId}\nDatum: ${fmtDate(row.adjustmentDate)}\nKorrektur: ${signedHm(row.adjustmentMinutes)}\nBegründung: ${row.adjustmentReason||'–'}${row.adjustmentDetails?` · ${row.adjustmentDetails}`:''}\n\nDie Korrektur wirkt danach nicht mehr auf das Zeitkonto. Der historische Eintrag bleibt erhalten.`))return;
+    button.disabled=true;
+    try{const idToken=await ctx.user.getIdToken();await httpsCallable(functions,'cancelPersonnelTimeAdjustment')({idToken,adjustmentId:row.id,reason:'Stornierung über Zeiterfassung'});toast('Stundenkorrektur storniert.');renderZeiterfassung(el,ctx)}
+    catch(error){console.error(error);toast(error?.message||'Stornierung fehlgeschlagen.','error');button.disabled=false}
+  });
 
   const adminAdjustmentForm = document.getElementById("admin-hours-adjustment-form");
   if (adminAdjustmentForm) {

@@ -22,7 +22,7 @@ function approvedVacationDays(vacations,user,year,until=null,absences=[]){
   return requested+direct;
 }
 export function vacationYearBalance(user,vacations,settings,year,{asOf=new Date(),depth=0,absences=[],adjustments=[]}={}){
-  year=Number(year); const today=asOf instanceof Date?iso(asOf):String(asOf); const entitlementDate=String(today).startsWith(`${year}-`)?today:`${year}-12-31`; const entitlement=vacationEntitlementOn(user,entitlementDate); const setting=settingFor(settings,user.id,year); const adjustmentDays=(adjustments||[]).filter(a=>a.userId===user.id&&Number(a.year)===year).reduce((s,a)=>s+(Number(a.days)||0),0);
+  year=Number(year); const today=asOf instanceof Date?iso(asOf):String(asOf); const entitlementDate=String(today).startsWith(`${year}-`)?today:`${year}-12-31`; const entitlement=vacationEntitlementOn(user,entitlementDate); const setting=settingFor(settings,user.id,year); const adjustmentDays=(adjustments||[]).filter(a=>a.userId===user.id&&Number(a.year)===year&&!a.cancelledAt&&!a.canceledAt).reduce((s,a)=>s+(Number(a.days)||0),0);
   let carryover=0;
   if(year>=2026){
     if(setting&&setting.carryoverDays!==undefined&&setting.carryoverDays!==null&&setting.carryoverDays!=='') carryover=Math.max(0,Number(setting.carryoverDays)||0);
